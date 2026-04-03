@@ -1,0 +1,15 @@
+MeanFieldTester/modules/
+logs/
+MeanFieldTester/.ipynb_checkpoints/
+**/__pycache__
+**/.ipynb_checkpoints
+*.pyc
+
+results/
+modeldb*/
+# projects/
+scripts/
+notebooks/
+drafts/
+*data/
+*.sbatch

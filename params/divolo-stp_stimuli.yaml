@@ -1,0 +1,120 @@
+{
+    "SpontActivity1.5" : {
+        "pattern" : "NoStimulus",
+        "stim_pars" : {},
+        "drive_rate" : 1.5,
+        "drive_increase_duration" : 400,
+        "stim_target_ratio" : 1.0,
+        "simulation_time" : 2000,
+        "target_nodes" : 0,
+        "direct_stimulation" : False
+    },
+    "SpontActivity2.5" : {
+        "pattern" : "NoStimulus",
+        "stim_pars" : {},
+        "drive_rate" : 2.5,
+        "drive_increase_duration" : 400,
+        "stim_target_ratio" : 1.0,
+        "simulation_time" : 2000,
+        "target_nodes" : 0,
+        "direct_stimulation" : False
+    },
+    "SpontActivity3.5" : {
+        "pattern" : "NoStimulus",
+        "stim_pars" : {},
+        "drive_rate" : 3.5,
+        "drive_increase_duration" : 400,
+        "stim_target_ratio" : 1.0,
+        "simulation_time" : 2000,
+        "target_nodes" : 0,
+        "direct_stimulation" : False
+    },
+    "SpontActivity4.5" : {
+        "pattern" : "NoStimulus",
+        "stim_pars" : {},
+        "drive_rate" : 4.5,
+        "drive_increase_duration" : 400,
+        "stim_target_ratio" : 1.0,
+        "simulation_time" : 2000,
+        "target_nodes" : 0,
+        "direct_stimulation" : False
+    },
+    "Sinusoidal2" : {
+        "pattern" : "Sinusoidal",
+        "stim_pars" : {
+            "stim_start" : 1000,
+            "stim_end" : 2000,
+            "stim_magnitude" : 1,
+            "freq" : 2,
+            "offset" : 1
+        },
+        "drive_rate" : 1.5,
+        "drive_increase_duration" : 400,
+        "stim_target_ratio" : 1.0,
+        "simulation_time" : 2000,
+        "target_nodes" : 0,
+        "direct_stimulation" : False
+    },
+    "Sinusoidal5" : {
+        "pattern" : "Sinusoidal",
+        "stim_pars" : {
+            "stim_start" : 1000,
+            "stim_end" : 2000,
+            "stim_magnitude" : 1,
+            "freq" : 5,
+            "offset" : 1
+        },
+        "drive_rate" : 1.5,
+        "drive_increase_duration" : 400,
+        "stim_target_ratio" : 1.0,
+        "simulation_time" : 2000,
+        "target_nodes" : 0,
+        "direct_stimulation" : False
+    },
+    "Sinusoidal10" : {
+        "pattern" : "Sinusoidal",
+        "stim_pars" : {
+            "stim_start" : 1000,
+            "stim_end" : 2000,
+            "stim_magnitude" : 1,
+            "freq" : 10,
+            "offset" : 1
+        },
+        "drive_rate" : 1.5,
+        "drive_increase_duration" : 400,
+        "stim_target_ratio" : 1.0,
+        "simulation_time" : 2000,
+        "target_nodes" : 0,
+        "direct_stimulation" : False
+    },
+    "Pulse1" : {
+        "pattern" : "PulseTrain",
+        "stim_pars" : {
+            "stim_start" : 1000,
+            "stim_duration" : 500,
+            "stim_magnitude" : 1
+        },
+        "drive_rate" : 2.5,
+        "drive_increase_duration" : 400,
+        "stim_target_ratio" : 1.0,
+        "simulation_time" : 2000,
+        "target_nodes" : 0,
+        "direct_stimulation" : False
+    },
+    "TwoSidedGaussian1" : {
+        "pattern" : "TwoSidedGaussian",
+        "stim_pars" : {
+            "center" : 1000,
+            "sigma_left" : 100,
+            "sigma_right" : 200,
+            "stim_magnitude" : 1,
+            "offset" : 0
+        },
+        "drive_rate" : 2.5,
+        "drive_increase_duration" : 400,
+        "stim_target_ratio" : 1.0,
+        "simulation_time" : 2000,
+        "target_nodes" : 0,
+        "direct_stimulation" : False
+    }
+}

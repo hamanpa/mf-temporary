@@ -1,0 +1,224 @@
+"""
+This module defines the data structure for storing results from a single neuron simulation.
+
+"""
+
+import numpy as np
+
+import codes.data_structures.base as base
+from codes.transfer_function import MPF_with_nu_out
+
+
+class SingleNeuronResults(base.Results):
+    """Data structure for storing results from a single neuron simulation.
+    
+    That means it contains the stationary results for constant synaptic input
+
+    Units
+    -----
+    - nu_e, nu_i : [Hz]
+    - nu_out : [Hz]
+    - w_mean, w_std : [pA]
+    - v_mean, v_std : [mV]
+    - v_tau : [ms]
+    - gsyn_e_mean, gsyn_e_std : [nS]
+    - gsyn_i_mean, gsyn_i_std : [nS]
+
+    """
+
+    def __init__(self, neuron_name, neuron_params, results):
+        self.neuron_name = neuron_name
+        self.neuron_params = neuron_params
+
+        # 2D grid (nu_e, nu_i)
+        self.nu_e = results["nu_e"]
+        self.nu_i = results["nu_i"]
+
+        self.nu_out_mean = results["nu_out"]
+        self.nu_out_std = results["nu_out_std"]
+
+        self.w_mean = results["mu_w"]
+        self.w_std = results["sigma_w"]
+
+        self.v_mean = results["mu_V"]
+        self.v_std = results["sigma_V"]
+        self.v_tau = results["tau_V"]
+
+        self.gsyn_e_mean = results['mu_ge']
+        self.gsyn_e_std = results['sigma_ge']
+
+        self.gsyn_i_mean = results['mu_gi']
+        self.gsyn_i_std = results['sigma_gi']
+
+
+        # Updated naming to match the new structure
+        # All the results are 2D arrays with the indexing (exc_rate, inh_rate)
+
+        # Mean synaptic drive used in the trials
+        self.exc_drive_mean = results["nu_e"]
+        self.inh_drive_mean = results["nu_i"]
+
+        # In the following the mean and std are computed first over stationary time
+        # and then over trials
+        self.out_rate_mean = results["nu_out"]
+        self.out_rate_std = results["nu_out_std"]
+
+        self.adaptation_mean = results["mu_w"]
+        self.adaptation_std = results["sigma_w"]
+
+        self.voltage_mean = results["mu_V"]
+        self.voltage_std = results["sigma_V"]
+        self.voltage_tau = results["tau_V"]
+
+        self.exc_conductance_mean = results['mu_ge']
+        self.exc_conductance_std = results['sigma_ge']
+
+        self.inh_conductance_mean = results['mu_gi']
+        self.inh_conductance_std = results['sigma_gi']
+
+
+class AdExNeuronTheoreticalResults(base.Results):
+    """Data structure for storing theoretical results from an AdEx neuron simulation.
+    
+    This is used to compare with the results from the single neuron simulation.
+
+    Units
+    -----
+    - nu_e, nu_i : [Hz]
+    - nu_out : [Hz]
+    - w_mean, w_std : [pA]
+    - v_mean, v_std : [mV]
+    - v_tau : [ms]
+    """
+
+    def __init__(self, neuron_name, neuron_params, 
+                 exc_drive, inh_drive, out_rate):
+        self.neuron_name = neuron_name
+        self.neuron_params = neuron_params
+
+        self.exc_drive_mean = exc_drive
+        self.inh_drive_mean = inh_drive
+        self.out_rate_mean = out_rate
+        
+ 
+    @property
+    def exc_conductance_mean(self):
+        rate = self.exc_drive_mean
+        syn_num = self.neuron_params['exc_synapses']['number']
+        tau = self.neuron_params['neuron_params']['tau_syn_E'] *1e-3
+        weight = self.neuron_params['exc_synapses']['syn_params']['weight']
+
+        return rate * syn_num * tau * weight  # Hz * dimless * s * nS
+
+    @property
+    def exc_conductance_std(self):
+        rate = self.exc_drive_mean
+        syn_num = self.neuron_params['exc_synapses']['number']
+        tau = self.neuron_params['neuron_params']['tau_syn_E'] *1e-3
+        weight = self.neuron_params['exc_synapses']['syn_params']['weight']
+
+        return np.sqrt(rate* syn_num * tau / 2) * weight
+
+    @property
+    def inh_conductance_mean(self):
+        rate = self.inh_drive_mean
+        syn_num = self.neuron_params['inh_synapses']['number']
+        tau = self.neuron_params['neuron_params']['tau_syn_I'] *1e-3
+        weight = self.neuron_params['inh_synapses']['syn_params']['weight']
+
+        return rate * syn_num * tau * weight
+    
+    @property
+    def inh_conductance_std(self):
+        rate = self.inh_drive_mean
+        syn_num = self.neuron_params['inh_synapses']['number']
+        tau = self.neuron_params['neuron_params']['tau_syn_I'] *1e-3
+        weight = self.neuron_params['inh_synapses']['syn_params']['weight']
+
+        return np.sqrt(rate* syn_num * tau / 2) * weight
+    
+    @property
+    def adaptation_mean(self):
+        a = self.neuron_params['neuron_params']['a']
+        b = self.neuron_params['neuron_params']['b']
+        v_rest = self.neuron_params['neuron_params']['v_rest']
+        tau_w = self.neuron_params['neuron_params']['tau_w']
+        
+        # adaptation should be in pa
+        # [b] = nA
+        # out_rate_mean is in Hz
+        # [tau_w] = ms
+        # [a] = pA/mV = nS
+        # [v_rest] = mV
+
+        return b*self.out_rate_mean*tau_w + a * (self.voltage_mean - v_rest)
+
+    @property
+    def conductance_mean(self):
+        # conductance is in nS
+        g = self.neuron_params['neuron_params']['cm'] / self.neuron_params['neuron_params']['tau_m']*1e3
+        return self.exc_conductance_mean + self.inh_conductance_mean + g
+
+    @property
+    def tau_eff(self):
+        return self.neuron_params['neuron_params']['cm'] / self.conductance_mean * 1e3  # convert to ms
+
+    @property
+    def voltage_mean(self):
+        method = "implicit"
+
+        exc_voltage = self.exc_conductance_mean*self.neuron_params['neuron_params']['e_rev_E']
+        inh_voltage = self.inh_conductance_mean*self.neuron_params['neuron_params']['e_rev_I']
+        
+        g_rest = self.neuron_params['neuron_params']['cm'] / self.neuron_params['neuron_params']['tau_m']*1e3
+        v = g_rest*self.neuron_params['neuron_params']['v_rest']
+
+        if method == "explicit":
+            return (exc_voltage + inh_voltage + v - self.adaptation_mean) / self.conductance_mean
+        if method == "implicit":
+            a = self.neuron_params['neuron_params']['a']
+            b = self.neuron_params['neuron_params']['b']
+            v_rest = self.neuron_params['neuron_params']['v_rest']
+            tau_w = self.neuron_params['neuron_params']['tau_w']
+
+            return (exc_voltage + inh_voltage + v - b*self.out_rate_mean*tau_w + a*v_rest)/(self.conductance_mean + a)
+
+    @property
+    def voltage_std(self):
+        exc_weight = self.neuron_params['exc_synapses']['syn_params']['weight']
+        exc_voltage = self.neuron_params['neuron_params']['e_rev_E']
+        exc_num = self.neuron_params['exc_synapses']['number']
+        exc_tau = self.neuron_params['neuron_params']['tau_syn_E']
+
+        exc_u = exc_weight / self.conductance_mean * (exc_voltage - self.voltage_mean)
+        exc_std = exc_num * self.exc_drive_mean*1e3 * ((exc_u * exc_tau )**2)/(2*(self.tau_eff + exc_tau))
+
+        inh_weight = self.neuron_params['inh_synapses']['syn_params']['weight']
+        inh_voltage = self.neuron_params['neuron_params']['e_rev_I']
+        inh_num = self.neuron_params['inh_synapses']['number']
+        inh_tau = self.neuron_params['neuron_params']['tau_syn_I']
+
+        inh_u = inh_weight / self.conductance_mean * (inh_voltage - self.voltage_mean)
+        inh_std = inh_num * self.inh_drive_mean*1e3 * ((inh_u * inh_tau )**2)/(2*(self.tau_eff + inh_tau))
+
+        return np.sqrt(exc_std + inh_std)
+
+    @property
+    def voltage_tau(self):
+        exc_weight = self.neuron_params['exc_synapses']['syn_params']['weight']
+        exc_voltage = self.neuron_params['neuron_params']['e_rev_E']
+        exc_num = self.neuron_params['exc_synapses']['number']
+        exc_tau = self.neuron_params['neuron_params']['tau_syn_E']
+
+        exc_u = exc_weight / self.conductance_mean * (exc_voltage - self.voltage_mean)
+        exc_voltage_tau = exc_num * self.exc_drive_mean*1e3 * ((exc_u * exc_tau )**2)
+
+        inh_weight = self.neuron_params['inh_synapses']['syn_params']['weight']
+        inh_voltage = self.neuron_params['neuron_params']['e_rev_I']
+        inh_num = self.neuron_params['inh_synapses']['number']
+        inh_tau = self.neuron_params['neuron_params']['tau_syn_I']
+
+        inh_u = inh_weight / self.conductance_mean * (inh_voltage - self.voltage_mean)
+        inh_voltage_tau = inh_num * self.inh_drive_mean*1e3 * ((inh_u * inh_tau )**2)
+
+        return (exc_voltage_tau + inh_voltage_tau) / (exc_voltage_tau/(self.tau_eff + exc_tau) + inh_voltage_tau/(self.tau_eff + inh_tau))
