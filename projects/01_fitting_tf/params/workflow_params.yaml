@@ -1,0 +1,90 @@
+{
+    "neuron_simulation" : {  # the same name as module
+        "execution_mode" : "run", 
+        # "run" - run the simulation and save the results
+        # "load" - load the results from the file, and skip the simulation
+        # "skip" - skip the simulation and loading (useful when no TF is to be fitted, and we just want to run the network simulations with the fitted TF)
+        # TODO: "validate" - run the simulation, load the results from the file, and compares
+
+        "simulator" : "pynn.nest",  # str, name of the simulator to use for neuron simulations
+
+        "grid" : {
+            # "grid_type" : "linear",
+            # "exc_rate_grid" : [0, 60, 16],
+            # "inh_rate_grid" : [0, 60, 16],
+
+            "grid_type" : "adaptive",
+            "exc_rate_grid" : "adaptive",
+            "inh_rate_grid" : [0, 60, 16],
+            "out_rate_grid" : [0, 40, 16],
+            "n_coarse_interpolation_points" : 50,  # Optional, if not set, will default to 1.5x the number of points in out_rate_grid
+            # "grid_type" : "custom",
+            # "exc_rate_grid" : [0, 60, 16],
+            # "inh_rate_grid" : [0, 60, 16],
+        },
+
+
+    
+        "simulation_time" : 5000,       # [ms], total simulation time
+        "averaging_window" : 2000,      # [ms], time window for calculating the mean output rate, starting from the end of the simulation
+
+        "time_step" : 0.1,              # [ms], time step for the simulation
+        "seed" : 42,
+        "n_runs" : 5,                   # [int], number of runs for the simulation
+        "cpus" : 16                     # [int], number of CPUs to use for parallel simulations
+
+    },
+    "transfer_functions" : {
+        "fit_transfer_function" : true,
+        "square_terms" : true,
+        "log_term" : false,
+        "adaptation" : true,
+        "fit_with_w" : true,
+        "nu_out_min" : 0.0,
+        "nu_out_max" : 200.0,
+        "V_eff_fitting" : {
+            "method" : "SLSQP",
+            "options" : {
+                "ftol" : 5e-9,
+                "disp" : false,
+                "maxiter" : 10000
+            }
+        },
+        "TF_fitting" : {
+            "method" : "nelder-mead",
+            "options" : {
+                "fatol": 5e-9,
+                "disp" : false,
+                "maxiter" : 10000
+            }
+        }
+    },
+    "network_simulations" : {
+        "load" : true,
+        "timestep" : 0.1,
+        "seed" : 42,
+        "n_runs" : 5,
+        "smoothing_function" : "sliding_window",
+        "smoothing_constant" : 50,
+        "smoothing_kwargs" : {}
+    },
+    "mf_model" : {
+        "T" : 40.0,
+        "tvb_model" : "DiVolo_Tsodyks_second_order",
+        "mf_init" : {
+            "E" : [0.000, 0.000],
+            "I" : [0.00, 0.00],
+            "C_ee" : [0.0000005, 0.0000005],
+            "C_ei" : [0.0000005, 0.0000005],
+            "C_ii" : [0.0000005, 0.0000005],
+            "W_e" : [50.0, 50.0],
+            "W_i" : [0.0, 0.0],
+            "X_e" : [1.0, 1.0],
+            "Y_e" : [0.0, 0.0],
+            "X_i" : [1.0, 1.0],
+            "Y_i" : [0.0, 0.0],
+            "noise" : [0.0, 0.0],
+            "stimulus" : [0.0, 0.0]
+        }
+    }
+}

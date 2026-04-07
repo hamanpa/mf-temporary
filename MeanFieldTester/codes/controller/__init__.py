@@ -37,9 +37,6 @@ import multiprocessing as mp
 import pickle
 from copy import deepcopy
 
-import os
-# os.chdir('/home/pavel/academia/mf-temporary/mean-field-CSNG/codes')
-
 import codes.neuron_simulation as ns
 import codes.meanfield_simulation as mfs
 import codes.network_simulation as nets

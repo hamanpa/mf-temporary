@@ -7,7 +7,21 @@
 - **Code Style Standard:** Use standard Python conventions (PEP 8) and a consistent docstring style (e.g., Google or NumPy style) across the codebase.
 - **Testing Framework:** Use a standard testing framework (e.g., `pytest`) to ensure updates do not break existing functionality.
 
+
+- **The Open/Closed Principle (OCP)** 
+states that software entities (classes, modules, functions) should be open for extension (you can add new behavior) but closed for modification (you don't have to alter existing code to add that behavior).
+If a PhD student in your lab writes a custom simulator for a new type of hardware, with the match statement, they must edit your WorkflowRunner.py to add case "custom_hardware":. If you use an interface, they can just pass their custom class to your runner, and your runner will execute it blindly because it trusts the abstract class structure. Your core code remains untouched.
+
+
+Single Responsibility Principle (SRP)
+
+
 # Todos (code base)
+
+- [ ] neuron_simulation - make it more modular
+- [ ] neuron_simulation - allow custom grid
+- [ ] neuron_simulation - better naming workflow_params
+- [ ] neuron_simulation - add zerlaut2018_simulator.py
 
 ### General MFT Code
 - [ ] **Units handling setup**

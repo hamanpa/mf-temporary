@@ -13,3 +13,4 @@ notebooks/
 drafts/
 *data/
 *.sbatch
+*.png

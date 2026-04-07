@@ -15,7 +15,7 @@ import argparse
 from pathlib import Path
 from pydantic import BaseModel
 
-from codes.neuron_simulation.config import NeuronSimulationConfig, RunSimulationConfig, LinearGrid, SimulatorType
+from codes.neuron_simulation.config import NeuronSimulationConfig, RunSimulationConfig, GridConfig, SingleNeuronLinearGrid, SimulatorType
 # from codes.meanfield_simulation.config import MeanFieldConfig
 # from codes.network_simulation.config import NetworkConfig
 
@@ -45,16 +45,20 @@ def generate_default_yaml(output_path: str = "default_workflow.yaml"):
     """Generates a complete, blank template for the user to fill out."""
     
     # Create safe default dummies for the modules
-    default_neuron_grid = LinearGrid(
+    default_single_neuron_grid = SingleNeuronLinearGrid(
         grid_type="linear",
         exc_rate_grid=[0, 60, 16], 
         inh_rate_grid=[0, 60, 16]
     )
-    
+    default_grid = GridConfig(
+        exc_neuron=default_single_neuron_grid,
+        inh_neuron=default_single_neuron_grid
+    )
+    GridConfig
     default_neuron_run = RunSimulationConfig(
         execution_mode="run",
         simulator=SimulatorType.PYNN_NEST,
-        grid=default_neuron_grid, 
+        grid=default_grid, 
         simulation_time=5000.0
     )
     
