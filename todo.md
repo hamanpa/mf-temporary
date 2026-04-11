@@ -14,7 +14,7 @@ If a PhD student in your lab writes a custom simulator for a new type of hardwar
 
 
 Single Responsibility Principle (SRP)
-
+Single Responsibility Principle (they hold data and validate it, leaving the simulation logic to other classes).
 
 # Todos (code base)
 
@@ -140,3 +140,32 @@ Single Responsibility Principle (SRP)
   - Markram Tsodyks STP model (find network-level influence)
   - ISN and STP
   - QIF neuron and STP (Helmut Schmidt)
+
+
+# Unsorted
+
+From neuron_simulation module
+
+Phase 3: Mathematical Completeness (Medium Priority)
+
+These are hidden TODOs I found inside your code that are necessary for accurate Mean-Field fitting.
+    [ ] Implement tau_V calculation: Currently, tau_V is set to 0 or left as a TODO (Lines 115, 230). The Di Volo TF fit relies heavily on the membrane voltage autocorrelation time (τV​).
+    [ ] Remove Hardcoded Neuron Names: In resolve_adaptive_grid (Line 414), "exc_neuron" and "inh_neuron" are hardcoded. We should make this dynamic based on the configuration rather than string matching.
+    [ ] Adaptive Grid for Inhibitory Neurons: Implement the logic to allow inh_rate to be the adaptive variable. This will require carefully handling the interpolation since the roles of the axes are flipped.
+
+Phase 4: Cleanup & Quality of Life (Low Priority)
+    [ ] Unit Conversion: Handle the TODO at Line 65: Convert internal PyNN units (nA, mV) to standard MFT units (pA, V) directly as they come out of the simulation, so the rest of your pipeline doesn't have to guess.
+    [ ] Naming Conventions: Align variable names (rate vs nu, activity, firing) according to your todo_ideas.txt master plan.
+    [ ] Documentation: Add docstrings to all functions, especially the main workflow and the unified batch runner, to clarify their purpose and expected inputs/outputs.
+    [ ] SingleNeuronResults: should I provide the results as a dictionory in the instance or keyword arguments?
+        [ ] When dealing with this is it possible to add print depreciated attribute?
+    [ ] Migrate away from Pickle (Optional but recommended). Pickle is notoriously brittle if you rename classes (SingleNeuronResults). For long-term PhD research, storing simulation metrics in HDF5 or Parquet is much safer.
+
+Other Ideas:
+    [ ] Implement Zerlaut_simulator (Low Priority)
+    [ ] Subthreshold grid: allow adaptive grid to also cover subthreshold region
+    [ ] Check all the commented notes and todos and put them on todo.md instead
+        so there is a single source of truth for all the todos and ideas, and they are not lost in the code comments.
+    [ ] Make this work nicer condes.controller.config --template --schema
+    [ ] DataclassSingleNeuronResults - if I do not find any reason why not to use dataclass use this as default and remove previous SingleNeuronResults class
+    [ ] grid resolving (at least linear) could be in some helper function, not necessary to copy to each simulator

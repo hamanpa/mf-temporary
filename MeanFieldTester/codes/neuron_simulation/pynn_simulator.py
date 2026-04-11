@@ -16,34 +16,8 @@ Design choice:
   Thus provided parameters in the default form of pydantic models has to be 
   converted to dictionaries before being passed to the simulator 
   (use method params.model_dump() before passing to the simulator).
+
   
-  
-
-
-Phase 1: Core Architecture & Unification (High Priority)
-
-These tasks will finalize the "Unified Flow" so you don't have overlapping, confusing functions doing the same thing.
-    [ ] Finish PyNNSimulator.simulate: Update this method to strictly follow the new flow: 1) Resolve the grid for a neuron, 2) Pass the exact 2D arrays to a unified simulation function.
-    [ ] Create simulate_adex_batch_unified: Replace the old simulate_adex_batch and simulate_batch_fix_out with a single, clean function that blindly accepts exc_grid and inh_grid and runs them.
-    [ ] Delete Dead Code: Once the unified runner works, delete simulate_batch_fix_out, _determine_nu_e_grid, and the giant block of commented-out obsolete code in resolve_grid (around line 522). This will drastically reduce the file size and cognitive load.
-
-Phase 2: Multiprocessing & Performance
-    [ ] Parallelize the Unified Batch Runner: Create simulate_adex_batch_unified_multiprocess to handle the heavy lifting of the N statistical runs across the resolved 2D grids.
-    [ ] Parallelize Grid Resolution (Your question): Yes, this is absolutely possible and highly recommended! Since resolving the adaptive grid for inh_rate = 10 Hz is completely independent from inh_rate = 20 Hz, we can use mp.Pool to run the coarse interpolation simulations concurrently.
-
-Phase 3: Mathematical Completeness (Medium Priority)
-
-These are hidden TODOs I found inside your code that are necessary for accurate Mean-Field fitting.
-    [ ] Implement tau_V calculation: Currently, tau_V is set to 0 or left as a TODO (Lines 115, 230). The Di Volo TF fit relies heavily on the membrane voltage autocorrelation time (τV​).
-    [ ] Remove Hardcoded Neuron Names: In resolve_adaptive_grid (Line 414), "exc_neuron" and "inh_neuron" are hardcoded. We should make this dynamic based on the configuration rather than string matching.
-    [ ] Adaptive Grid for Inhibitory Neurons: Implement the logic to allow inh_rate to be the adaptive variable. This will require carefully handling the interpolation since the roles of the axes are flipped.
-
-Phase 4: Cleanup & Quality of Life (Low Priority)
-    [ ] Unit Conversion: Handle the TODO at Line 65: Convert internal PyNN units (nA, mV) to standard MFT units (pA, V) directly as they come out of the simulation, so the rest of your pipeline doesn't have to guess.
-    [ ] Naming Conventions: Align variable names (rate vs nu, activity, firing) according to your todo_ideas.txt master plan.
-    [ ] Documentation: Add docstrings to all functions, especially the main workflow and the unified batch runner, to clarify their purpose and expected inputs/outputs.
-    [ ] SingleNeuronResults: should I provide the results as a dictionory in the instance or keyword arguments?
-
 """
 
 
@@ -57,7 +31,7 @@ import numpy as np
 from scipy.interpolate import PchipInterpolator
 
 from .config import NeuronSimulationConfig
-from ..data_structures.single_neuron import SingleNeuronResults
+from ..data_structures.single_neuron import SingleNeuronResults, DataclassSingleNeuronResults
 from .base import BaseNeuronSimulator
 
 
@@ -144,7 +118,7 @@ def simulate_adex_neuron_single_point(exc_rate : float, inh_rate : float ,
 
 def simulate_adex_neuron_full_grid(neuron_name: str, neuron_params: dict, 
                                 exc_rate_grid: np.ndarray, inh_rate_grid: np.ndarray, 
-                                neuron_sim_params: NeuronSimulationConfig) -> SingleNeuronResults:
+                                neuron_sim_params: NeuronSimulationConfig) -> DataclassSingleNeuronResults:
     """
     Simulates a single AdEx neuron across a grid of excitatory and inhibitory input rates.
     """
@@ -178,8 +152,10 @@ def simulate_adex_neuron_full_grid(neuron_name: str, neuron_params: dict,
 
             for n_run in range(neuron_sim_params.n_runs):
                 # Run single simulation
+                neuron_sim_params_dict = neuron_sim_params.model_dump()
+                neuron_sim_params_dict['seed'] = seed + n_run
                 sim_data = simulate_adex_neuron_single_point(
-                    exc_rate, inh_rate, **neuron_params, **neuron_sim_params.model_dump(), seed=(seed + n_run)
+                    exc_rate, inh_rate, **neuron_params, **neuron_sim_params_dict
                 )
 
                 spikes = sim_data['spikes']
@@ -207,24 +183,22 @@ def simulate_adex_neuron_full_grid(neuron_name: str, neuron_params: dict,
                 inh_conductance_mean[exc_idx,inh_idx,n_run] = inh_conductance_steady.mean()
                 inh_conductance_std[exc_idx,inh_idx,n_run] = inh_conductance_steady.std()
 
-    return SingleNeuronResults(
+    return DataclassSingleNeuronResults(
         neuron_name=neuron_name,
         neuron_params=neuron_params,
-        results={
-            'nu_e': exc_rate_grid,
-            'nu_i': inh_rate_grid,
-            'nu_out': out_rate.mean(axis=2),
-            'nu_out_std': out_rate.std(axis=2),
-            'mu_w': adaptation_mean.mean(axis=2) * 1e3,      # convert from nA to pA
-            'sigma_w': adaptation_std.mean(axis=2) * 1e3, # convert from nA to pA
-            'mu_V': voltage_mean.mean(axis=2),
-            'sigma_V': voltage_std.mean(axis=2),
-            'tau_V': tau_V.mean(axis=2),
-            'mu_ge': exc_conductace_mean.mean(axis=2),
-            'sigma_ge': exc_conductance_std.mean(axis=2),
-            'mu_gi': inh_conductance_mean.mean(axis=2),
-            'sigma_gi': inh_conductance_std.mean(axis=2),
-        }
+        exc_rate_grid=exc_rate_grid,
+        inh_rate_grid=inh_rate_grid,
+        out_rate_mean=out_rate.mean(axis=2),
+        out_rate_std=out_rate.std(axis=2),
+        adaptation_mean=adaptation_mean.mean(axis=2) * 1e3,      # convert from nA to pA
+        adaptation_std=adaptation_std.mean(axis=2) * 1e3, # convert from nA to pA
+        voltage_mean=voltage_mean.mean(axis=2),
+        voltage_std=voltage_std.mean(axis=2),
+        tau_V=tau_V.mean(axis=2),
+        exc_conductace_mean=exc_conductace_mean.mean(axis=2),
+        exc_conductance_std=exc_conductance_std.mean(axis=2),
+        inh_conductance_mean=inh_conductance_mean.mean(axis=2),
+        inh_conductance_std=inh_conductance_std.mean(axis=2),
     )
 
 # Multiprocessing 
@@ -270,37 +244,37 @@ def _adex_neuron_worker(task_data):
     inh_conductance_steady = inh_conductance[-n_bins:]
     
     return (exc_rate_idx, inh_rate_idx, n_run_idx, {
-        'nu_out': out_rate,
-        'mu_w': adaptation_steady.mean(),
-        'sigma_w': adaptation_steady.std(),
-        'mu_V': voltage_steady.mean(),
-        'sigma_V': voltage_steady.std(),
-        'tau_V': 0,  # TODO: implement tau_V calculation
-        'mu_ge': exc_conductance_steady.mean(),
-        'sigma_ge': exc_conductance_steady.std(),
-        'mu_gi': inh_conductance_steady.mean(),
-        'sigma_gi': inh_conductance_steady.std()
+        'out_rate': out_rate,
+        'adaptation_mean': adaptation_steady.mean(),
+        'adaptation_std': adaptation_steady.std(),
+        'voltage_mean': voltage_steady.mean(),
+        'voltage_std': voltage_steady.std(),
+        'voltage_tau': 0,  # TODO: implement tau_V calculation
+        'exc_conductance_mean': exc_conductance_steady.mean(),
+        'exc_conductance_std': exc_conductance_steady.std(),
+        'inh_conductance_mean': inh_conductance_steady.mean(),
+        'inh_conductance_std': inh_conductance_steady.std()
     })
 
 def simulate_adex_neuron_full_grid_multiprocess(neuron_name: str, neuron_params: dict, 
                                              exc_rate_grid: np.ndarray, inh_rate_grid: np.ndarray, 
-                                             neuron_sim_params: NeuronSimulationConfig) -> SingleNeuronResults:
+                                             neuron_sim_params: NeuronSimulationConfig) -> DataclassSingleNeuronResults:
     """Parallelized execution of the unified batch runner using an un-ordered Pool."""
     exc_n_points, inh_n_points = exc_rate_grid.shape
     seed = neuron_sim_params.seed
     cpus = neuron_sim_params.cpus
 
     # Initialize result arrays
-    nu_out = np.zeros((exc_n_points, inh_n_points, neuron_sim_params.n_runs))
-    adaptation_mean = np.zeros_like(nu_out)
-    adaptation_std = np.zeros_like(nu_out)
-    voltage_mean = np.zeros_like(nu_out)
-    voltage_std = np.zeros_like(nu_out)
-    voltage_tau = np.zeros_like(nu_out)  # TODO: implement tau_V calculation
-    exc_conductance_mean = np.zeros_like(nu_out)
-    exc_conductance_std = np.zeros_like(nu_out)
-    inh_conductance_mean = np.zeros_like(nu_out)
-    inh_conductance_std = np.zeros_like(nu_out)
+    out_rate = np.zeros((exc_n_points, inh_n_points, neuron_sim_params.n_runs))
+    adaptation_mean = np.zeros_like(out_rate)
+    adaptation_std = np.zeros_like(out_rate)
+    voltage_mean = np.zeros_like(out_rate)
+    voltage_std = np.zeros_like(out_rate)
+    voltage_tau = np.zeros_like(out_rate)  # TODO: implement tau_V calculation
+    exc_conductance_mean = np.zeros_like(out_rate)
+    exc_conductance_std = np.zeros_like(out_rate)
+    inh_conductance_mean = np.zeros_like(out_rate)
+    inh_conductance_std = np.zeros_like(out_rate)
 
     # 1. Build the Task List
     tasks = []
@@ -322,36 +296,34 @@ def simulate_adex_neuron_full_grid_multiprocess(neuron_name: str, neuron_params:
         for result in pool.imap_unordered(_adex_neuron_worker, tasks):
             exc_rate_idx, inh_rate_idx, n_run_idx, res_dict = result
             
-            nu_out[exc_rate_idx,inh_rate_idx,n_run_idx] = res_dict['nu_out']
-            adaptation_mean[exc_rate_idx,inh_rate_idx,n_run_idx] = res_dict['mu_w']
-            adaptation_std[exc_rate_idx,inh_rate_idx,n_run_idx] = res_dict['sigma_w']
-            voltage_mean[exc_rate_idx,inh_rate_idx,n_run_idx] = res_dict['mu_V']
-            voltage_std[exc_rate_idx,inh_rate_idx,n_run_idx] = res_dict['sigma_V']
-            exc_conductance_mean[exc_rate_idx,inh_rate_idx,n_run_idx] = res_dict['mu_ge']
-            exc_conductance_std[exc_rate_idx,inh_rate_idx,n_run_idx] = res_dict['sigma_ge']
-            inh_conductance_mean[exc_rate_idx,inh_rate_idx,n_run_idx] = res_dict['mu_gi']
-            inh_conductance_std[exc_rate_idx,inh_rate_idx,n_run_idx] = res_dict['sigma_gi']
+            out_rate[exc_rate_idx,inh_rate_idx,n_run_idx] = res_dict['out_rate']
+            adaptation_mean[exc_rate_idx,inh_rate_idx,n_run_idx] = res_dict['adaptation_mean']
+            adaptation_std[exc_rate_idx,inh_rate_idx,n_run_idx] = res_dict['adaptation_std']
+            voltage_mean[exc_rate_idx,inh_rate_idx,n_run_idx] = res_dict['voltage_mean']
+            voltage_std[exc_rate_idx,inh_rate_idx,n_run_idx] = res_dict['voltage_std']
+            exc_conductance_mean[exc_rate_idx,inh_rate_idx,n_run_idx] = res_dict['exc_conductance_mean']
+            exc_conductance_std[exc_rate_idx,inh_rate_idx,n_run_idx] = res_dict['exc_conductance_std']
+            inh_conductance_mean[exc_rate_idx,inh_rate_idx,n_run_idx] = res_dict['inh_conductance_mean']
+            inh_conductance_std[exc_rate_idx,inh_rate_idx,n_run_idx] = res_dict['inh_conductance_std']
 
     print(f"Finished {neuron_name} multiprocessing batch.")
 
-    return SingleNeuronResults(
+    return DataclassSingleNeuronResults(
         neuron_name=neuron_name,
         neuron_params=neuron_params,
-        results={
-            'nu_e': exc_rate_grid,
-            'nu_i': inh_rate_grid,
-            'nu_out': nu_out.mean(axis=2),
-            'nu_out_std': nu_out.std(axis=2),
-            'mu_w': adaptation_mean.mean(axis=2) * 1e3,      # convert from nA to pA
-            'sigma_w': adaptation_std.mean(axis=2) * 1e3, # convert from nA to pA
-            'mu_V': voltage_mean.mean(axis=2),
-            'sigma_V': voltage_std.mean(axis=2),
-            'tau_V': voltage_tau.mean(axis=2),
-            'mu_ge': exc_conductance_mean.mean(axis=2),
-            'sigma_ge': exc_conductance_std.mean(axis=2),
-            'mu_gi': inh_conductance_mean.mean(axis=2),
-            'sigma_gi': inh_conductance_std.mean(axis=2),
-        }
+        exc_rate_grid=exc_rate_grid,
+        inh_rate_grid=inh_rate_grid,
+        out_rate_mean=out_rate.mean(axis=2),
+        out_rate_std=out_rate.std(axis=2),
+        adaptation_mean=adaptation_mean.mean(axis=2) * 1e3,      # convert from nA to pA
+        adaptation_std=adaptation_std.mean(axis=2) * 1e3, # convert from nA to pA
+        voltage_mean=voltage_mean.mean(axis=2),
+        voltage_std=voltage_std.mean(axis=2),
+        voltage_tau=voltage_tau.mean(axis=2),
+        exc_conductance_mean=exc_conductance_mean.mean(axis=2),
+        exc_conductance_std=exc_conductance_std.mean(axis=2),
+        inh_conductance_mean=inh_conductance_mean.mean(axis=2),
+        inh_conductance_std=inh_conductance_std.mean(axis=2),
     )
 
 # Dealing with the grid

@@ -4,6 +4,10 @@ This module defines the data structure for storing results from a single neuron 
 """
 
 import numpy as np
+import warnings
+
+from dataclasses import dataclass
+import pickle
 
 import codes.data_structures.base as base
 from codes.transfer_function import MPF_with_nu_out
@@ -72,9 +76,213 @@ class SingleNeuronResults(base.Results):
 
         self.exc_conductance_mean = results['mu_ge']
         self.exc_conductance_std = results['sigma_ge']
-
         self.inh_conductance_mean = results['mu_gi']
         self.inh_conductance_std = results['sigma_gi']
+
+@dataclass(frozen=True)
+class DataclassResults:
+
+    """
+    Data structure for storing results from the SNN and MF simulations.
+
+    Units:
+    - time: [ms]
+    - rate, frequency: [Hz]
+    - adaptation, current: [pA]
+    - conductance: [nS]
+    - voltage: [mV] 
+    """
+
+    def save(self, filepath):
+        """
+        Save the results to a file.
+        """
+        print(f"Saving results to {filepath}")
+        with open(filepath, 'wb') as file:
+            pickle.dump(self, file)
+        file_size = filepath.stat().st_size / 1024 / 1024  # size in MB
+        print(f"WARNING: File size: {int(file_size)} MB")
+
+@dataclass(frozen=True)
+class DataclassSingleNeuronResults(DataclassResults):
+    # All the results are 2D arrays with the indexing (exc_rate, inh_rate)
+
+    simulator_name: str = None
+    neuron_name: str = None
+    neuron_params: dict = None
+    neuron_sim_params: dict = None
+    spikes: np.ndarray = None
+
+    exc_rate_grid: np.ndarray = None
+    inh_rate_grid: np.ndarray = None
+    out_rate_mean: np.ndarray = None
+    out_rate_std: np.ndarray = None
+    adaptation_mean: np.ndarray = None
+    adaptation_std: np.ndarray = None
+    voltage_mean: np.ndarray = None
+    voltage_std: np.ndarray = None
+    voltage_tau: np.ndarray = None
+    exc_conductance_mean: np.ndarray = None
+    exc_conductance_std: np.ndarray = None
+    inh_conductance_mean: np.ndarray = None
+    inh_conductance_std: np.ndarray = None
+
+
+    @property
+    def exc_drive_mean(self):
+        warnings.warn(
+            "The attribute 'exc_drive_mean' is deprecated and will be removed in a future version. "
+            "Please use 'exc_rate_grid' instead.",
+            category=FutureWarning,
+            stacklevel=2
+        )
+        return self.exc_rate_grid
+
+    @property
+    def nu_e(self):
+        warnings.warn(
+            "The attribute 'nu_e' is deprecated and will be removed in a future version. "
+            "Please use 'exc_rate_grid' instead.",
+            category=FutureWarning,
+            stacklevel=2
+        )
+        return self.exc_rate_grid
+
+    @property
+    def nu_i(self):
+        warnings.warn(
+            "The attribute 'nu_i' is deprecated and will be removed in a future version. "
+            "Please use 'inh_rate_grid' instead.",
+            category=FutureWarning,
+            stacklevel=2
+        )
+        return self.inh_rate_grid
+
+    @property
+    def inh_drive_mean(self):
+        warnings.warn(
+            "The attribute 'inh_drive_mean' is deprecated and will be removed in a future version. "
+            "Please use 'inh_rate_grid' instead.",
+            category=FutureWarning,
+            stacklevel=2
+        )
+        return self.inh_rate_grid
+
+    @property
+    def nu_out_mean(self):
+        warnings.warn(
+            "The attribute 'nu_out_mean' is deprecated and will be removed in a future version. "
+            "Please use 'out_rate_mean' instead.",
+            category=FutureWarning,
+            stacklevel=2
+        )
+        return self.out_rate_mean
+    
+    @property
+    def nu_out_std(self):
+        warnings.warn(
+            "The attribute 'nu_out_std' is deprecated and will be removed in a future version. "
+            "Please use 'out_rate_std' instead.",
+            category=FutureWarning,
+            stacklevel=2
+        )
+        return self.out_rate_std
+
+    @property
+    def w_mean(self):
+        warnings.warn(
+            "The attribute 'w_mean' is deprecated and will be removed in a future version. "
+            "Please use 'adaptation_mean' instead.",
+            category=FutureWarning,
+            stacklevel=2
+        )
+        return self.adaptation_mean
+
+    @property
+    def w_std(self):
+        warnings.warn(
+            "The attribute 'w_std' is deprecated and will be removed in a future version. "
+            "Please use 'adaptation_std' instead.",
+            category=FutureWarning,
+            stacklevel=2
+        )
+        return self.adaptation_std
+ 
+    @property
+    def v_mean(self):
+        warnings.warn(
+            "The attribute 'v_mean' is deprecated and will be removed in a future version. "
+            "Please use 'voltage_mean' instead.",
+            category=FutureWarning,
+            stacklevel=2
+        )
+        return self.voltage_mean
+
+    @property
+    def v_std(self):
+        warnings.warn(
+            "The attribute 'v_std' is deprecated and will be removed in a future version. "
+            "Please use 'voltage_std' instead.",
+            category=FutureWarning,
+            stacklevel=2
+        )
+        return self.voltage_std
+
+    @property
+    def v_tau(self):
+        warnings.warn(
+            "The attribute 'v_tau' is deprecated and will be removed in a future version. "
+            "Please use 'voltage_tau' instead.",
+            category=FutureWarning,
+            stacklevel=2
+        )
+        return self.voltage_tau
+
+    @property
+    def gsyn_e_mean(self):
+        warnings.warn(
+            "The attribute 'gsyn_e_mean' is deprecated and will be removed in a future version. "
+            "Please use 'exc_conductance_mean' instead.",
+            category=FutureWarning,
+            stacklevel=2
+        )
+        return self.exc_conductance_mean
+
+    @property
+    def gsyn_e_std(self):
+        warnings.warn(
+            "The attribute 'gsyn_e_std' is deprecated and will be removed in a future version. "
+            "Please use 'exc_conductance_std' instead.",
+            category=FutureWarning,
+            stacklevel=2
+        )
+        return self.exc_conductance_std
+
+    @property
+    def gsyn_i_mean(self):
+        warnings.warn(
+            "The attribute 'gsyn_i_mean' is deprecated and will be removed in a future version. "
+            "Please use 'inh_conductance_mean' instead.",
+            category=FutureWarning,
+            stacklevel=2
+        )
+        return self.inh_conductance_mean
+
+    @property
+    def gsyn_i_std(self):
+        warnings.warn(
+            "The attribute 'gsyn_i_std' is deprecated and will be removed in a future version. "
+            "Please use 'inh_conductance_std' instead.",
+            category=FutureWarning,
+            stacklevel=2
+        )
+        return self.inh_conductance_std
+
+
+
+
+
+
 
 
 class AdExNeuronTheoreticalResults(base.Results):

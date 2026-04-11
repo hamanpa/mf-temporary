@@ -2,12 +2,14 @@ from pathlib import Path
 import pickle
 from .base import BaseNeuronSimulator
 from .pynn_simulator import PyNNSimulator
+from .zerlaut2018_simulator import Zerlaut2018Simulator
 from .config import NeuronSimulationConfig
 from ..data_structures.single_neuron import SingleNeuronResults
 
 # The Registry: Add new simulators here in the future
 SIMULATOR_REGISTRY = {
     "pynn.nest": PyNNSimulator,
+    "zerlaut2018": Zerlaut2018Simulator,
 }
 
 def get_simulator(method_name: str) -> BaseNeuronSimulator:

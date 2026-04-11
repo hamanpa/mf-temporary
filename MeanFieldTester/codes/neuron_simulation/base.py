@@ -1,6 +1,6 @@
 from abc import ABC, abstractmethod
 from typing import Any
-from codes.data_structures.single_neuron import SingleNeuronResults
+from codes.data_structures.single_neuron import SingleNeuronResults, DataclassSingleNeuronResults
 
 class BaseNeuronSimulator(ABC):
     """
@@ -10,21 +10,21 @@ class BaseNeuronSimulator(ABC):
     """
 
     @abstractmethod
-    def simulate(self, neurons: dict[str, Any], sim_pars: dict[str, Any]) -> dict[str, SingleNeuronResults]:
+    def simulate(self, network_params: dict[str, Any], sim_pars: dict[str, Any]) -> dict[str, DataclassSingleNeuronResults]:
         """
         Executes the neuron simulation.
 
         Parameters
         ----------
-        neurons : dict
-            Dictionary with neuron parameters.
+        network_params : dict
+            Dictionary with network parameters.
         sim_pars : dict
             Dictionary with simulation parameters (e.g., simulation_time, dt, ranges).
 
         Returns
         -------
-        Dict[str, SingleNeuronResults]
+        Dict[str, DataclassSingleNeuronResults]
             A dictionary where keys are neuron names and values are the standardized 
-            SingleNeuronResults objects.
+            DataclassSingleNeuronResults objects.
         """
         pass

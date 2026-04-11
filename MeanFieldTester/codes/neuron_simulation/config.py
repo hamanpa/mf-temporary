@@ -8,6 +8,7 @@ import yaml
 
 class SimulatorType(str, Enum):
     PYNN_NEST = "pynn.nest"
+    ZERLAUT2018 = "zerlaut2018"
 
 
 class SingleNeuronCustomGrid(BaseModel):
