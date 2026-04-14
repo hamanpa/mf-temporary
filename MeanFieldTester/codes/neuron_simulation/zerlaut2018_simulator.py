@@ -18,7 +18,21 @@ from .base import BaseNeuronSimulator
 from .config import NeuronSimulationConfig
 from ..data_structures.single_neuron import SingleNeuronResults, DataclassSingleNeuronResults
 from pathlib import Path
+from ..network_params.translators import TranslationRule, translate_params
+from pydantic import BaseModel
 
+ZERLAUT2018_ADEX_MAPPING = {
+    'Gl': TranslationRule("g_L", sim_unit="nS"),
+    'Cm': TranslationRule("cm", sim_unit="pF"),
+    'Trefrac': TranslationRule("tau_refrac", sim_unit="ms"),
+    'El': TranslationRule("v_rest", sim_unit="mV"),
+    'Vthre': TranslationRule("v_thresh", sim_unit="mV"),
+    'Vreset': TranslationRule("v_reset", sim_unit="mV"),
+    'delta_v': TranslationRule("delta_T", sim_unit="mV"),
+    'a': TranslationRule("a", sim_unit="nS"),
+    'b': TranslationRule("b", sim_unit="pA"),
+    'tauw': TranslationRule("tau_w", sim_unit="ms"),
+}
 
 ################################################################################
 # What follows is the code from the original repository, which we will use to generate data
@@ -334,7 +348,7 @@ def generate_transfer_function(params,\
 
 class Zerlaut2018Simulator(BaseNeuronSimulator):
 
-    def get_connectivity_and_synapses_matrix(self, network_params, number=2, si_units=False):
+    def get_connectivity_and_synapses_matrix(self, network_params, si_units=False):
         # This is the implementation of the get_connectivity_and_synapses_matrix function from the original code
         # here we derive the matrix from the parameters in the expected format
 
@@ -343,19 +357,62 @@ class Zerlaut2018Simulator(BaseNeuronSimulator):
         # which is not the case in the current design, so I will have to change 
         # the design a bit, or just pass it as part of neuron_sim_params for now, 
         # and then change it later when we will have the network simulation module ready
-        print("WARNING: using the default (HARD-CODED) connectivity and synaptic parameters, not the ones from the config file")
+        number = len(network_params.internal_neurons)
+
+        exc_matches = 0
+        inh_matches = 0
+        for neuron_name in network_params.internal_neurons:
+            if network_params.neurons[neuron_name].neuron_type == "excitatory":
+                exc_neuron_name = neuron_name
+                exc_matches += 1
+            elif network_params.neurons[neuron_name].neuron_type == "inhibitory":
+                inh_neuron_name = neuron_name
+                inh_matches += 1
+        if exc_matches != 1 or inh_matches != 1:
+            raise ValueError("Expected exactly one excitatory and one inhibitory neuron")
+
 
         conn_matrix = np.empty((number, number), dtype=object)
         
-        exc_pop = {'p_conn':0.05, 'Q':1., 'Tsyn':5., 'Erev':0.}
-        inh_pop = {'p_conn':0.05, 'Q':5., 'Tsyn':5., 'Erev':-80.}
+        if network_params.network.connectivity[exc_neuron_name][exc_neuron_name] != network_params.network.connectivity[inh_neuron_name][exc_neuron_name]:
+            print("WARNING: the connectivity from excitatory to excitatory and from excitatory to inhibitory neurons are different, which is not supported by the current implementation, using the one from excitatory to excitatory neurons")
+
+        if network_params.network.connectivity[exc_neuron_name][inh_neuron_name] != network_params.network.connectivity[inh_neuron_name][inh_neuron_name]:
+            print("WARNING: the connectivity from inhibitory to excitatory and from inhibitory to inhibitory neurons are different, which is not supported by the current implementation, using the one from inhibitory to excitatory neurons")
+
+        exc_pop = {
+            **translate_params(
+                network_params.neurons[exc_neuron_name].neuron_params,
+                {
+                    'Tsyn': TranslationRule("tau_syn_E", sim_unit="ms"),
+                    'Erev': TranslationRule("e_rev_E", sim_unit="mV"),
+                }),
+            **translate_params(
+                network_params.synapses[exc_neuron_name].syn_params,
+                {'Q': TranslationRule("weight", sim_unit="nS")}),
+            "p_conn" : network_params.network.connectivity[exc_neuron_name][exc_neuron_name]
+        }
+
+        inh_pop = {
+            **translate_params(
+                network_params.neurons[inh_neuron_name].neuron_params,
+                {
+                    'Tsyn': TranslationRule("tau_syn_I", sim_unit="ms"),
+                    'Erev': TranslationRule("e_rev_I", sim_unit="mV"),
+                }),
+            **translate_params(
+                network_params.synapses[inh_neuron_name].syn_params,
+                {'Q': TranslationRule("weight", sim_unit="nS")}),
+            "p_conn" : network_params.network.connectivity[inh_neuron_name][inh_neuron_name]
+        }
+
         conn_matrix[:,0] = [exc_pop.copy(), inh_pop.copy()] # post-synaptic : exc
         conn_matrix[:,1] = [exc_pop.copy(), inh_pop.copy()] # post-synaptic : inh
         conn_matrix[0,0]['name'], conn_matrix[1,0]['name'] = 'ee', 'ie'
         conn_matrix[0,1]['name'], conn_matrix[1,1]['name'] = 'ei', 'ii'
         
         # in the first element we put the network number and connectivity information
-        conn_matrix[0,0]['Ntot'], conn_matrix[0,0]['gei'] = 10000, 0.2
+        conn_matrix[0,0]['Ntot'], conn_matrix[0,0]['gei'] = network_params.internal_size, network_params.g
         conn_matrix[0,0]['ext_drive'] = 4. # we also store here the choosen excitatory drive 
         conn_matrix[0,0]['afferent_exc_fraction'] = 1. # we also store here the choosen excitatory drive 
     
@@ -371,21 +428,11 @@ class Zerlaut2018Simulator(BaseNeuronSimulator):
 
     def get_neuron_params(self, single_neuron_params, name='', number=1, si_units=False):
 
-        if isinstance(single_neuron_params, dict):
+        if isinstance(single_neuron_params, BaseModel):
             params = {
                 'name': name,
                 'N': number,
-                'Gl': single_neuron_params['cm']/single_neuron_params['tau_m']*1e3,
-                'Cm': single_neuron_params['cm']*1e3,
-                'Trefrac': single_neuron_params['tau_refrac'],
-                'El': single_neuron_params['v_rest'],
-                'Vthre': single_neuron_params['v_thresh'],
-                'Vreset': single_neuron_params['v_reset'],
-                'delta_v': single_neuron_params['delta_T'],
-                'a': single_neuron_params['a'],
-                'b': single_neuron_params['b']*1e3,
-                'tauw': single_neuron_params['tau_w']
-
+                **translate_params(single_neuron_params, ZERLAUT2018_ADEX_MAPPING)
             }
         elif isinstance(single_neuron_params, str):
             if single_neuron_params=='LIF':
@@ -440,13 +487,13 @@ class Zerlaut2018Simulator(BaseNeuronSimulator):
         
         return params.copy()
 
-    def simulate(self, neuron_params: dict, neuron_sim_params: NeuronSimulationConfig) -> dict:
+    def simulate(self, network_params: dict, neuron_sim_params: NeuronSimulationConfig) -> dict:
         """Routes to the correct PyNN execution method based on neuron_sim_params.
         
         Parameters
         ----------
-        neuron_params : dict
-            Dictionary of parameters for the neuron models.
+        network_params : dict
+            Dictionary of parameters for the network models.
             items are: (neuron_name, dict of neuron parameters, synapses etc.)
         neuron_sim_params : NeuronSimulationConfig
             Configuration object containing grid specifications and other simulation parameters.
@@ -464,9 +511,11 @@ class Zerlaut2018Simulator(BaseNeuronSimulator):
         results = {}
         # possible Network_Model are 'Vogels-Abbott' and 'CONFIG1'
 
-        for neuron_name, single_neuron_params in neuron_params.items():
-            single_neuron_params = single_neuron_params['neuron_params']
-            conn_matrix = self.get_connectivity_and_synapses_matrix(None, si_units=True)
+        for neuron_name in network_params.internal_neurons:
+            single_neuron_params = network_params.neurons[neuron_name].neuron_params
+            
+            
+            conn_matrix = self.get_connectivity_and_synapses_matrix(network_params, si_units=True)
             params = self.get_neuron_params(single_neuron_params, name=neuron_name, si_units=True)
             reformat_syn_parameters(params, conn_matrix) # merging those parameters
     
@@ -556,6 +605,7 @@ class Zerlaut2018Simulator(BaseNeuronSimulator):
         return results
 
 
+################################################################################
 
 
 

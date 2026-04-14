@@ -1,0 +1,75 @@
+neurons:
+  exc_neuron:
+    neuron_type: excitatory
+    neuron_model: adex
+    neuron_params: &exc_neuron_params
+      v_rest: -65.0
+      v_reset: -65.0
+      tau_refrac: 5.0
+      tau_m: 15.0
+      cm: 0.150
+      e_rev_E: 0.0
+      e_rev_I: -80.0
+      tau_syn_E: 5.0
+      tau_syn_I: 5.0
+      a: 4.0
+      b: 0.02
+      delta_T: 2.0
+      tau_w: 500.0
+      v_thresh: -50.0
+  inh_neuron:
+    neuron_type: inhibitory
+    neuron_model: adex
+    neuron_params:
+      <<: *exc_neuron_params
+      a: 0.0
+      b: 0.0
+      delta_T: 0.5
+  drive_neuron:
+    neuron_type: excitatory
+    neuron_model: poisson_generator
+  stim_neuron:
+    neuron_type: excitatory
+    neuron_model: poisson_generator
+network:
+  size:
+    exc_neuron: &exc_size 8000
+    inh_neuron: 2000
+    drive_neuron: *exc_size
+    stim_neuron: *exc_size
+  connectivity:
+    exc_neuron:
+      exc_neuron: &conn_prob 0.05
+      inh_neuron: *conn_prob
+      drive_neuron: *conn_prob
+      stim_neuron: *conn_prob
+    inh_neuron:
+      exc_neuron: *conn_prob
+      inh_neuron: *conn_prob
+      drive_neuron: *conn_prob
+      stim_neuron: *conn_prob
+    drive_neuron:
+      exc_neuron: &no_conn 0.0
+      inh_neuron: *no_conn
+      drive_neuron: *no_conn
+      stim_neuron: *no_conn
+    stim_neuron:
+      exc_neuron: *no_conn
+      inh_neuron: *no_conn
+      drive_neuron: *no_conn
+      stim_neuron: *no_conn
+synapses:
+  exc_neuron: &exc_syn_params 
+    syn_type: static_synapse
+    syn_params:
+      weight: 1.0
+      delay: 1.0
+  inh_neuron:
+    syn_type: static_synapse
+    syn_params:
+      weight: 5.0
+      delay: 1.0
+  drive_neuron: *exc_syn_params
+  stim_neuron: *exc_syn_params
+
+

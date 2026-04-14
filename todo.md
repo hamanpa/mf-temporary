@@ -16,6 +16,11 @@ If a PhD student in your lab writes a custom simulator for a new type of hardwar
 Single Responsibility Principle (SRP)
 Single Responsibility Principle (they hold data and validate it, leaving the simulation logic to other classes).
 
+Avoid "anti-patterns"
+In software engineering, relying on the name of a variable to determine its physical properties is an anti-pattern known as "Stringly Typed Programming."
+
+In software design, there is a golden rule: "Code should be open for extension, but closed for modification."
+
 # Todos (code base)
 
 - [ ] neuron_simulation - make it more modular
@@ -169,3 +174,13 @@ Other Ideas:
     [ ] Make this work nicer condes.controller.config --template --schema
     [ ] DataclassSingleNeuronResults - if I do not find any reason why not to use dataclass use this as default and remove previous SingleNeuronResults class
     [ ] grid resolving (at least linear) could be in some helper function, not necessary to copy to each simulator
+
+
+    [ ] In network neuron_params add split of neuron model (type of neuron) and postsynaptic_model, have cell properties and input properties. At the moment irrelevant since only one neuron type is supported.
+    [ ] network connectivity type also might need extension, whether its probability of out going or incoming
+    [ ] model params add total size etc?
+    [ ] add internal parameter to neuron to mark inhibitory cell (inhibitory cell, excitatory cell, external cell)
+
+    [ ] PyNN simulator - translator of synaptic params
+    [ ] PyNN simulator - translator of initial values
+    [ ] PyNN simulator - translator of 'syn_type' now it is in accordance to PyNN but in the future we might want to have some more abstract way of defining synapse types in the config and then translating them to the specific simulator syntax, etc.

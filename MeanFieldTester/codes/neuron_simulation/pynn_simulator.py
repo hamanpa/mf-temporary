@@ -33,12 +33,40 @@ from scipy.interpolate import PchipInterpolator
 from .config import NeuronSimulationConfig
 from ..data_structures.single_neuron import SingleNeuronResults, DataclassSingleNeuronResults
 from .base import BaseNeuronSimulator
+from ..network_params.translators import TranslationRule, translate_params
 
 
-def simulate_adex_neuron_single_point(exc_rate : float, inh_rate : float ,
+
+# NOTE: Units based on this
+# https://neuralensemble.org/docs/PyNN/units.html
+
+PYNN_ADEX_MAPPING = {
+    "v_rest": TranslationRule("v_rest", sim_unit="mV"),
+    "v_reset": TranslationRule("v_reset", sim_unit="mV"),
+    "tau_refrac": TranslationRule("tau_refrac", sim_unit="ms"),
+    "tau_m": TranslationRule("tau_m", sim_unit="ms"),
+    "cm": TranslationRule("cm", sim_unit="nF"),
+    "e_rev_E": TranslationRule("e_rev_E", sim_unit="mV"),
+    "e_rev_I": TranslationRule("e_rev_I", sim_unit="mV"),
+    "tau_syn_E": TranslationRule("tau_syn_E", sim_unit="ms"),
+    "tau_syn_I": TranslationRule("tau_syn_I", sim_unit="ms"),
+    "a": TranslationRule("a", sim_unit="uS"),
+    "b": TranslationRule("b", sim_unit="nA"),
+    "delta_T": TranslationRule("delta_T", sim_unit="mV"),
+    "tau_w": TranslationRule("tau_w", sim_unit="ms"),
+    "v_thresh": TranslationRule("v_thresh", sim_unit="mV"),
+}
+
+
+
+
+def simulate_adex_neuron_single_point(
+                                exc_rate : float, 
+                                inh_rate : float,
                                 neuron_params : dict, 
                                 init_values : dict, 
-                                exc_synapses : dict, inh_synapses : dict,
+                                exc_synapses : dict, 
+                                inh_synapses : dict,
                                 simulation_time=1000.0, dt=0.1, seed=1,
                                 **kwargs) -> dict:
     """Simulates a single AdEx neuron with Poisson synaptic input.
@@ -47,10 +75,9 @@ def simulate_adex_neuron_single_point(exc_rate : float, inh_rate : float ,
         exc_rate (float): Rate of excitatory Poisson input (Hz).
         inh_rate (float): Rate of inhibitory Poisson input (Hz).
         neuron_params (dict): Parameters for the AdEx neuron model.
-        exc_syn_params (dict): Parameters for the excitatory synapse model.
-        inh_syn_params (dict): Parameters for the inhibitory synapse model.
-        exc_syn_number (int): Number of excitatory synapses.
-        inh_syn_number (int): Number of inhibitory synapses.
+        init_values (dict): Initial values for the neuron state variables.
+        exc_synapses (dict): Parameters for the excitatory synapse model.
+        inh_synapses (dict): Parameters for the inhibitory synapse model.
         synapse_type (str): Type of synapse to use (e.g., 'static_synapse').
 
         simulation_time (float, optional): Total simulation time in milliseconds
@@ -480,7 +507,7 @@ def resolve_adaptive_grid(neuron_name, neuron_params, neuron_sim_params):
     for inh_rate_idx, inh_rate in enumerate(inh_rates):
         tasks.append((
             inh_rate_idx, inh_rate, out_rate_targets, out_rate_max, n_coarse_points,
-            neuron_params[neuron_name], neuron_sim_params.model_dump()
+            neuron_params, neuron_sim_params.model_dump()
         ))
 
 
@@ -549,7 +576,7 @@ class PyNNSimulator(BaseNeuronSimulator):
         return exc_rate_grid, inh_rate_grid
 
 
-    def simulate(self, neuron_params: dict, neuron_sim_params: NeuronSimulationConfig) -> dict:
+    def simulate(self, network_params: dict, neuron_sim_params: NeuronSimulationConfig) -> dict:
         """Routes to the correct PyNN execution method based on neuron_sim_params.
         
         Parameters
@@ -570,18 +597,49 @@ class PyNNSimulator(BaseNeuronSimulator):
         """
         results = {}
 
-        for neuron_name, single_neuron_params in neuron_params.items():
+
+        exc_matches = 0
+        inh_matches = 0
+        for neuron_name in network_params.internal_neurons:
+            if network_params.neurons[neuron_name].neuron_type == "excitatory":
+                exc_neuron_name = neuron_name
+                exc_matches += 1
+            elif network_params.neurons[neuron_name].neuron_type == "inhibitory":
+                inh_neuron_name = neuron_name
+                inh_matches += 1
+        if exc_matches != 1 or inh_matches != 1:
+            raise ValueError("Expected exactly one excitatory and one inhibitory neuron")
+
+        for neuron_name in network_params.internal_neurons:
+            single_neuron_params = network_params.neurons[neuron_name]
             print(f"\n{'='*50}\nPreparing simulation for {neuron_name}\n{'='*50}")
 
-            exc_rate_grid, inh_rate_grid = self.resolve_grid(neuron_name, neuron_params, neuron_sim_params)
+
+            exc_syn_num = int(network_params.network.size[neuron_name] * network_params.network.connectivity[neuron_name][exc_neuron_name])
+            inh_syn_num = int(network_params.network.size[neuron_name] * network_params.network.connectivity[neuron_name][inh_neuron_name])
+
+            legacy_neuron_params = {
+                'neuron_params' : translate_params(single_neuron_params.neuron_params, PYNN_ADEX_MAPPING),
+                'init_values' : {},
+                'exc_synapses' : {
+                    **network_params.synapses[exc_neuron_name].model_dump(),
+                    'number' : exc_syn_num
+                },
+                'inh_synapses' : {
+                    **network_params.synapses[inh_neuron_name].model_dump(),
+                    'number' : inh_syn_num
+                },
+            }
+
+            exc_rate_grid, inh_rate_grid = self.resolve_grid(neuron_name, legacy_neuron_params, neuron_sim_params)
 
             if neuron_sim_params.cpus > 1:
                 neuron_result = simulate_adex_neuron_full_grid_multiprocess(
-                    neuron_name, single_neuron_params, exc_rate_grid, inh_rate_grid, neuron_sim_params
+                    neuron_name, legacy_neuron_params, exc_rate_grid, inh_rate_grid, neuron_sim_params
                 )
             else:
                 neuron_result = simulate_adex_neuron_full_grid(
-                    neuron_name, single_neuron_params, exc_rate_grid, inh_rate_grid, neuron_sim_params
+                    neuron_name, legacy_neuron_params, exc_rate_grid, inh_rate_grid, neuron_sim_params
                 )
 
             results[neuron_name] = neuron_result
