@@ -359,18 +359,8 @@ class Zerlaut2018Simulator(BaseNeuronSimulator):
         # and then change it later when we will have the network simulation module ready
         number = len(network_params.internal_neurons)
 
-        exc_matches = 0
-        inh_matches = 0
-        for neuron_name in network_params.internal_neurons:
-            if network_params.neurons[neuron_name].neuron_type == "excitatory":
-                exc_neuron_name = neuron_name
-                exc_matches += 1
-            elif network_params.neurons[neuron_name].neuron_type == "inhibitory":
-                inh_neuron_name = neuron_name
-                inh_matches += 1
-        if exc_matches != 1 or inh_matches != 1:
-            raise ValueError("Expected exactly one excitatory and one inhibitory neuron")
-
+        exc_neuron_name = network_params.exc_neuron_name
+        inh_neuron_name = network_params.inh_neuron_name
 
         conn_matrix = np.empty((number, number), dtype=object)
         
@@ -572,6 +562,8 @@ class Zerlaut2018Simulator(BaseNeuronSimulator):
             else:
                 raise ValueError(f"Unknown grid type: {grid_params.grid_type}")
 
+            exc_neuron_name = network_params.exc_neuron_name
+            inh_neuron_name = network_params.inh_neuron_name
 
             n_runs = int(neuron_sim_params.n_runs)
             out_rate = np.zeros((exc_n_points, inh_n_points, n_runs))
@@ -583,10 +575,8 @@ class Zerlaut2018Simulator(BaseNeuronSimulator):
                     for n_run in range(n_runs):
                         out_rate[exc_idx, inh_idx, n_run] = single_experiment(
                             t=np.arange(0, neuron_sim_params.simulation_time/1000., neuron_sim_params.time_step/1000.),  # converting ms to s
-                            fe=exc_rate,  # TODO: correct this
-                            #fe= Fe_eff[i][e]*(1-params['gei'])*params['pconnec']*params['Ntot'],
-                            fi=inh_rate,  # TODO: correct this
-                            # fi=fiSim[i]*params['gei']*params['pconnec']*params['Ntot']
+                            fe=exc_rate*(1-params['gei'])*params['pconnec']*params['Ntot'],
+                            fi=inh_rate*params['gei']*params['pconnec']*params['Ntot'],
                             params=params,
                             seed=neuron_sim_params.seed + n_run
                         )

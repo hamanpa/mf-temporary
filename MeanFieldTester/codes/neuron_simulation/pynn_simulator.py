@@ -596,37 +596,23 @@ class PyNNSimulator(BaseNeuronSimulator):
 
         """
         results = {}
-
-
-        exc_matches = 0
-        inh_matches = 0
-        for neuron_name in network_params.internal_neurons:
-            if network_params.neurons[neuron_name].neuron_type == "excitatory":
-                exc_neuron_name = neuron_name
-                exc_matches += 1
-            elif network_params.neurons[neuron_name].neuron_type == "inhibitory":
-                inh_neuron_name = neuron_name
-                inh_matches += 1
-        if exc_matches != 1 or inh_matches != 1:
-            raise ValueError("Expected exactly one excitatory and one inhibitory neuron")
-
         for neuron_name in network_params.internal_neurons:
             single_neuron_params = network_params.neurons[neuron_name]
             print(f"\n{'='*50}\nPreparing simulation for {neuron_name}\n{'='*50}")
 
 
-            exc_syn_num = int(network_params.network.size[neuron_name] * network_params.network.connectivity[neuron_name][exc_neuron_name])
-            inh_syn_num = int(network_params.network.size[neuron_name] * network_params.network.connectivity[neuron_name][inh_neuron_name])
+            exc_syn_num = int(network_params.network.size[neuron_name] * network_params.network.connectivity[neuron_name][network_params.exc_neuron_name])
+            inh_syn_num = int(network_params.network.size[neuron_name] * network_params.network.connectivity[neuron_name][network_params.inh_neuron_name])
 
             legacy_neuron_params = {
                 'neuron_params' : translate_params(single_neuron_params.neuron_params, PYNN_ADEX_MAPPING),
                 'init_values' : {},
                 'exc_synapses' : {
-                    **network_params.synapses[exc_neuron_name].model_dump(),
+                    **network_params.synapses[network_params.exc_neuron_name].model_dump(),
                     'number' : exc_syn_num
                 },
                 'inh_synapses' : {
-                    **network_params.synapses[inh_neuron_name].model_dump(),
+                    **network_params.synapses[network_params.inh_neuron_name].model_dump(),
                     'number' : inh_syn_num
                 },
             }

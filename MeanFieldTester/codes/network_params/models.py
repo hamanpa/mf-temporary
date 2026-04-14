@@ -154,5 +154,18 @@ class BiologicalParameters(BaseModel):
 
         return inh_size / self.internal_size
 
+    @property
+    def exc_neuron_name(self) -> str:
+        """Returns the name of the excitatory population. Assumes there is exactly one."""
+        exc_neurons = [name for name in self.internal_neurons if self.neurons[name].neuron_type == "excitatory"]
+        if len(exc_neurons) != 1:
+            raise ValueError(f"Expected exactly one excitatory population, but found {len(exc_neurons)}: {exc_neurons}")
+        return exc_neurons[0]
 
-
+    @property
+    def inh_neuron_name(self) -> str:
+        """Returns the name of the inhibitory population. Assumes there is exactly one."""
+        inh_neurons = [name for name in self.internal_neurons if self.neurons[name].neuron_type == "inhibitory"]
+        if len(inh_neurons) != 1:
+            raise ValueError(f"Expected exactly one inhibitory population, but found {len(inh_neurons)}: {inh_neurons}")
+        return inh_neurons[0]
