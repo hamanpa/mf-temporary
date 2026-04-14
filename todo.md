@@ -184,3 +184,4 @@ Other Ideas:
     [ ] PyNN simulator - translator of synaptic params
     [ ] PyNN simulator - translator of initial values
     [ ] PyNN simulator - translator of 'syn_type' now it is in accordance to PyNN but in the future we might want to have some more abstract way of defining synapse types in the config and then translating them to the specific simulator syntax, etc.
+    [ ] PyNN simulator, load the units from the model used? Such that I do not have to hard code the units and do not have to make mapping for each neuron model

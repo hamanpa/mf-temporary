@@ -17,7 +17,6 @@ Design choice:
   converted to dictionaries before being passed to the simulator 
   (use method params.model_dump() before passing to the simulator).
 
-  
 """
 
 
@@ -50,14 +49,31 @@ PYNN_ADEX_MAPPING = {
     "e_rev_I": TranslationRule("e_rev_I", sim_unit="mV"),
     "tau_syn_E": TranslationRule("tau_syn_E", sim_unit="ms"),
     "tau_syn_I": TranslationRule("tau_syn_I", sim_unit="ms"),
-    "a": TranslationRule("a", sim_unit="uS"),
+    "a": TranslationRule("a", sim_unit="nS"),
     "b": TranslationRule("b", sim_unit="nA"),
     "delta_T": TranslationRule("delta_T", sim_unit="mV"),
     "tau_w": TranslationRule("tau_w", sim_unit="ms"),
     "v_thresh": TranslationRule("v_thresh", sim_unit="mV"),
 }
 
+PYNN_STATIC_SYNAPSE_MAPPING = {
+    "weight": TranslationRule("weight", sim_unit="uS"),
+    "delay": TranslationRule("delay", sim_unit="ms"),
+}
 
+NEST_STATIC_SYNAPSE_MAPPING = {
+    "weight": TranslationRule("weight", sim_unit="nS"),
+    "delay": TranslationRule("delay", sim_unit="ms"),
+}
+
+NEST_TSODYKS_SYNAPSE_MAPPING = {
+    "weight": TranslationRule("weight", sim_unit="nS"),
+    "delay": TranslationRule("delay", sim_unit="ms"),
+    "tau_psc": TranslationRule("tau_rp", sim_unit="ms"),
+    "tau_fac": TranslationRule("tau_psc", sim_unit="ms"),
+    "tau_rec": TranslationRule("tau_rec", sim_unit="ms"),
+    "U": TranslationRule("U", sim_unit="")
+}
 
 
 def simulate_adex_neuron_single_point(
@@ -601,18 +617,24 @@ class PyNNSimulator(BaseNeuronSimulator):
             print(f"\n{'='*50}\nPreparing simulation for {neuron_name}\n{'='*50}")
 
 
-            exc_syn_num = int(network_params.network.size[neuron_name] * network_params.network.connectivity[neuron_name][network_params.exc_neuron_name])
-            inh_syn_num = int(network_params.network.size[neuron_name] * network_params.network.connectivity[neuron_name][network_params.inh_neuron_name])
+            exc_syn_num = int(network_params.network.size[network_params.exc_neuron_name] * network_params.network.connectivity[neuron_name][network_params.exc_neuron_name])
+            inh_syn_num = int(network_params.network.size[network_params.inh_neuron_name] * network_params.network.connectivity[neuron_name][network_params.inh_neuron_name])
+
+            exc_synapse_mapping = NEST_TSODYKS_SYNAPSE_MAPPING if network_params.synapses[network_params.exc_neuron_name].syn_type == "tsodyks_synapse" else NEST_STATIC_SYNAPSE_MAPPING
+            inh_synapse_mapping = NEST_TSODYKS_SYNAPSE_MAPPING if network_params.synapses[network_params.inh_neuron_name].syn_type == "tsodyks_synapse" else NEST_STATIC_SYNAPSE_MAPPING
+
 
             legacy_neuron_params = {
                 'neuron_params' : translate_params(single_neuron_params.neuron_params, PYNN_ADEX_MAPPING),
                 'init_values' : {},
                 'exc_synapses' : {
-                    **network_params.synapses[network_params.exc_neuron_name].model_dump(),
+                    'syn_type' : network_params.synapses[network_params.exc_neuron_name].syn_type,
+                    'syn_params' : translate_params(network_params.synapses[network_params.exc_neuron_name].syn_params, exc_synapse_mapping),
                     'number' : exc_syn_num
                 },
                 'inh_synapses' : {
-                    **network_params.synapses[network_params.inh_neuron_name].model_dump(),
+                    'syn_type' : network_params.synapses[network_params.inh_neuron_name].syn_type,
+                    'syn_params' : translate_params(network_params.synapses[network_params.inh_neuron_name].syn_params, inh_synapse_mapping),
                     'number' : inh_syn_num
                 },
             }

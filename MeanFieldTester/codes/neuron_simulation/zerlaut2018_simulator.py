@@ -520,8 +520,8 @@ class Zerlaut2018Simulator(BaseNeuronSimulator):
                     MAXfexc = grid_params.out_rate_grid[1],  # Maximum excitatory frequency (default=30.)
                     MAXfinh = grid_params.inh_rate_grid[1],  # Limits for inhibitory frequency (default=[1.,20.])
                     MINfinh = grid_params.inh_rate_grid[0],  # Limits for inhibitory frequency (default=[1.,20.])
-                    discret_exc = grid_params.out_rate_grid[2],  # Discretization (number of points) of excitatory frequencies (default=9)
-                    discret_inh = grid_params.inh_rate_grid[2],  # Discretization (number of points) of inhibitory frequencies (default=8)
+                    discret_exc = int(grid_params.out_rate_grid[2]),  # Discretization (number of points) of excitatory frequencies (default=9)
+                    discret_inh = int(grid_params.inh_rate_grid[2]),  # Discretization (number of points) of inhibitory frequencies (default=8)
                     MAXfout = grid_params.out_rate_grid[1],  # Maximum output frequency (default=30.)
                     SEED = neuron_sim_params.seed,
                     verbose = False,
@@ -562,8 +562,6 @@ class Zerlaut2018Simulator(BaseNeuronSimulator):
             else:
                 raise ValueError(f"Unknown grid type: {grid_params.grid_type}")
 
-            exc_neuron_name = network_params.exc_neuron_name
-            inh_neuron_name = network_params.inh_neuron_name
 
             n_runs = int(neuron_sim_params.n_runs)
             out_rate = np.zeros((exc_n_points, inh_n_points, n_runs))
