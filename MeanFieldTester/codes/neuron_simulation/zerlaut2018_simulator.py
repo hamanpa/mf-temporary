@@ -16,7 +16,7 @@ doi: 10.1007/s10827-017-0668-2.
 
 from .base import BaseNeuronSimulator
 from .config import NeuronSimulationConfig
-from ..data_structures.single_neuron import SingleNeuronResults, DataclassSingleNeuronResults
+from ..data_structures.single_neuron import SingleNeuronResults
 from pathlib import Path
 from ..network_params.translators import TranslationRule, translate_params
 from pydantic import BaseModel
@@ -338,8 +338,15 @@ def generate_transfer_function(params,\
         # now we really finish the fe loop
 
     # then we save the results
-    np.save(filename, np.array([MEANfreq, SDfreq, Fe_eff, fiSim, params]))
-    print('numerical TF data saved in :', filename)
+    ############################################################################
+    # NOTE: this has been changed compared to the original code,
+    # we do not want to save the data, we just return them
+    return [MEANfreq, SDfreq, Fe_eff, fiSim, params]
+
+    # np.save(filename, np.array([MEANfreq, SDfreq, Fe_eff, fiSim, params], dtype=object))
+    # print('numerical TF data saved in :', filename)
+    ############################################################################
+
 
 ################################################################################
 # follows Simulator class which was not in the original repository, 
@@ -515,7 +522,7 @@ class Zerlaut2018Simulator(BaseNeuronSimulator):
                     raise ValueError("For adaptive grid, exc_rate_grid must be set to 'adaptive'")
                 
                 file_name = Path('data').resolve() / f"{neuron_name}_zerlaut2018simulator_tmp.npy"
-                generate_transfer_function(
+                zerlaut_results = generate_transfer_function(
                     params,
                     MAXfexc = grid_params.out_rate_grid[1],  # Maximum excitatory frequency (default=30.)
                     MAXfinh = grid_params.inh_rate_grid[1],  # Limits for inhibitory frequency (default=[1.,20.])
@@ -529,9 +536,8 @@ class Zerlaut2018Simulator(BaseNeuronSimulator):
                     dt = neuron_sim_params.time_step/1000.,  # converting ms to s (default 5e-5 s)
                     tstop = neuron_sim_params.simulation_time/1000. # converting ms to s (default 10 s)
                 )
-                # TODO: load the results and put them in the right format, for now we just save them in a file, but we should return them as a dictionary
-                zerlaut_results = np.load(file_name, allow_pickle=True)
-                results[neuron_name] = DataclassSingleNeuronResults(
+
+                results[neuron_name] = SingleNeuronResults(
                     simulator_name='Zerlaut2018Simulator',
                     neuron_name=neuron_name,
                     neuron_params=single_neuron_params,
@@ -541,7 +547,6 @@ class Zerlaut2018Simulator(BaseNeuronSimulator):
                     out_rate_mean=zerlaut_results[0].T,  # Mean output firing rate (Hz)
                     out_rate_std=zerlaut_results[1].T,  # STD firing rate (Hz)
                 )
-                file_name.unlink() # Remove the temporary file after loading
                 continue
 
             if grid_params.grid_type == "linear":
@@ -579,7 +584,7 @@ class Zerlaut2018Simulator(BaseNeuronSimulator):
                             seed=neuron_sim_params.seed + n_run
                         )
 
-            results[neuron_name] = DataclassSingleNeuronResults(
+            results[neuron_name] = SingleNeuronResults(
                 simulator_name='Zerlaut2018Simulator',
                 neuron_name=neuron_name,
                 neuron_params=single_neuron_params,

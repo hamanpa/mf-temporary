@@ -178,10 +178,23 @@ Other Ideas:
 
     [ ] In network neuron_params add split of neuron model (type of neuron) and postsynaptic_model, have cell properties and input properties. At the moment irrelevant since only one neuron type is supported.
     [ ] network connectivity type also might need extension, whether its probability of out going or incoming
-    [ ] model params add total size etc?
-    [ ] add internal parameter to neuron to mark inhibitory cell (inhibitory cell, excitatory cell, external cell)
 
     [ ] PyNN simulator - translator of synaptic params
     [ ] PyNN simulator - translator of initial values
     [ ] PyNN simulator - translator of 'syn_type' now it is in accordance to PyNN but in the future we might want to have some more abstract way of defining synapse types in the config and then translating them to the specific simulator syntax, etc.
     [ ] PyNN simulator, load the units from the model used? Such that I do not have to hard code the units and do not have to make mapping for each neuron model
+
+    [ ] when possible remove cell_library
+
+    [ ] neuron_simulation - execution modes skip, validation
+    [ ] neuron_simulation - linear, custom grid can be resolved the same for all the simulators, only custom has to be implemented specifically for each simulator
+    [ ] neuron_simulation - option to pick neuron model
+    
+
+    transfer_function
+      [ ] clean up my code, it definitely can be refactored (united into one MFT class with parameter telling what is required) instead of class for each case
+
+      [ ] 
+
+    Verify:
+    [ ] I have changed the adaptation units to nA (removed the 1e3 factor, be aware of it and ensure it is ok)

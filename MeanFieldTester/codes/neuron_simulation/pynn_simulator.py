@@ -30,7 +30,7 @@ import numpy as np
 from scipy.interpolate import PchipInterpolator
 
 from .config import NeuronSimulationConfig
-from ..data_structures.single_neuron import SingleNeuronResults, DataclassSingleNeuronResults
+from ..data_structures.single_neuron import SingleNeuronResults
 from .base import BaseNeuronSimulator
 from ..network_params.translators import TranslationRule, translate_params
 
@@ -161,7 +161,7 @@ def simulate_adex_neuron_single_point(
 
 def simulate_adex_neuron_full_grid(neuron_name: str, neuron_params: dict, 
                                 exc_rate_grid: np.ndarray, inh_rate_grid: np.ndarray, 
-                                neuron_sim_params: NeuronSimulationConfig) -> DataclassSingleNeuronResults:
+                                neuron_sim_params: NeuronSimulationConfig) -> SingleNeuronResults:
     """
     Simulates a single AdEx neuron across a grid of excitatory and inhibitory input rates.
     """
@@ -226,15 +226,16 @@ def simulate_adex_neuron_full_grid(neuron_name: str, neuron_params: dict,
                 inh_conductance_mean[exc_idx,inh_idx,n_run] = inh_conductance_steady.mean()
                 inh_conductance_std[exc_idx,inh_idx,n_run] = inh_conductance_steady.std()
 
-    return DataclassSingleNeuronResults(
+    return SingleNeuronResults(
+        simulator_name=neuron_sim_params.simulator,
         neuron_name=neuron_name,
         neuron_params=neuron_params,
         exc_rate_grid=exc_rate_grid,
         inh_rate_grid=inh_rate_grid,
         out_rate_mean=out_rate.mean(axis=2),
         out_rate_std=out_rate.std(axis=2),
-        adaptation_mean=adaptation_mean.mean(axis=2) * 1e3,      # convert from nA to pA
-        adaptation_std=adaptation_std.mean(axis=2) * 1e3, # convert from nA to pA
+        adaptation_mean=adaptation_mean.mean(axis=2),
+        adaptation_std=adaptation_std.mean(axis=2),
         voltage_mean=voltage_mean.mean(axis=2),
         voltage_std=voltage_std.mean(axis=2),
         tau_V=tau_V.mean(axis=2),
@@ -301,7 +302,7 @@ def _adex_neuron_worker(task_data):
 
 def simulate_adex_neuron_full_grid_multiprocess(neuron_name: str, neuron_params: dict, 
                                              exc_rate_grid: np.ndarray, inh_rate_grid: np.ndarray, 
-                                             neuron_sim_params: NeuronSimulationConfig) -> DataclassSingleNeuronResults:
+                                             neuron_sim_params: NeuronSimulationConfig) -> SingleNeuronResults:
     """Parallelized execution of the unified batch runner using an un-ordered Pool."""
     exc_n_points, inh_n_points = exc_rate_grid.shape
     seed = neuron_sim_params.seed
@@ -351,15 +352,16 @@ def simulate_adex_neuron_full_grid_multiprocess(neuron_name: str, neuron_params:
 
     print(f"Finished {neuron_name} multiprocessing batch.")
 
-    return DataclassSingleNeuronResults(
+    return SingleNeuronResults(
+        simulator_name=neuron_sim_params.simulator,
         neuron_name=neuron_name,
         neuron_params=neuron_params,
         exc_rate_grid=exc_rate_grid,
         inh_rate_grid=inh_rate_grid,
         out_rate_mean=out_rate.mean(axis=2),
         out_rate_std=out_rate.std(axis=2),
-        adaptation_mean=adaptation_mean.mean(axis=2) * 1e3,      # convert from nA to pA
-        adaptation_std=adaptation_std.mean(axis=2) * 1e3, # convert from nA to pA
+        adaptation_mean=adaptation_mean.mean(axis=2),
+        adaptation_std=adaptation_std.mean(axis=2),
         voltage_mean=voltage_mean.mean(axis=2),
         voltage_std=voltage_std.mean(axis=2),
         voltage_tau=voltage_tau.mean(axis=2),

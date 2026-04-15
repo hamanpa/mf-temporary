@@ -13,72 +13,6 @@ import codes.data_structures.base as base
 from codes.transfer_function import MPF_with_nu_out
 
 
-class SingleNeuronResults(base.Results):
-    """Data structure for storing results from a single neuron simulation.
-    
-    That means it contains the stationary results for constant synaptic input
-
-    Units
-    -----
-    - nu_e, nu_i : [Hz]
-    - nu_out : [Hz]
-    - w_mean, w_std : [pA]
-    - v_mean, v_std : [mV]
-    - v_tau : [ms]
-    - gsyn_e_mean, gsyn_e_std : [nS]
-    - gsyn_i_mean, gsyn_i_std : [nS]
-
-    """
-
-    def __init__(self, neuron_name, neuron_params, results):
-        self.neuron_name = neuron_name
-        self.neuron_params = neuron_params
-
-        # 2D grid (nu_e, nu_i)
-        self.nu_e = results["nu_e"]
-        self.nu_i = results["nu_i"]
-
-        self.nu_out_mean = results["nu_out"]
-        self.nu_out_std = results["nu_out_std"]
-
-        self.w_mean = results["mu_w"]
-        self.w_std = results["sigma_w"]
-
-        self.v_mean = results["mu_V"]
-        self.v_std = results["sigma_V"]
-        self.v_tau = results["tau_V"]
-
-        self.gsyn_e_mean = results['mu_ge']
-        self.gsyn_e_std = results['sigma_ge']
-
-        self.gsyn_i_mean = results['mu_gi']
-        self.gsyn_i_std = results['sigma_gi']
-
-
-        # Updated naming to match the new structure
-        # All the results are 2D arrays with the indexing (exc_rate, inh_rate)
-
-        # Mean synaptic drive used in the trials
-        self.exc_drive_mean = results["nu_e"]
-        self.inh_drive_mean = results["nu_i"]
-
-        # In the following the mean and std are computed first over stationary time
-        # and then over trials
-        self.out_rate_mean = results["nu_out"]
-        self.out_rate_std = results["nu_out_std"]
-
-        self.adaptation_mean = results["mu_w"]
-        self.adaptation_std = results["sigma_w"]
-
-        self.voltage_mean = results["mu_V"]
-        self.voltage_std = results["sigma_V"]
-        self.voltage_tau = results["tau_V"]
-
-        self.exc_conductance_mean = results['mu_ge']
-        self.exc_conductance_std = results['sigma_ge']
-        self.inh_conductance_mean = results['mu_gi']
-        self.inh_conductance_std = results['sigma_gi']
-
 @dataclass(frozen=True)
 class DataclassResults:
 
@@ -104,15 +38,15 @@ class DataclassResults:
         print(f"WARNING: File size: {int(file_size)} MB")
 
 @dataclass(frozen=True)
-class DataclassSingleNeuronResults(DataclassResults):
+class SingleNeuronResults(DataclassResults):
     # All the results are 2D arrays with the indexing (exc_rate, inh_rate)
 
     simulator_name: str = None
     neuron_name: str = None
     neuron_params: dict = None
     neuron_sim_params: dict = None
-    spikes: np.ndarray = None
 
+    spikes: np.ndarray = None
     exc_rate_grid: np.ndarray = None
     inh_rate_grid: np.ndarray = None
     out_rate_mean: np.ndarray = None
