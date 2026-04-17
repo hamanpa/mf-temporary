@@ -303,7 +303,9 @@ class TransferFunctionFitPlot(BaseTransferFunctionPlot):
 
     # NOTE: this one should follow plot_multiple_tf_fits
 
-    def _draw(self, ax, neuron_results:SingleNeuronResults, tf_funcs_list:list[tf.TransferFunction]):
+    def _draw(self, ax, neuron_results:SingleNeuronResults, 
+              tf_funcs_list):
+            #   tf_funcs_list:list[tf.TransferFunction]):
         if self.full_params['colors'] is None:
             prop_cycle = plt.rcParams['axes.prop_cycle']
             colors = prop_cycle.by_key()['color']            
@@ -335,7 +337,9 @@ class TransferFunctionFitPlot(BaseTransferFunctionPlot):
                         )
 
             for tf_funcs, ls in zip(tf_funcs_list, self.full_params['linestyles']):
-                if type(tf_funcs) == tf.TransferFunctionAdaptation or type(tf_funcs) == tf.TransferFunctionAdaptation_FitWithW:
+                # Previous condition:
+                # if type(tf_funcs) == tf.TransferFunctionAdaptation or type(tf_funcs) == tf.TransferFunctionAdaptation_FitWithW:
+                if tf_funcs.tf_params.tf_model.adaptation:
                     w = neuron_results.w_mean[:,nu_i_idx]*1e-3  # Convert pA to nA
                     nu_out_fit = tf_funcs(neuron_results.nu_e[:,nu_i_idx], nu_i, w, flattened=True)
                 else:

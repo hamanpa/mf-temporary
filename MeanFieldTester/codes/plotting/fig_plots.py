@@ -18,7 +18,7 @@ from codes import plotting as ax_plt
 
 from codes.data_structures.network import MFResults, SNNResults
 from codes.data_structures.single_neuron import SingleNeuronResults
-from codes.transfer_function import TransferFunction
+# from codes.transfer_function import TransferFunction
 
 DEFAULT_FIG_PARAMS = {
     'fontsize': 14,
@@ -126,7 +126,8 @@ def fig_neuron_activity(neuron_results:dict[SingleNeuronResults],
 ################################################################################
 
 def fig_tf_fits_together(neuron_results:dict[SingleNeuronResults], 
-                tf_funcs:dict[TransferFunction], 
+                tf_funcs, 
+                # tf_funcs:dict[TransferFunction], 
                 common_params:dict, 
                 fig_params:dict): 
     """Plot transfer function fits for each neuron.

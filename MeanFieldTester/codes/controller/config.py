@@ -15,13 +15,19 @@ import argparse
 from pathlib import Path
 from pydantic import BaseModel
 
-from codes.neuron_simulation.config import NeuronSimulationConfig, RunSimulationConfig, GridConfig, SingleNeuronLinearGrid, SimulatorType
+from ..neuron_simulation.config import NeuronSimulationConfig, RunSimulationConfig, GridConfig, SingleNeuronLinearGrid, SimulatorType
+from ..transfer_function.config import TransferFunctionConfig
+
 # from codes.meanfield_simulation.config import MeanFieldConfig
 # from codes.network_simulation.config import NetworkConfig
 
-# Define the Master Workflow
 class WorkflowConfig(BaseModel):
     neuron_simulation: NeuronSimulationConfig
+
+    # TODO: transfer_function will be part of meanfield_simulation, not a separate module
+    # it is here for testing (and because MeanFieldConfig is not yet defined)
+    transfer_function: TransferFunctionConfig
+    
     # meanfield_simulation: MeanFieldConfig 
     # network_simulation: NetworkConfig
 

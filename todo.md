@@ -23,11 +23,6 @@ In software design, there is a golden rule: "Code should be open for extension, 
 
 # Todos (code base)
 
-- [ ] neuron_simulation - make it more modular
-- [ ] neuron_simulation - allow custom grid
-- [ ] neuron_simulation - better naming workflow_params
-- [ ] neuron_simulation - add zerlaut2018_simulator.py
-
 ### General MFT Code
 - [ ] **Units handling setup**
   - [ ] Correct adaptation conversion logic.
@@ -54,10 +49,8 @@ In software design, there is a golden rule: "Code should be open for extension, 
   - [ ] Write basic tests to check core functions quickly.
 
 ### Controller & Workflow
+- [ ] controller is god class, is it antipattern? should I change it?
 - [ ] **`workflow_params` improvements**
-  - [ ] Allow passing custom grids for neuron simulation.
-  - [ ] Fix naming inconsistencies (e.g., rename to `fix_nu_out`).
-  - [ ] Add support for custom data output paths.
 - [ ] **Model selection**
   - [ ] Update `workflow_params` to accept MF model name strings.
   - [ ] Update `workflow_params` to accept SNN model name strings.
@@ -68,28 +61,37 @@ In software design, there is a golden rule: "Code should be open for extension, 
   - [ ] Implement parallelization for MF simulations.
   - [ ] Implement parallelization for stimuli generation.
 
-### Cell Library
-- [ ] **Refactor parameter handling**
-  - [ ] Create a unified class/structure that holds raw biological parameters.
-  - [ ] Write a method to generate a proper dictionary for NEST.
-  - [ ] Write a method to generate a proper dictionary for PyNN.
-  - [ ] Write a method to generate a proper dictionary for TVB.
-- [ ] **Unit conversions**
-  - [ ] Add robust unit conversion methods specifically within the cell library.
 
-### Neuron Simulation & Transfer Function
-- [ ] **Clarify loading vs. simulating**
-  - [ ] Resolve the intended behavior between `simulate_single_neuron` and `load_single_neuron`.
-  - [ ] Implement a check comparing loaded params against current network params.
-- [ ] **Update results format**
-  - [ ] Update `neuron_simulation.py` to correctly output/use `helper.SingleNeuronResults`.
-  - [ ] Update `transfer_function.py` to correctly output/use `helper.SingleNeuronResults`.
-- [ ] **Zerlaut/DiVolo examples**
-  - [ ] Create clear code examples showing how to initialize and pick between these two modules.
+
+### Cell Library
+- [ ] Replace this module by `network_params`
+- [ ] Once `network_params` is fully integrated, remove this module.
+
+### Network params
+
+
+### Neuron Simulation
+- [ ] implement execution modes 'skip", 'validate' (comparison of existing data and newly generated ones)
 - [ ] **Implement specific computations**
-  - [ ] Add computation for `tau_V`.
-  - [ ] Add computation for membrane voltage fluctuations.
-  - [ ] Add computation for `sigma_w`.
+  - [ ] Add computation for `voltage_tau`.
+  - [ ] Add computation for `adaptation_std`.
+- [ ] 
+
+### Transfer function
+- [ ] implement Zerlaut2018
+- [ ] implement DiVolo2018
+
+
+### Network simulation
+- [ ] rename to `snn_simulation` (clearer name)
+- [ ] implement new config, base, more modular approach (same as `neuron_simulation` and `transfer_function`)
+- [ ]
+
+### Mean-field simulation
+- [ ] implement new config, base, more modular approach (same as `neuron_simulation` and `transfer_function`)
+- [ ] 
+
+
 
 ### Plotting
 - [ ] **Remove naming convention reliance**
@@ -198,3 +200,26 @@ Other Ideas:
 
     Verify:
     [ ] I have changed the adaptation units to nA (removed the 1e3 factor, be aware of it and ensure it is ok)
+
+
+
+# Plan
+
+- [ ] Implement transfer function zerlaut2018, divolo2019
+- [ ] test it
+- [ ] issue 1 presentation
+  - [ ] Data generation
+    - [ ] Zerlaut script vs Zerlaut MFT
+    - [ ] Zerlaut MFT vs PyNN MFT
+    - [ ] result --> we are confident to use PyNN MFT data
+  - [ ] Transfer function
+    - [ ] zerlaut script vs zerlaut MFT
+    - [ ] divolo script vs divolo MFT
+    - [ ] zerlaut MFT, divolo MFT vs NeuroPSI cutom MFT
+    - [ ] result --> we are confident to use NeuroPSI cutom MFT
+  - [ ] Issue 1 : DiVolo published fit does not hold!
+    - [ ] inspect various parameters set up (check adaptation parameters)
+    - [ ] sources of error - come up what could it be (network parameter)
+  - [ ] replicate diVolo paper
+    - [ ] update network simulation, meanfield simulation (or make it usable with new params structure and refactor it later)
+    - [ ] with MFT I can investigate edge cases etc

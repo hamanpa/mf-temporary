@@ -10,7 +10,6 @@ from dataclasses import dataclass
 import pickle
 
 import codes.data_structures.base as base
-from codes.transfer_function import MPF_with_nu_out
 
 
 @dataclass(frozen=True)
