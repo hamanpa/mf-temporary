@@ -196,7 +196,7 @@ class NeuroPSICustomTF(BaseTransferFunction):
             v_eff_pred = self._evaluate_effective_potential(
                 voltage_mean=voltage_mean[mask1], 
                 voltage_std=voltage_std[mask1], 
-                voltage_tau=voltage_tau[mask1], 
+                voltage_tau_n=voltage_tau_n[mask1], 
                 conductance_mean=conductance_mean[mask1], 
                 coefs=guess_coefs
             )

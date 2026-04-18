@@ -54,10 +54,10 @@ class DiVolo2019TF(BaseTransferFunction):
                 self.network_params.neurons[self.neuron_name].neuron_params, 
                 DIVOLO2019_ADEX_MAPPING_SI),
             **translate_params(
-                self.network_params.synapses[exc_neuron_name].synapse_params,
+                self.network_params.synapses[exc_neuron_name].syn_params,
                 {'Qe': TranslationRule("weight", sim_unit="S")}), # Assuming nS from previous fix
             **translate_params(
-                self.network_params.synapses[inh_neuron_name].synapse_params,
+                self.network_params.synapses[inh_neuron_name].syn_params,
                 {'Qi': TranslationRule("weight", sim_unit="S")}), # Assuming nS from previous fix
             'pconnec': self.network_params.network.connectivity[exc_neuron_name][exc_neuron_name],
             'Ntot': self.network_params.internal_size,
@@ -73,7 +73,7 @@ class DiVolo2019TF(BaseTransferFunction):
         Fe_eff = single_neuron_results.exc_rate_grid.T
         fiSim = single_neuron_results.inh_rate_grid.T
         Fout = single_neuron_results.out_rate_mean.T
-        w_eff = single_neuron_results.adaptation_mean.T
+        w_eff = single_neuron_results.adaptation_mean.T*1e-9
         
         if not (Fe_eff.shape == fiSim.shape == Fout.shape == w_eff.shape):
             raise ValueError(f"Grid shape mismatch: Fe_eff {Fe_eff.shape}, fiSim {fiSim.shape}, Fout {Fout.shape}, w_eff {w_eff.shape}")
@@ -101,7 +101,7 @@ class DiVolo2019TF(BaseTransferFunction):
         """
         fe = kwargs["exc_rate"]
         fi = kwargs["inh_rate"]
-        w = kwargs["adaptation"]  # Di Volo specifically requires this!
+        w = kwargs["adaptation"]*1e-9  # Di Volo specifically requires this!
         
         p = self._get_legacy_params_dict()
         P_coeffs = [self.fitted_params.get(f"P{i}", 0.0) for i in range(11)]
@@ -137,17 +137,29 @@ def pseq_params(params):
     Qe, Te, Ee = params['Qe'], params['Te'], params['Ee']
     Qi, Ti, Ei = params['Qi'], params['Ti'], params['Ei']
     Gl, Cm , El = params['Gl'], params['Cm'] , params['El']
-    for key, dval in zip(['Ntot', 'pconnec', 'gei'], [1, 2., 0.5]):
-        if key in params.keys():
-            exec(key+' = params[key]')
-        else: # default value
-            exec(key+' = dval')
+
+    # NOTE: this is a change to the original code, 
+    # since using `exec` was causing some issues
+    Ntot = params.get('Ntot', 1)
+    pconnec = params.get('pconnec', 2.)
+    gei = params.get('gei', 0.5)
+    # NOTE: original code
+    # for key, dval in zip(['Ntot', 'pconnec', 'gei'], [1, 2., 0.5]):
+    #     if key in params.keys():
+    #         exec(key+' = params[key]')
+    #     else: # default value
+    #         exec(key+' = dval')
+
     if 'P' in params.keys():
         P0, P1, P2, P3, P4, P5, P6, P7, P8, P9, P10 = params['P']
     else: # no correction
         P0 = -45e-3
-        for i in range(1,11):
-            exec('P'+str(i)+'= 0')
+        # NOTE: this is a change to the original code, 
+        # since using `exec` was causing some issues
+        P1, P2, P3, P4, P5, P6, P7, P8, P9, P10 = [0.0]*10
+        # NOTE: original code
+        # for i in range(1,11):
+        #     exec('P'+str(i)+'= 0')
 
     return Qe,Te, Ee, Qi, Ti, Ei, Gl, Cm, El, Ntot, pconnec, gei, P0, P1, P2, P3, P4, P5, P6, P7, P8, P9, P10
 

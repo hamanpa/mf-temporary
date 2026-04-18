@@ -180,8 +180,8 @@ def simulate_adex_neuron_full_grid(neuron_name: str, neuron_params: dict,
     adaptation_std = np.zeros_like(out_rate)
     voltage_mean = np.zeros_like(out_rate)
     voltage_std = np.zeros_like(out_rate)
-    tau_V = np.zeros_like(out_rate)
-    exc_conductace_mean = np.zeros_like(out_rate)
+    voltage_tau = np.zeros_like(out_rate)
+    exc_conductance_mean = np.zeros_like(out_rate)
     exc_conductance_std = np.zeros_like(out_rate)
     inh_conductance_mean = np.zeros_like(out_rate)
     inh_conductance_std = np.zeros_like(out_rate)
@@ -219,7 +219,7 @@ def simulate_adex_neuron_full_grid(neuron_name: str, neuron_params: dict,
                 voltage_std[exc_idx,inh_idx,n_run] = voltage_steady.std()
 
                 exc_conductance_steady = exc_conductance[-n_bins:]
-                exc_conductace_mean[exc_idx,inh_idx,n_run] = exc_conductance_steady.mean()
+                exc_conductance_mean[exc_idx,inh_idx,n_run] = exc_conductance_steady.mean()
                 exc_conductance_std[exc_idx,inh_idx,n_run] = exc_conductance_steady.std()
                 
                 inh_conductance_steady = inh_conductance[-n_bins:]
@@ -238,8 +238,8 @@ def simulate_adex_neuron_full_grid(neuron_name: str, neuron_params: dict,
         adaptation_std=adaptation_std.mean(axis=2),
         voltage_mean=voltage_mean.mean(axis=2),
         voltage_std=voltage_std.mean(axis=2),
-        tau_V=tau_V.mean(axis=2),
-        exc_conductace_mean=exc_conductace_mean.mean(axis=2),
+        voltage_tau=voltage_tau.mean(axis=2),
+        exc_conductance_mean=exc_conductance_mean.mean(axis=2),
         exc_conductance_std=exc_conductance_std.mean(axis=2),
         inh_conductance_mean=inh_conductance_mean.mean(axis=2),
         inh_conductance_std=inh_conductance_std.mean(axis=2),

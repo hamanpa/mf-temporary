@@ -52,10 +52,10 @@ class Zerlaut2018TF(BaseTransferFunction):
                 self.network_params.neurons[self.neuron_name].neuron_params, 
                 ZERLAUT2018_ADEX_MAPPING_SI),
             **translate_params(
-                self.network_params.synapses[exc_neuron_name].synapse_params,
+                self.network_params.synapses[exc_neuron_name].syn_params,
                 {'Qe': TranslationRule("weight", sim_unit="S")}),
             **translate_params(
-                self.network_params.synapses[inh_neuron_name].synapse_params,
+                self.network_params.synapses[inh_neuron_name].syn_params,
                 {'Qi': TranslationRule("weight", sim_unit="S")}),
             'pconnec': self.network_params.network.connectivity[exc_neuron_name][exc_neuron_name],
             'Ntot': self.network_params.internal_size,

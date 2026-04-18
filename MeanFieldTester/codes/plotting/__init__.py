@@ -317,17 +317,17 @@ class TransferFunctionFitPlot(BaseTransferFunctionPlot):
 
         self.full_params['linestyles'] = self.full_params['linestyles'][:len(tf_funcs_list)]
 
-        for j, (nu_i_idx, nu_i) in enumerate(indexed_linear_sample(neuron_results.nu_i[0], self.full_params['curves_num'])):
+        for j, (nu_i_idx, nu_i) in enumerate(indexed_linear_sample(neuron_results.inh_rate_grid[0], self.full_params['curves_num'])):
 
             if self.full_params['yerrorbar']:
-                yerr = neuron_results.nu_out_std[:, nu_i_idx]
+                yerr = neuron_results.out_rate_std[:, nu_i_idx]
             else:
                 yerr = None
 
             color = colors[j % len(colors)]
 
-            ax.errorbar(neuron_results.nu_e[:,nu_i_idx],
-                        neuron_results.nu_out_mean[:,nu_i_idx],
+            ax.errorbar(neuron_results.exc_rate_grid[:,nu_i_idx],
+                        neuron_results.out_rate_mean[:,nu_i_idx],
                         yerr= yerr,
                         marker=self.full_params['marker'],
                         linestyle=self.full_params['linestyle'],
@@ -337,14 +337,18 @@ class TransferFunctionFitPlot(BaseTransferFunctionPlot):
                         )
 
             for tf_funcs, ls in zip(tf_funcs_list, self.full_params['linestyles']):
-                # Previous condition:
-                # if type(tf_funcs) == tf.TransferFunctionAdaptation or type(tf_funcs) == tf.TransferFunctionAdaptation_FitWithW:
-                if tf_funcs.tf_params.tf_model.adaptation:
-                    w = neuron_results.w_mean[:,nu_i_idx]*1e-3  # Convert pA to nA
-                    nu_out_fit = tf_funcs(neuron_results.nu_e[:,nu_i_idx], nu_i, w, flattened=True)
+                if "adaptation"  in tf_funcs.required_inputs():
+                    adaptation = neuron_results.adaptation_mean[:, nu_i_idx]
                 else:
-                    nu_out_fit = tf_funcs(neuron_results.nu_e[:,nu_i_idx], nu_i, flattened=True)
-                ax.plot(neuron_results.nu_e[:,nu_i_idx], nu_out_fit, 
+                    adaptation = None
+
+                nu_out_fit = tf_funcs(
+                    exc_rate = neuron_results.exc_rate_grid[:,nu_i_idx], 
+                    inh_rate = neuron_results.inh_rate_grid[:,nu_i_idx], 
+                    adaptation = adaptation)
+
+                ax.plot(neuron_results.exc_rate_grid[:,nu_i_idx], 
+                        nu_out_fit, 
                         color=color, 
                         linestyle=ls
                         )

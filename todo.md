@@ -195,7 +195,7 @@ Other Ideas:
 
     transfer_function
       [ ] clean up my code, it definitely can be refactored (united into one MFT class with parameter telling what is required) instead of class for each case
-
+      [ ] after testing transfer function neuropsi_tf remove `obsolete.py`
       [ ] 
 
     Verify:
