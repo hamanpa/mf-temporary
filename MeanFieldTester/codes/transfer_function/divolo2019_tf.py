@@ -7,7 +7,7 @@ Changes that had to be done in the original code:
 
 """
 
-from typing import List
+from typing import Dict, List
 import numpy as np
 from .base import BaseTransferFunction
 from ..network_params.translators import translate_params, TranslationRule
@@ -36,6 +36,19 @@ class DiVolo2019TF(BaseTransferFunction):
     Wraps the original published code, mapping standard MFT inputs (including adaptation)
     into the legacy format.
     """
+    FITTED_PARAMS_MAPPING = [
+        ("P0", "P_0"),
+        ("P1", "P_mean"),
+        ("P2", "P_std"),
+        ("P3", "P_tau"),
+        ("P4", "P_log"),
+        ("P5", "P_mean_mean"),
+        ("P6", "P_std_std"),
+        ("P7", "P_tau_tau"),
+        ("P8", "P_mean_std"),
+        ("P9", "P_mean_tau"),
+        ("P10", "P_std_tau")
+    ]
 
     def required_inputs(self) -> List[str]:
         # Crucial Difference: Di Volo explicitly requires adaptation (w) 
@@ -91,9 +104,13 @@ class DiVolo2019TF(BaseTransferFunction):
             with_square_terms=with_square_terms
         )
         
-        self.fitted_params = {f"P{i}": P_array[i] for i in range(len(P_array))}
-        self.is_fitted = True
-        
+        # conversion of parameters into a dictionary with correct names and units
+        fitted_params_dict = {}
+        for i, (divolo_name, mft_name) in enumerate(self.FITTED_PARAMS_MAPPING):
+            fitted_params_dict[mft_name] = P_array[i] * 1e3
+
+        self.set_fitted_parameters(fitted_params_dict)
+
         return {"status": "success", "num_params": len(P_array)}
 
     def evaluate(self, **kwargs) -> np.ndarray:
@@ -105,7 +122,9 @@ class DiVolo2019TF(BaseTransferFunction):
         w = kwargs["adaptation"]*1e-9  # Di Volo specifically requires this!
         
         p = self._get_legacy_params_dict()
-        P_coeffs = [self.fitted_params.get(f"P{i}", 0.0) for i in range(11)]
+        P_coeffs = []
+        for i, (divolo_name, mft_name) in enumerate(self.FITTED_PARAMS_MAPPING):
+            P_coeffs.append(self.fitted_params.get(mft_name, 0.0)*1e-3)
         
         return TF_my_templateup(
             fe, fi, w, 

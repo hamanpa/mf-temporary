@@ -34,6 +34,20 @@ class Zerlaut2018TF(BaseTransferFunction):
     Wraps the original published code without modifying its underlying logic.
     """
 
+    FITTED_PARAMS_MAPPING = [
+        ("P0", "P_0"),
+        ("P1", "P_mean"),
+        ("P2", "P_std"),
+        ("P3", "P_tau"),
+        ("P4", "P_log"),
+        ("P5", "P_mean_mean"),
+        ("P6", "P_std_std"),
+        ("P7", "P_tau_tau"),
+        ("P8", "P_mean_std"),
+        ("P9", "P_mean_tau"),
+        ("P10", "P_std_tau")
+    ]
+
     def required_inputs(self) -> List[str]:
         return ["exc_rate", "inh_rate"]
 
@@ -87,8 +101,11 @@ class Zerlaut2018TF(BaseTransferFunction):
             with_square_terms=with_square_terms
         )
         
-        self.fitted_params = {f"P{i}": P_array[i] for i in range(len(P_array))}
-        self.is_fitted = True
+        fitted_params_dict = {}
+        for i, (divolo_name, mft_name) in enumerate(self.FITTED_PARAMS_MAPPING):
+            fitted_params_dict[mft_name] = P_array[i] * 1e3
+
+        self.set_fitted_parameters(fitted_params_dict)
         
         return {"status": "success", "num_params": len(P_array)}
 
@@ -101,7 +118,7 @@ class Zerlaut2018TF(BaseTransferFunction):
         
         p = self._get_legacy_params_dict()
         
-        P_coeffs = [self.fitted_params.get(f"P{i}", 0.0) for i in range(11)]
+        P_coeffs = [self.fitted_params.get(mft_name, 0.0)*1e-3 for _, mft_name in self.FITTED_PARAMS_MAPPING]
         
         return TF_my_template(
             fe, fi, 

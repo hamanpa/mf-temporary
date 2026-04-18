@@ -81,7 +81,7 @@ class SingleNeuronAdaptiveGrid(BaseModel):
             raise ValueError("If grid_type is 'adaptive', either exc_rate_grid or inh_rate_grid must be set to 'adaptive'.")
         if self.n_coarse_interpolation_points is None:
             target_n_points = int(self.out_rate_grid[2])
-            self.n_coarse_interpolation_points = max(10, int(target_n_points)*1.5)
+            self.n_coarse_interpolation_points = max(10, int(target_n_points*1.5))
         return self
 
 
