@@ -15,10 +15,12 @@ SI_PREFIXES = {
     'n': 1e-9,  # nano
     'p': 1e-12  # pico
 }
+BASE_UNITS = ['V', 'A', 'F', 'S', 's', 'Hz']  # Extend as needed
 
-def get_unit_multiplier(mft_unit: str, sim_unit: str) -> float:
+
+def get_unit_multiplier(source_unit: str, target_unit: str) -> float:
     """Calculates the scaling factor between two scientific units."""
-    if mft_unit == sim_unit or not mft_unit or not sim_unit:
+    if source_unit == target_unit or not source_unit or not target_unit:
         return 1.0
 
     def parse_prefix(unit: str) -> tuple[float, str]:
@@ -27,18 +29,18 @@ def get_unit_multiplier(mft_unit: str, sim_unit: str) -> float:
         For example, "mV" -> (1e-3, "V"), "nA" -> (1e-9, "A"), "s" -> (1.0, "s")
         """
 
-        if len(unit) > 1 and unit[0] in SI_PREFIXES and unit[1:] in ['V', 'A', 'F', 'S', 's', 'Hz']:
+        if len(unit) > 1 and unit[0] in SI_PREFIXES and unit[1:] in BASE_UNITS:
             return SI_PREFIXES[unit[0]], unit[1:]
         
         return 1.0, unit  # If no prefix (e.g., 'V', 's'), return base scale 1.0
 
-    mft_scale, mft_base = parse_prefix(mft_unit)
-    sim_scale, sim_base = parse_prefix(sim_unit)
+    source_scale, source_base = parse_prefix(source_unit)
+    target_scale, target_base = parse_prefix(target_unit)
 
-    if mft_base != sim_base:
-        raise ValueError(f"Cannot convert between different base units: {mft_unit} -> {sim_unit}")
+    if source_base != target_base:
+        raise ValueError(f"Cannot convert between different base units: {source_unit} -> {target_unit}")
 
-    return mft_scale / sim_scale
+    return source_scale / target_scale
 
 # ==========================================
 # 2. THE RULE STRUCTURE
@@ -97,7 +99,7 @@ def translate_params(pydantic_model: BaseModel, mapping_rules: Dict[str, Transla
                 
             mft_unit = parts_close[0].strip()
             
-            multiplier = get_unit_multiplier(mft_unit, rule.sim_unit)
+            multiplier = get_unit_multiplier(source_unit=mft_unit, target_unit=rule.sim_unit)
             raw_val = raw_val * multiplier
                 
         simulator_dict[sim_key] = raw_val

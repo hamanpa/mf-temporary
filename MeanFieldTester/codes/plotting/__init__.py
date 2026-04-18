@@ -153,17 +153,17 @@ class SingleNeuronActivityPlot(BaseSingleNeuronPlot):
     def _draw(self, ax, neuron_results:SingleNeuronResults):
         plt.gca().set_prop_cycle(None)
             
-        for j, (nu_i_idx, nu_i) in enumerate(indexed_linear_sample(neuron_results.nu_i[0], self.full_params['curves_num'])):
+        for j, (nu_i_idx, nu_i) in enumerate(indexed_linear_sample(neuron_results.inh_rate_grid()[0], self.full_params['curves_num'])):
             if self.full_params['labels'] is None:
                 label = fr'$\nu_i$={nu_i:.0f} Hz'
             else:
                 label = self.full_params['labels'][j]
             if self.full_params['yerrorbar']:
-                yerr = neuron_results.nu_out_std[:, nu_i_idx]
+                yerr = neuron_results.out_rate_std()[:, nu_i_idx]
             else:
                 yerr = None
-            ax.errorbar(neuron_results.nu_e[:,nu_i_idx],
-                        neuron_results.nu_out_mean[:,nu_i_idx],
+            ax.errorbar(neuron_results.exc_rate_grid()[:,nu_i_idx],
+                        neuron_results.out_rate_mean()[:,nu_i_idx],
                         yerr= yerr,
                         marker=self.full_params['marker'],
                         linestyle=self.full_params['linestyle'],
@@ -192,17 +192,17 @@ class SingleNeuronAdaptationPlot(BaseSingleNeuronPlot):
     def _draw(self, ax, neuron_results:SingleNeuronResults):
         plt.gca().set_prop_cycle(None)
             
-        for j, (nu_i_idx, nu_i) in enumerate(indexed_linear_sample(neuron_results.nu_i[0], self.full_params['curves_num'])):
+        for j, (nu_i_idx, nu_i) in enumerate(indexed_linear_sample(neuron_results.inh_rate_grid()[0], self.full_params['curves_num'])):
             if self.full_params['labels'] is None:
                 label = fr'$\nu_i$={nu_i:.0f} Hz'
             else:
                 label = self.full_params['labels'][j]
             if self.full_params['yerrorbar']:
-                yerr = neuron_results.w_std[:, nu_i_idx]
+                yerr = neuron_results.adaptation_std()[:, nu_i_idx]
             else:
                 yerr = None
-            ax.errorbar(neuron_results.nu_e[:,nu_i_idx],
-                        neuron_results.w_mean[:,nu_i_idx],
+            ax.errorbar(neuron_results.exc_rate_grid()[:,nu_i_idx],
+                        neuron_results.adaptation_mean()[:,nu_i_idx],
                         yerr= yerr,
                         marker=self.full_params['marker'],
                         linestyle=self.full_params['linestyle'],
@@ -227,9 +227,9 @@ class SingleNeuronAdaptationHeatmapPlot(BaseSingleNeuronPlot):
     }
 
     def _draw(self, ax, neuron_results:SingleNeuronResults):
-        im = ax.contourf(neuron_results.nu_e,
-                         neuron_results.nu_i,
-                         neuron_results.w_mean,
+        im = ax.contourf(neuron_results.exc_rate_grid(),
+                         neuron_results.inh_rate_grid(),
+                         neuron_results.adaptation_mean(),
                          levels=self.full_params['levels'],
                          extend=self.full_params['extend'],
                          vmin=self.full_params['vmin'],
@@ -243,7 +243,7 @@ class SingleNeuronActivityHeatmapPlot(BaseSingleNeuronPlot):
     """Plot the activity of a single neuron as a heatmap."""
     DEFAULT_PARAMS = {
         **BasePlot.DEFAULT_PARAMS,
-        'title': 'Single Neuron Adaptation Heatmap',
+        'title': 'Single Neuron Activity Heatmap',
         'xlabel': r'$\nu_e$ [Hz]',
         'ylabel': r'$\nu_i$ [Hz]',
         'vmin': None,  # Minimum value for the heatmap
@@ -254,9 +254,9 @@ class SingleNeuronActivityHeatmapPlot(BaseSingleNeuronPlot):
     }
 
     def _draw(self, ax, neuron_results:SingleNeuronResults):
-        im = ax.contourf(neuron_results.nu_e,
-                         neuron_results.nu_i,
-                         neuron_results.nu_out_mean,
+        im = ax.contourf(neuron_results.exc_rate_grid(),
+                         neuron_results.inh_rate_grid(),
+                         neuron_results.out_rate_mean(),
                          levels=self.full_params['levels'],
                          extend=self.full_params['extend'],
                          vmin=self.full_params['vmin'],
@@ -317,17 +317,17 @@ class TransferFunctionFitPlot(BaseTransferFunctionPlot):
 
         self.full_params['linestyles'] = self.full_params['linestyles'][:len(tf_funcs_list)]
 
-        for j, (nu_i_idx, nu_i) in enumerate(indexed_linear_sample(neuron_results.inh_rate_grid[0], self.full_params['curves_num'])):
+        for j, (nu_i_idx, nu_i) in enumerate(indexed_linear_sample(neuron_results.inh_rate_grid()[0], self.full_params['curves_num'])):
 
             if self.full_params['yerrorbar']:
-                yerr = neuron_results.out_rate_std[:, nu_i_idx]
+                yerr = neuron_results.out_rate_std()[:, nu_i_idx]
             else:
                 yerr = None
 
             color = colors[j % len(colors)]
 
-            ax.errorbar(neuron_results.exc_rate_grid[:,nu_i_idx],
-                        neuron_results.out_rate_mean[:,nu_i_idx],
+            ax.errorbar(neuron_results.exc_rate_grid()[:,nu_i_idx],
+                        neuron_results.out_rate_mean()[:,nu_i_idx],
                         yerr= yerr,
                         marker=self.full_params['marker'],
                         linestyle=self.full_params['linestyle'],
@@ -338,16 +338,16 @@ class TransferFunctionFitPlot(BaseTransferFunctionPlot):
 
             for tf_funcs, ls in zip(tf_funcs_list, self.full_params['linestyles']):
                 if "adaptation"  in tf_funcs.required_inputs():
-                    adaptation = neuron_results.adaptation_mean[:, nu_i_idx]
+                    adaptation = neuron_results.adaptation_mean()[:, nu_i_idx]
                 else:
                     adaptation = None
 
                 nu_out_fit = tf_funcs(
-                    exc_rate = neuron_results.exc_rate_grid[:,nu_i_idx], 
-                    inh_rate = neuron_results.inh_rate_grid[:,nu_i_idx], 
+                    exc_rate = neuron_results.exc_rate_grid()[:,nu_i_idx], 
+                    inh_rate = neuron_results.inh_rate_grid()[:,nu_i_idx], 
                     adaptation = adaptation)
 
-                ax.plot(neuron_results.exc_rate_grid[:,nu_i_idx], 
+                ax.plot(neuron_results.exc_rate_grid()[:,nu_i_idx], 
                         nu_out_fit, 
                         color=color, 
                         linestyle=ls

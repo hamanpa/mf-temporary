@@ -7,6 +7,8 @@ from typing import List
 import numpy as np
 from .base import BaseTransferFunction
 from ..network_params.translators import translate_params, TranslationRule
+from ..data_structures.single_neuron import SingleNeuronResults
+
 
 
 ZERLAUT2018_ADEX_MAPPING_SI = {
@@ -64,14 +66,14 @@ class Zerlaut2018TF(BaseTransferFunction):
 
         return params
 
-    def fit(self, single_neuron_results, **kwargs) -> dict:
+    def fit(self, single_neuron_results: SingleNeuronResults, **kwargs) -> dict:
         """
         Extracts grid data and uses the original Zerlaut fitting logic.
         """
 
-        Fe_eff = single_neuron_results.exc_rate_grid.T
-        fiSim = single_neuron_results.inh_rate_grid.T
-        Fout = single_neuron_results.out_rate_mean.T
+        Fe_eff = single_neuron_results.exc_rate_grid("Hz").T
+        fiSim = single_neuron_results.inh_rate_grid("Hz").T
+        Fout = single_neuron_results.out_rate_mean("Hz").T
         
         params = self._get_legacy_params_dict()
         

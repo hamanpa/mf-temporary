@@ -150,12 +150,12 @@ class NeuroPSICustomTF(BaseTransferFunction):
         out_rate_max = self.tf_params.out_rate_max
 
         # 1. Extract and flatten SNN data
-        exc_rates = single_neuron_results.exc_rate_grid.flatten()
-        inh_rates = single_neuron_results.inh_rate_grid.flatten()
-        out_rates = single_neuron_results.out_rate_mean.flatten()
+        exc_rates = single_neuron_results.exc_rate_grid("Hz").flatten()
+        inh_rates = single_neuron_results.inh_rate_grid("Hz").flatten()
+        out_rates = single_neuron_results.out_rate_mean("Hz").flatten()
 
         if getattr(tf_model_params, "adaptation", False):
-            adaptation = single_neuron_results.adaptation_mean.flatten()
+            adaptation = single_neuron_results.adaptation_mean("nA").flatten()
         else:
             adaptation = None
 

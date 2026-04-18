@@ -11,6 +11,7 @@ from typing import List
 import numpy as np
 from .base import BaseTransferFunction
 from ..network_params.translators import translate_params, TranslationRule
+from ..data_structures.single_neuron import SingleNeuronResults
 
 DIVOLO2019_ADEX_MAPPING_SI = {
     'Gl': TranslationRule("g_L", sim_unit="S"),
@@ -66,14 +67,14 @@ class DiVolo2019TF(BaseTransferFunction):
 
         return params
 
-    def fit(self, single_neuron_results, **kwargs) -> dict:
+    def fit(self, single_neuron_results: SingleNeuronResults, **kwargs) -> dict:
         """
         Extracts 3D grid data (rates + adaptation) and uses the Di Volo fitting logic.
         """
-        Fe_eff = single_neuron_results.exc_rate_grid.T
-        fiSim = single_neuron_results.inh_rate_grid.T
-        Fout = single_neuron_results.out_rate_mean.T
-        w_eff = single_neuron_results.adaptation_mean.T*1e-9
+        Fe_eff = single_neuron_results.exc_rate_grid("Hz").T
+        fiSim = single_neuron_results.inh_rate_grid("Hz").T
+        Fout = single_neuron_results.out_rate_mean("Hz").T
+        w_eff = single_neuron_results.adaptation_mean("A").T
         
         if not (Fe_eff.shape == fiSim.shape == Fout.shape == w_eff.shape):
             raise ValueError(f"Grid shape mismatch: Fe_eff {Fe_eff.shape}, fiSim {fiSim.shape}, Fout {Fout.shape}, w_eff {w_eff.shape}")

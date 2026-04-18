@@ -201,7 +201,8 @@ Other Ideas:
     Verify:
     [ ] I have changed the adaptation units to nA (removed the 1e3 factor, be aware of it and ensure it is ok)
 
-
+  data_structure
+  [ ] keep info about units? such that I could create some conversion for this as well with some automatic identification of the units given?
 
 # Plan
 
