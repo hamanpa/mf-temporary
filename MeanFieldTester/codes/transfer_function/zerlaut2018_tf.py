@@ -98,6 +98,10 @@ class Zerlaut2018TF(BaseTransferFunction):
             Fe_eff=Fe_eff, 
             fiSim=fiSim, 
             params=params,
+            method1=self.tf_params.V_eff_fitting.method,
+            method1_params=self.tf_params.V_eff_fitting.options,
+            method2=self.tf_params.TF_fitting.method,
+            method2_params=self.tf_params.TF_fitting.options,
             with_square_terms=with_square_terms
         )
         
@@ -172,12 +176,14 @@ def get_fluct_regime_vars(Fe, Fi, Qe, Te, Ee, Qi, Ti, Ei, Gl, Cm, El, Ntot, pcon
     
     Ue, Ui = Qe/muG*(Ee-muV), Qi/muG*(Ei-muV)
 
+    # NOTE: Zerlaut original code had a typo here
     sV = np.sqrt(\
                  fe*(Ue*Te)**2/2./(Te+Tm)+\
-                 fi*(Qi*Ui)**2/2./(Ti+Tm))
+                 fi*(Ui*Ti)**2/2./(Ti+Tm))
 
     fe, fi = fe+1e-9, fi+1e-9 # just to insure a non zero division, 
-    Tv = ( fe*(Ue*Te)**2 + fi*(Qi*Ui)**2 ) /( fe*(Ue*Te)**2/(Te+Tm) + fi*(Qi*Ui)**2/(Ti+Tm) )
+    # NOTE: Zerlaut original code had a typo here
+    Tv = ( fe*(Ue*Te)**2 + fi*(Ui*Ti)**2 ) /( fe*(Ue*Te)**2/(Te+Tm) + fi*(Ui*Ti)**2/(Ti+Tm) )
     TvN = Tv*Gl/Cm
 
     return muV, sV+1e-12, muGn, TvN
@@ -250,7 +256,10 @@ def make_loop(t, nu, vm, nu_aff_exc, nu_aff_inh, BIN,\
 
 
 def fitting_Vthre_then_Fout(Fout, Fe_eff, fiSim, params,\
-                            maxiter=10000, xtol=1e-5,
+                            method1='SLSQP', 
+                            method1_params={'ftol': 1e-8, 'disp': True, 'maxiter':40000},
+                            method2='nelder-mead',
+                            method2_params={'xtol': 1e-5, 'disp': True, 'maxiter':10000},
                             verbose=False,
                             with_square_terms=False):
 
@@ -277,8 +286,8 @@ def fitting_Vthre_then_Fout(Fout, Fe_eff, fiSim, params,\
                                TvN[i_non_zeros], muGn[i_non_zeros], *pp)
         return np.mean((Vthre_eff-vthre)**2)
     
-    plsq = minimize(Res, P, method='SLSQP',\
-                    options={'ftol': 1e-8, 'disp': True, 'maxiter':40000})
+    plsq = minimize(Res, P, method=method1,\
+                    options=method1_params)
 
     if verbose:
         print(plsq)
@@ -293,8 +302,8 @@ def fitting_Vthre_then_Fout(Fout, Fe_eff, fiSim, params,\
         return np.mean((Fout-\
                         TF_my_template(Fe_eff, fiSim, *pseq_params(params)))**2)
 
-    plsq = minimize(Res, P, method='nelder-mead',\
-            options={'xtol': xtol, 'disp': True, 'maxiter':maxiter})
+    plsq = minimize(Res, P, method=method2,\
+            options=method2_params)
 
     if verbose:
         print(plsq)
@@ -307,7 +316,7 @@ def fitting_Vthre_then_Fout(Fout, Fe_eff, fiSim, params,\
 def make_fit_from_data(DATA, with_square_terms=False,
                        verbose=False):
 
-    MEANfreq, SDfreq, Fe_eff, fiSim, params = np.load(DATA)
+    MEANfreq, SDfreq, Fe_eff, fiSim, params = np.load(DATA, allow_pickle=True)
 
     Fe_eff, Fout = np.array(Fe_eff), np.array(MEANfreq)
     levels = fiSim # to store for colors

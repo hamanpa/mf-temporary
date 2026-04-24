@@ -1,98 +1,73 @@
-{
-    "exc_neuron" : {                            # taken from diVolo2019_BiologicallyRealistic
-        "neuron_params" : {
-            "v_rest" : -65.0,                   # [mV], Resting membrane potential
-            "v_reset" : -65.0,                  # [mV], Reset potential after spike
-            "tau_refrac" : 5.0,                 # [ms], Refractory period
-            "tau_m" : 20.0,                     # [ms], Membrane time constant, taken as cm/gl
-            "cm" : 0.200,                       # [nF], Membrane capacitance
-            "e_rev_E" : 0.0,                    # [mV], Excitatory reversal potential
-            "e_rev_I" : -80.0,                  # [mV], Inhibitory reversal potential
-            "tau_syn_E" : 5.0,                  # [ms], Excitatory synaptic time constant
-            "tau_syn_I" : 5.0,                  # [ms], Inhibitory synaptic time constant
-            "a" : 4.0,                          # [nS], Subthreshold adaptation conductance
-            "b" : 0.02,                         # [nA], Spike-triggered adaptation increment
-            "delta_T" : 2.0,                    # [mV], Slope factor
-            "tau_w" : 500.0,                    # [ms], Adaptation time constant
-            "v_thresh" : -50.0,                 # [mV], Spike threshold
-        },
-        "init_values" : {
-            "w" : 0.00,                         # [nA], Default value of adaptation current
-            "v" : -65.0,                        # [mV], Default value of membrane potential
-        },
-    },
-    "inh_neuron" : {                            # taken from diVolo2019_BiologicallyRealistic
-        "neuron_params" : {
-            "v_rest" : -65.0,                   # [mV], Resting membrane potential
-            "v_reset" : -65.0,                  # [mV], Reset potential after spike
-            "tau_refrac" : 5.0,                 # [ms], Refractory period
-            "tau_m" : 20.0,                     # [ms], Membrane time constant, taken as cm/gl
-            "cm" : 0.200,                       # [nF], Membrane capacitance
-            "e_rev_E" : 0.0,                    # [mV], Excitatory reversal potential
-            "e_rev_I" : -80.0,                  # [mV], Inhibitory reversal potential
-            "tau_syn_E" : 5.0,                  # [ms], Excitatory synaptic time constant
-            "tau_syn_I" : 5.0,                  # [ms], Inhibitory synaptic time constant
-            "a" : 0.0,                          # [nS], Subthreshold adaptation conductance
-            "b" : 0.0,                          # [nA], Spike-triggered adaptation increment
-            "delta_T" : 0.5,                    # [mV], Slope factor
-            "tau_w" : 500.0,                    # [ms], Adaptation time constant
-            "v_thresh" : -50.0,                 # [mV], Spike threshold
-        },
-        "init_values" : {
-            "w" : 0.0,                          # [nA], Default value of adaptation current
-            "v" : -65.0,                        # [mV], Default value of membrane potential
-        },
-    },
-    "network" : {
-        "total_pop_size" : 10000,                  # int,Total number of exc and inh neurons
-        "drive_pop_size" : 8000,                     # int, number of driving neurons
-        "stim_pop_size" : 8000,
-        "g" : 0.2,                                  # float in [0,1], percentage of inhibitory neurons
-        "p_connect_exc" : 0.05,                       # Probability of incoming connections coming from excitatory neurons
-        "p_connect_inh" : 0.05,                       # Probability of incoming connections coming from inhibitory neurons
-        "p_connect_drive" : 0.05,
-        "p_connect_stim" : 0.05,
-    },
-    "synapses" : {
-        "exc_synapses" : {
-            "syn_params" : {
-                "weight" : 1.0,                     # [nS], synaptic weight
-                "delay" : 0.1,                      # [ms], synaptic delay
-            },
-            "syn_type" : "static_synapse",          # str, nest synapse type
-        },
-        "inh_synapses" : {
-            "syn_params" : {
-                "weight" : 5.0,                     # [nS], synaptic weight
-                "delay" : 0.1,                      # [ms], synaptic delay
-            },
-            "syn_type" : "static_synapse",          # str, nest synapse type
-        },
-        "drive_synapses" : {
-            "syn_params" : {
-                "weight" : 1.0,                     # [nS], synaptic weight
-                "delay" : 0.1,                      # [ms], synaptic delay
-            },
-            "syn_type" : "static_synapse",         # str, nest synapse type
-        },
-        "stim_synapses" : {
-            "syn_params" : {
-                "weight" : 1.0,                     # [nS], synaptic weight
-                "delay" : 0.1,                      # [ms], synaptic delay
-            },
-            "syn_type" : "static_synapse",        # str, nest synapse type
-        },
-    },
-    "transfer_function" : {
-        "expansion_point" : [-60, 4, 0.5],
-        "expansion_norm" : [10, 6, 1.0],
-
-        # Di Volo 2019 paper
-        # "exc_neuron" : [-49.8, 5.06, -25.0, 1.4, -0.41, 10.5, -36.0, 7.4, 1.2, -40.7],      # [mV], coefficients of the polynomial
-        # "inh_neuron" : [-51.4, 4.0, -8.3, 0.2, -0.5, 1.4, -14.6, 4.5, 2.8, -15.3],          # [mV], coefficients of the polynomial
-
-        # Di Volo repo
-        "exc_neuron" : [-49.83106, 5.06355, -23.47012, 2.29515, -0.41053, 10.54705, -36.59253, 7.43749, 1.26506, -40.72161],      # [mV], coefficients of the polynomial
-        "inh_neuron" : [-51.49122, 4.00369, -8.35201, 0.24142, -0.50706, 1.43454, -14.68669, 4.50271, 2.84722, -15.3578],          # [mV], coefficients of the polynomial
-    }
-}
+neurons:
+  exc_neuron:
+    neuron_type: excitatory
+    neuron_model: adex
+    neuron_params: &exc_neuron_params
+      v_rest: -65.0         # [mV], resting membrane potential
+      v_reset: -65.0        # [mV], reset potential after a spike
+      tau_refrac: 5.0       # [ms], refractory period
+      tau_m: 20.0           # [ms], membrane time constant
+      cm: 0.200             # [nF], capacitance
+      e_rev_E: 0.0          # [mV], reversal potential for excitatory synapses
+      e_rev_I: -80.0        # [mV], reversal potential for inhibitory synapses
+      tau_syn_E: 5.0        # [ms], time constant for excitatory synapses
+      tau_syn_I: 5.0        # [ms], time constant for inhibitory synapses
+      a: 4.0                # [nS], subthreshold adaptation
+      b: 0.02               # [nA], spike-triggered adaptation
+      delta_T: 2.0          # [mV], slope factor for exponential term
+      tau_w: 500.0          # [ms], adaptation time constant
+      v_thresh: -50.0       # [mV], spike threshold
+  inh_neuron:
+    neuron_type: inhibitory
+    neuron_model: adex
+    neuron_params:
+      <<: *exc_neuron_params
+      a: 0.0
+      b: 0.0
+      delta_T: 0.5
+  drive_neuron:
+    neuron_type: excitatory
+    neuron_model: poisson_generator
+  stim_neuron:
+    neuron_type: excitatory
+    neuron_model: poisson_generator
+network:
+  size:
+    exc_neuron: &exc_size 8000
+    inh_neuron: 2000
+    drive_neuron: *exc_size
+    stim_neuron: *exc_size
+  connectivity:
+    exc_neuron:
+      exc_neuron: &conn_prob 0.05
+      inh_neuron: *conn_prob
+      drive_neuron: *conn_prob
+      stim_neuron: *conn_prob
+    inh_neuron:
+      exc_neuron: *conn_prob
+      inh_neuron: *conn_prob
+      drive_neuron: *conn_prob
+      stim_neuron: *conn_prob
+    drive_neuron:
+      exc_neuron: &no_conn 0.0
+      inh_neuron: *no_conn
+      drive_neuron: *no_conn
+      stim_neuron: *no_conn
+    stim_neuron:
+      exc_neuron: *no_conn
+      inh_neuron: *no_conn
+      drive_neuron: *no_conn
+      stim_neuron: *no_conn
+synapses:
+  exc_neuron: &exc_syn_params 
+    syn_type: static_synapse
+    syn_params:
+      weight: 1.0       # [nS], synaptic weight
+      delay: 1.0        # [ms], synaptic delay
+  inh_neuron:
+    syn_type: static_synapse
+    syn_params:
+      weight: 5.0
+      delay: 1.0
+  drive_neuron: *exc_syn_params
+  stim_neuron: *exc_syn_params

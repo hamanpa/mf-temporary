@@ -84,15 +84,7 @@
         },
     },
     "transfer_function" : {
-        "expansion_point" : [-60, 4, 0.5],
-        "expansion_norm" : [10, 6, 1.0],
-
-        # Di Volo 2019 paper
-        # "exc_neuron" : [-49.8, 5.06, -25.0, 1.4, -0.41, 10.5, -36.0, 7.4, 1.2, -40.7],      # [mV], coefficients of the polynomial
-        # "inh_neuron" : [-51.4, 4.0, -8.3, 0.2, -0.5, 1.4, -14.6, 4.5, 2.8, -15.3],          # [mV], coefficients of the polynomial
 
         # Di Volo repo
-        "exc_neuron" : [-49.83106, 5.06355, -23.47012, 2.29515, -0.41053, 10.54705, -36.59253, 7.43749, 1.26506, -40.72161],      # [mV], coefficients of the polynomial
-        "inh_neuron" : [-51.49122, 4.00369, -8.35201, 0.24142, -0.50706, 1.43454, -14.68669, 4.50271, 2.84722, -15.3578],          # [mV], coefficients of the polynomial
     }
 }

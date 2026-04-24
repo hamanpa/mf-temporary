@@ -99,7 +99,7 @@ class NeuroPSICustomTF(BaseTransferFunction):
 
         point = self.tf_params.expansion_point
         norm = self.tf_params.expansion_norm
-        model_flags = self.tf_params.tf_model
+        tf_model_params = self.tf_params.tf_model
 
         x_mean = (voltage_mean - point.voltage_mean) / norm.voltage_mean
         x_std = (voltage_std - point.voltage_std) / norm.voltage_std
@@ -112,7 +112,10 @@ class NeuroPSICustomTF(BaseTransferFunction):
             coefs["P_tau"] * x_tau
         )
 
-        if getattr(model_flags, "square_terms", False):
+        if tf_model_params.log_term:
+            v_eff += coefs["P_log"] * np.log(conductance_mean / self.g_L)
+
+        if tf_model_params.square_terms:
             v_eff += (
                 coefs["P_mean_mean"] * (x_mean ** 2) +
                 coefs["P_std_std"] * (x_std ** 2) +
@@ -122,8 +125,6 @@ class NeuroPSICustomTF(BaseTransferFunction):
                 coefs["P_std_tau"] * (x_std * x_tau)
             )
 
-        if getattr(model_flags, "log_term", False):
-            v_eff += coefs["P_log"] * np.log(conductance_mean / self.g_L)
 
         return v_eff
 
@@ -154,23 +155,25 @@ class NeuroPSICustomTF(BaseTransferFunction):
         inh_rates = single_neuron_results.inh_rate_grid("Hz").flatten()
         out_rates = single_neuron_results.out_rate_mean("Hz").flatten()
 
-        if getattr(tf_model_params, "adaptation", False):
+        if tf_model_params.adaptation:
             adaptation = single_neuron_results.adaptation_mean("nA").flatten()
         else:
             adaptation = None
 
-        voltage_mean, voltage_std, voltage_tau, voltage_tau_n, conductance_mean = self.mpf.evaluate(exc_rates, inh_rates, adaptation)
+        voltage_mean, voltage_std, voltage_tau, voltage_tau_n, conductance_mean = self.mpf.evaluate(exc_rates, inh_rates, adaptation=adaptation)
 
         keys = ["P_0", "P_mean", "P_std", "P_tau"]
-        if getattr(tf_model_params, "log_term", False):
+        if tf_model_params.log_term:
             keys.append("P_log")
-        if getattr(tf_model_params, "square_terms", False):
+        if tf_model_params.square_terms:
             keys.extend(["P_mean_mean", "P_std_std", "P_tau_tau", "P_mean_std", "P_mean_tau", "P_std_tau"])
 
         def array_to_dict(x: np.ndarray) -> dict:
-            coefs = dict(zip(keys, x))
+            coefs = {}
+            # coefs = dict(zip(keys, x))
             for k in ["P_0", "P_mean", "P_std", "P_tau", "P_log", "P_mean_mean", "P_std_std", "P_tau_tau", "P_mean_std", "P_mean_tau", "P_std_tau"]:
-                coefs.setdefault(k, 0.0)
+                coefs[k] = x[keys.index(k)] if k in keys else 0.0
+                # coefs.setdefault(k, 0.0)
             return coefs
 
         # ==========================================
@@ -344,7 +347,7 @@ class MembranePotentialFluctuations:
         """Calculates the mean voltage of the neuron with adaptation in [mV]."""
         exc_voltage = self.exc_conductance_mean(exc_rate) * self.exc_syn_v
         inh_voltage = self.inh_conductance_mean(inh_rate) * self.inh_syn_v
-        return (exc_voltage + inh_voltage + self.g_L * self.v_rest - adaptation) / self.conductance_mean(exc_rate, inh_rate)
+        return (exc_voltage + inh_voltage + self.g_L * self.v_rest - adaptation*1e3) / self.conductance_mean(exc_rate, inh_rate)
 
     def _voltage_mean_with_out_rate(self, exc_rate, inh_rate, out_rate):
         """Calculates the mean voltage of the neuron with nu_out in [mV]."""
@@ -379,15 +382,17 @@ class MembranePotentialFluctuations:
         exc_syn_u = self.exc_syn_weight * (self.exc_syn_v - voltage_mean) / conductance_mean  # [mV]
         inh_syn_u = self.inh_syn_weight * (self.inh_syn_v - voltage_mean) / conductance_mean  # [mV]
 
-        exc_term = self.exc_syn_num * (exc_rate * 1e-3) * (exc_syn_u * self.exc_syn_tau)**2
-        inh_term = self.inh_syn_num * (inh_rate * 1e-3) * (inh_syn_u * self.inh_syn_tau)**2
-        
-        # NOTE: following is equivallent to:
-        # exc_term[exc_term<1e-9]=1e-9  
-        # inh_term[inh_term<1e-9]=1e-9
-        # but allows a float as input, goal is to avoid division by zero
-        exc_term = np.clip(exc_term, 1e-9, None)
-        inh_term = np.clip(inh_term, 1e-9, None)
+        exc_term = (self.exc_syn_num * exc_rate + 1e-9) * 1e-3 * (exc_syn_u * self.exc_syn_tau)**2
+        inh_term = (self.inh_syn_num * inh_rate + 1e-9) * 1e-3 * (inh_syn_u * self.inh_syn_tau)**2
+
+        # exc_term = self.exc_syn_num * (exc_rate * 1e-3) * (exc_syn_u * self.exc_syn_tau)**2
+        # inh_term = self.inh_syn_num * (inh_rate * 1e-3) * (inh_syn_u * self.inh_syn_tau)**2
+        # # NOTE: following is equivallent to:
+        # # exc_term[exc_term<1e-9]=1e-9  
+        # # inh_term[inh_term<1e-9]=1e-9
+        # # but allows a float as input, goal is to avoid division by zero
+        # exc_term = np.clip(exc_term, 1e-9, None)
+        # inh_term = np.clip(inh_term, 1e-9, None)
 
         voltage_tau = (exc_term + inh_term) / (exc_term / (tau_eff + self.exc_syn_tau) + inh_term / (tau_eff + self.inh_syn_tau))
         return voltage_tau
@@ -398,5 +403,5 @@ class MembranePotentialFluctuations:
         voltage_tau = self.voltage_tau(exc_rate, inh_rate, out_rate=out_rate, adaptation=adaptation)
         voltage_tau_n = voltage_tau / self.tau_m
         conductance_mean = self.conductance_mean(exc_rate, inh_rate)
-        return voltage_mean, voltage_std, voltage_tau, voltage_tau_n, conductance_mean
+        return voltage_mean, voltage_std+1e-9, voltage_tau, voltage_tau_n, conductance_mean
 

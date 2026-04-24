@@ -72,6 +72,7 @@ class BasePlot:
         'ymargin': 0.05, # Default y-margin
         'exc_color': EXC_COLOR,  # Default color for excitatory neurons
         'inh_color': INH_COLOR,  # Default color for inhibitory neurons
+        'linewidth': 2.0,
     }
 
     def __init__(self, params=None):
@@ -350,14 +351,18 @@ class TransferFunctionFitPlot(BaseTransferFunctionPlot):
                 ax.plot(neuron_results.exc_rate_grid()[:,nu_i_idx], 
                         nu_out_fit, 
                         color=color, 
-                        linestyle=ls
+                        linestyle=ls,
+                        linewidth=self.full_params['linewidth'],
                         )
 
         legend_elements = [Line2D([0], [0], marker='o', color='black', label='Data', 
                                   markerfacecolor='black', markersize=self.full_params['markersize'], linestyle='None')]
-        legend_elements += [Line2D([0], [0], color='black', label=tf_name, linestyle=ls) for tf_name, ls in zip(self.full_params['labels'], self.full_params['linestyles'])]
+        legend_elements += [Line2D([0], [0], color='black', label=tf_name, linestyle=ls, linewidth=self.full_params['linewidth']) for tf_name, ls in zip(self.full_params['labels'], self.full_params['linestyles'])]
 
-        self.full_params['legend'] = {'handles': legend_elements}
+        if isinstance(self.full_params['legend'], dict):
+            self.full_params['legend']['handles'] = legend_elements
+        elif self.full_params['legend'] is True:
+            self.full_params['legend'] = {'handles': legend_elements}
 
 
 # TODO:
