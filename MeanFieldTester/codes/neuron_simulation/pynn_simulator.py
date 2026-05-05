@@ -75,6 +75,10 @@ NEST_TSODYKS_SYNAPSE_MAPPING = {
     "U": TranslationRule("U", sim_unit="")
 }
 
+PYNN_INITIAL_VALUES_MAPPING = {
+    "v": TranslationRule("voltage", sim_unit="mV"),
+    "w": TranslationRule("adaptation", sim_unit="nA"),
+}
 
 def simulate_adex_neuron_single_point(
                                 exc_rate : float, 
@@ -628,7 +632,7 @@ class PyNNSimulator(BaseNeuronSimulator):
 
             legacy_neuron_params = {
                 'neuron_params' : translate_params(single_neuron_params.neuron_params, PYNN_ADEX_MAPPING),
-                'init_values' : {},
+                'init_values' : translate_params(neuron_sim_params.init_values[neuron_name], PYNN_INITIAL_VALUES_MAPPING),
                 'exc_synapses' : {
                     'syn_type' : network_params.synapses[network_params.exc_neuron_name].syn_type,
                     'syn_params' : translate_params(network_params.synapses[network_params.exc_neuron_name].syn_params, exc_synapse_mapping),

@@ -204,6 +204,16 @@ Other Ideas:
   data_structure
   [ ] keep info about units? such that I could create some conversion for this as well with some automatic identification of the units given?
 
+  SNNFullResults - update the class
+    [ ] add dealing with units the same way as neuron results
+    [ ] adaptation is in native PyNN units
+
+### API Refactoring & Parallelization
+- [ ] Evaluate `neuron_simulation` API against the new `network_simulation` lifecycle.
+    - **Context:** `network_simulation` now uses `build() -> run_stimulus() -> reset()`. 
+    - **Blocker:** Single neuron simulations heavily exploit parallelization (e.g., TF fitting). NEST simulator objects cannot be pickled, and global resets might interfere with multiprocessing.
+    - **Task:** Investigate if we can safely use the `build/run/reset` pattern *inside* the parallel worker functions to maintain API consistency without breaking multiprocessing. Until then, keep `simulate()` for neurons.
+
 # Plan
 
 - [ ] Implement transfer function zerlaut2018, divolo2019
@@ -224,3 +234,36 @@ Other Ideas:
   - [ ] replicate diVolo paper
     - [ ] update network simulation, meanfield simulation (or make it usable with new params structure and refactor it later)
     - [ ] with MFT I can investigate edge cases etc
+
+
+
+## [Architecture Decision Record] SNN Simulation Reset Paradigm
+
+**Context:** 
+When running multiple stimuli sequentially in PyNN with the NEST backend, using the native `.reset(t_flush=...)` method causes internal clock desynchronization, leading to `AssertionError`s during data retrieval (`get_data()`). We evaluated two architectural paradigms to solve this.
+
+### Option A: The "Continuous Epoch" Paradigm (Rejected for now)
+**Idea:** Instead of resetting the simulator, run a single continuous simulation from $t=0$ to $t=T_{total}$. Separate different stimuli using "blank" (0 Hz) spontaneous activity windows of ~1000ms+ to allow the network to relax back to its attractor state.
+
+*   **Pros:**
+    *   **Computationally Fast:** Bypasses the overhead of rebuilding the 10,000+ neuron network and wiring matrix for every stimulus.
+    *   **Backend Safe:** Avoids PyNN's buggy `reset()` logic entirely.
+    *   **Biological Realism:** Mimics continuous *in vivo* recording sessions where an animal is simply shown a blank screen between visual stimuli.
+*   **Cons (Scientific Risks):**
+    *   **Hysteresis (History Dependence):** Slow biological variables (like AdEx adaptation $w$ with $\tau_w=500ms$, or STP facilitation/depression variables $u/x$) decay exponentially but never perfectly reach $0$.
+    *   **Order Effects:** The exact numerical response to "Stimulus B" will change depending on whether "Stimulus A" preceded it, making debugging and isolated Mean-Field comparisons extremely difficult.
+    *   **Data Parsing Complexity:** The PyNN recorder will yield one massive, continuous Neo block that must be meticulously sliced using time-masks during the analysis phase.
+
+### Option B: The "Clean Slate" Paradigm (Current Decision)
+**Idea:** The Build-Run-Teardown pattern. For every stimulus trial, completely destroy the NEST kernel, rebuild the network with the exact same `rng_seed`, run the stimulus, and extract the data.
+
+*   **Pros:**
+    *   **Absolute State Isolation:** Guarantees absolute mathematical certainty that every trial starts with the exact same initial conditions ($v$, $w$, $u$, $x$). 
+    *   **Ground-Truth Reliability:** Ensures that SNN data provides a perfectly clean "ground truth" to compare against Mean-Field analytical equations, free from hidden cross-contamination.
+*   **Cons:**
+    *   Slower runtime due to the overhead of rebuilding the network graph for each stimulus in the dictionary.
+
+**Verdict & Future Action:** 
+We stick to **Option B (Clean Slate)** for all Mean-Field transfer-function fitting and validations, as trial independence is strictly required. 
+
+*Future Todo:* **Option A (Continuous Epochs)** should only be implemented if we start researching sequence-dependent network effects (e.g., how the network responds to a high-frequency train of different stimuli) or if simulation times become a critical bottleneck.

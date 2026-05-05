@@ -1,5 +1,5 @@
 from enum import Enum
-from typing import List, Annotated, Literal, Any
+from typing import List, Annotated, Literal, Any, Dict
 from pathlib import Path
 import numpy as np
 from pydantic import BaseModel, Field, ConfigDict, field_validator, model_validator
@@ -93,6 +93,10 @@ class GridConfig(BaseModel):
     exc_neuron: SingleNeuronGridConfigType
     inh_neuron: SingleNeuronGridConfigType
 
+class NeuronInitialValuesConfig(BaseModel):
+    voltage: float = Field(..., description="Initial membrane potential in [mV]")
+    adaptation: float = Field(..., description="Initial adaptation current in [nA]")
+
 class LoadSimulationConfig(BaseModel):
     execution_mode: Literal["load"] 
     exc_neuron_data_path: str | Path = Field(description="Path to the saved simulation data for excitatory neuron")
@@ -116,7 +120,10 @@ class RunSimulationConfig(BaseModel):
     seed: int = Field(default=42, description="Random seed for reproducibility")
     n_runs: int = Field(default=5, description="Number of simulation runs")
     cpus: int = Field(default=16, description="Number of CPU cores to use, if parallel simulation is supported by the simulator, value of 1 means no parallelization")
-
+    init_values: Dict[str, NeuronInitialValuesConfig] = Field(
+        default_factory=dict, 
+        description=("Initial values for each neuron type. Keys should match the internal neuron names defined in the network parameters.")
+    )
 
 class SkipSimulationConfig(BaseModel):
     execution_mode: Literal["skip"]

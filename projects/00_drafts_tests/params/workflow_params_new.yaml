@@ -1,30 +1,35 @@
 neuron_simulation:
   execution_mode: run       # run, load
-  simulator: null           # pynn.nest, zerlaut2018_simulator
+  simulator: pynn.nest           # pynn.nest, zerlaut2018_simulator, divolo2019_simulator
   grid:
     exc_neuron:
       grid_type: adaptive    # linear, adaptive, custom 
       exc_rate_grid: adaptive
-      inh_rate_grid: [0, 30, 10]
-      out_rate_grid: [0, 30, 10]
-      n_coarse_interpolation_points: 16
+      inh_rate_grid: [0, 30, 16]
+      out_rate_grid: [0, 30, 16]
     inh_neuron:
       grid_type: adaptive
       exc_rate_grid: adaptive
-      inh_rate_grid: [0, 30, 10]
-      out_rate_grid: [0, 30, 10]
-      n_coarse_interpolation_points: 16
-  simulation_time: 5000.0
-  averaging_window: 2000.0
+      inh_rate_grid: [0, 30, 16]
+      out_rate_grid: [0, 30, 16]
+  simulation_time: 13000.0
+  averaging_window: 10000.0
   time_step: 0.1
   seed: 42
   n_runs: 5
   cpus: 16
+  init_values: &init_values
+    exc_neuron:
+      voltage: -65.0
+      adaptation: 0.0
+    inh_neuron:
+      voltage: -65.0
+      adaptation: 0.0
 
 transfer_function:
   fit_transfer_function : true
   tf_model: 
-    model_name: zerlaut2018
+    model_name: neuropsi.custom
     square_terms : true
     log_term : false
     adaptation : true
@@ -37,31 +42,31 @@ transfer_function:
     voltage_std : 6.0
     voltage_tau : 1.0
 
-  tf_fits:
-    exc_neuron : # [-49.8, 5.06, -25.0, 1.4, -0.41, 10.5, -36.0, 7.4, 1.2, -40.7]      # [mV], coefficients of the polynomial
-      P_0 : -49.8
-      P_mean : 5.06
-      P_std: -25.0
-      P_tau : 1.4
-      P_log: 0.0
-      P_mean_mean : -0.41
-      P_mean_std : 7.4
-      P_mean_tau : 1.2
-      P_std_std : 10.5
-      P_std_tau : -40.7
-      P_tau_tau : -36.0
-    inh_neuron : # [-51.4, 4.0, -8.3, 0.2, -0.5, 1.4, -14.6, 4.5, 2.8, -15.3]          # [mV], coefficients of the polynomial
-      P_0 : -51.4
-      P_mean : 4.0
-      P_std: -8.3
-      P_tau : 0.2
-      P_log: 0.0
-      P_mean_mean : -0.5
-      P_mean_std : 4.5
-      P_mean_tau : 2.8
-      P_std_std : 1.4
-      P_std_tau : -15.3
-      P_tau_tau : -14.6
+  # tf_fits:
+  #   exc_neuron : # [-49.8, 5.06, -25.0, 1.4, -0.41, 10.5, -36.0, 7.4, 1.2, -40.7]      # [mV], coefficients of the polynomial
+  #     P_0 : -49.8
+  #     P_mean : 5.06
+  #     P_std: -25.0
+  #     P_tau : 1.4
+  #     P_log: 0.0
+  #     P_mean_mean : -0.41
+  #     P_mean_std : 7.4
+  #     P_mean_tau : 1.2
+  #     P_std_std : 10.5
+  #     P_std_tau : -40.7
+  #     P_tau_tau : -36.0
+  #   inh_neuron : # [-51.4, 4.0, -8.3, 0.2, -0.5, 1.4, -14.6, 4.5, 2.8, -15.3]          # [mV], coefficients of the polynomial
+  #     P_0 : -51.4
+  #     P_mean : 4.0
+  #     P_std: -8.3
+  #     P_tau : 0.2
+  #     P_log: 0.0
+  #     P_mean_mean : -0.5
+  #     P_mean_std : 4.5
+  #     P_mean_tau : 2.8
+  #     P_std_std : 1.4
+  #     P_std_tau : -15.3
+  #     P_tau_tau : -14.6
 
   fit_with_w : true
   out_rate_min: 0.0
@@ -82,17 +87,23 @@ transfer_function:
 
 
 
+
 snn_simulation:
   network_name: divolo_static
-  # "load" : true,
-  # "timestep" : 0.1,
-  # "seed" : 42,
-  # "n_runs" : 5,
-  smoothing_function : sliding_window
-  smoothing_constant : 50
-  smoothing_kwargs : {}
-
-
+  execution_mode: run  # run, load
+  simulator: pynn.nest
+  time_step: 0.1
+  seed: 42
+  n_runs: 5
+  smoothing:
+    function: sliding_window
+    time_constant: 50
+    kwargs: {}
+  init_values: *init_values
+  recorded_samples:
+    exc_neuron: 500
+    inh_neuron: 500
+    
 
 mf_models:
   zerlaut2018:

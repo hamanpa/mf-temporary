@@ -1,0 +1,43 @@
+SpontActivity: &SpontActivity
+  pattern : NoStimulus
+  stim_params : {}
+  drive_rate : 1.5
+  drive_increase_duration: 400
+  stim_target_ratio: 1.0
+  simulation_duration: 2000
+  target_nodes: 0
+  direct_stimulation: False
+
+Sinusoidal:
+  <<: *SpontActivity
+  pattern: Sinusoidal
+  stim_params:
+    start: 1000
+    end: 2000
+    magnitude: 1
+    freq: 2
+    offset: 1
+    phase: 0
+
+Pulse:
+  <<: *SpontActivity
+  pattern: PulseTrain
+  stim_params:
+    start : 1000
+    end: 2000
+    magnitude : 1
+    offset: 0
+    pulse_duration : 500
+    pulse_period : 1000
+
+TwoSidedGaussian: 
+  <<: *SpontActivity
+  pattern: TwoSidedGaussian
+  stim_params:
+    start : 1000
+    end: 2000
+    center: 1000
+    sigma_left: 100
+    sigma_right: 200
+    magnitude: 1
+    offset: 0
