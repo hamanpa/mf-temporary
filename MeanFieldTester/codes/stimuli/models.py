@@ -90,16 +90,16 @@ class TwoSidedGaussianRateProfile(BaseRateProfile):
         self.sigma_right = stim_params.stim_params.sigma_right
 
     def stim_rate(self, times: np.ndarray, target_unit: str = "Hz") -> np.ndarray:
-        rate = np.where(times<self.drive_increase_duration, 
-                        times*self.offset/self.drive_increase_duration, 
+        rate = np.where(times < self.drive_increase_duration, 
+                        times * self.offset / self.drive_increase_duration, 
                         self.offset)
 
         mask = (times >= self.stim_start) & (times <= self.stim_end)
-        left_mask = times[mask] < self.center
-        right_mask = times[mask] >= self.center
+        full_left_mask = mask & (times < self.center)
+        full_right_mask = mask & (times >= self.center)
 
-        rate[mask][left_mask] += self.magnitude * np.exp(-0.5 * ((times[mask][left_mask] - self.center) / self.sigma_left) ** 2)
-        rate[mask][right_mask] += self.magnitude * np.exp(-0.5 * ((times[mask][right_mask] - self.center) / self.sigma_right) ** 2)
+        rate[full_left_mask] += self.magnitude * np.exp(-0.5 * ((times[full_left_mask] - self.center) / self.sigma_left) ** 2)
+        rate[full_right_mask] += self.magnitude * np.exp(-0.5 * ((times[full_right_mask] - self.center) / self.sigma_right) ** 2)
         
         return np.maximum(rate, 0.0) * get_unit_multiplier("Hz", target_unit)
 
@@ -116,15 +116,17 @@ class PulseTrainRateProfile(BaseRateProfile):
         self.pulse_period = stim_params.stim_params.pulse_period
 
     def stim_rate(self, times: np.ndarray, target_unit: str = "Hz") -> np.ndarray:
-        rate = np.where(times<self.drive_increase_duration, 
-                        times*self.offset/self.drive_increase_duration, 
+        rate = np.where(times < self.drive_increase_duration, 
+                        times * self.offset / self.drive_increase_duration, 
                         self.offset)
 
-        mask = (times >= self.stim_start) & (times <= self.stim_end)
-        pulse_mask = ((times[mask] - self.stim_start) % self.pulse_period) < self.pulse_duration
+        window_mask = (times >= self.stim_start) & (times <= self.stim_end)
+        pulse_condition = ((times - self.stim_start) % self.pulse_period) < self.pulse_duration
 
-        rate[mask][pulse_mask] += self.magnitude
-        
+        full_pulse_mask = window_mask & pulse_condition
+
+        rate[full_pulse_mask] += self.magnitude
+
         return np.maximum(rate, 0.0) * get_unit_multiplier("Hz", target_unit)
     
 class CustomStimulusRateProfile(BaseRateProfile):
