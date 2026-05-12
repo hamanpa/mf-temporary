@@ -31,6 +31,15 @@ def get_unit_multiplier(source_unit: str, target_unit: str) -> float:
 
         if len(unit) > 1 and unit[0] in SI_PREFIXES and unit[1:] in BASE_UNITS:
             return SI_PREFIXES[unit[0]], unit[1:]
+
+        if "^" in unit:
+            power_split = unit.split('^')
+            if len(power_split) != 2:
+                raise ValueError(f"Invalid unit format: '{unit}'. Expected format like 'mV^2' or 'nA^3'.")
+            power = int(unit.split('^')[1])
+            base_unit = unit.split('^')[0]
+            if len(base_unit) > 1 and base_unit[0] in SI_PREFIXES and base_unit[1:] in BASE_UNITS:
+                return SI_PREFIXES[base_unit[0]] ** power, unit[1:]
         
         return 1.0, unit  # If no prefix (e.g., 'V', 's'), return base scale 1.0
 
@@ -100,8 +109,14 @@ def translate_params(pydantic_model: BaseModel, mapping_rules: Dict[str, Transla
             mft_unit = parts_close[0].strip()
             
             multiplier = get_unit_multiplier(source_unit=mft_unit, target_unit=rule.sim_unit)
-            raw_val = raw_val * multiplier
-                
+            if isinstance(raw_val, (int, float)):
+                raw_val = raw_val * multiplier
+            elif isinstance(raw_val, list):
+                raw_val = [v * multiplier for v in raw_val]
+            else:
+                raise TypeError(f"Unsupported type for translation: {type(raw_val)}. Only int, float, and list of numbers are supported.")
+
+
         simulator_dict[sim_key] = raw_val
 
     return simulator_dict

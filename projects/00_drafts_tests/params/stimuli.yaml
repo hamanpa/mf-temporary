@@ -2,9 +2,9 @@ SpontActivity: &SpontActivity
   pattern : NoStimulus
   stim_params : {}
   drive_rate : 1.5
-  drive_increase_duration: 400
-  stim_target_ratio: 1.0
+  initial_increase_duration: 400
   simulation_duration: 2000
+  stim_target_ratio: 1.0
   target_nodes: 0
   direct_stimulation: False
 
@@ -36,8 +36,8 @@ TwoSidedGaussian:
   stim_params:
     start : 1000
     end: 2000
+    magnitude: 1
     center: 1000
     sigma_left: 100
     sigma_right: 200
-    magnitude: 1
     offset: 0

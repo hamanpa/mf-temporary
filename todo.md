@@ -8,6 +8,9 @@
 - **Testing Framework:** Use a standard testing framework (e.g., `pytest`) to ensure updates do not break existing functionality.
 
 
+YAGNI (You Aren't Gonna Need It) principle
+
+
 - **The Open/Closed Principle (OCP)** 
 states that software entities (classes, modules, functions) should be open for extension (you can add new behavior) but closed for modification (you don't have to alter existing code to add that behavior).
 If a PhD student in your lab writes a custom simulator for a new type of hardware, with the match statement, they must edit your WorkflowRunner.py to add case "custom_hardware":. If you use an interface, they can just pass their custom class to your runner, and your runner will execute it blindly because it trusts the abstract class structure. Your core code remains untouched.
@@ -235,6 +238,19 @@ Other Ideas:
     - [ ] update network simulation, meanfield simulation (or make it usable with new params structure and refactor it later)
     - [ ] with MFT I can investigate edge cases etc
 
+- [ ] snn_simulation recorders options
+
+
+### MF simulator
+- [ ] add options for connectivity, coupling, etc. at the moment, followings are hardcoded!
+        self.setup_connectivity()
+        self.setup_coupling()
+        self.setup_integrator()
+        self.setup_monitors()
+- [ ] solution of having stimulus together with drive is dangerous once I move to grid, be careful!
+
+
+- [ ] translator (make it work for with Hz^2 and lists)
 
 
 ## [Architecture Decision Record] SNN Simulation Reset Paradigm

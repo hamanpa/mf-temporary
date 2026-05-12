@@ -56,7 +56,7 @@ class BaseStimulusConfig(BaseModel):
     model_config = ConfigDict(extra="forbid") # Will strictly throw errors if you type `stim_pars` instead of `stim_params`
     
     drive_rate: float = Field(..., description="Base drive rate in [Hz].")
-    drive_increase_duration: float = Field(..., description="Duration of the drive increase in [ms].")
+    initial_increase_duration: float = Field(..., description="Duration of the drive increase in [ms].")
     stim_target_ratio: float = Field(..., description="Ratio of stimulated nodes to total nodes.")
     simulation_duration: float = Field(..., gt=0, description="Total simulation duration in [ms].")
     target_nodes: int = Field(..., description="Number of target nodes for stimulation.")

@@ -10,7 +10,7 @@ class SmoothingConfig(BaseModel):
     kwargs: Dict[str, Any] = Field(default_factory=dict, description="Additional keyword arguments for the smoothing function.")
 
 
-class NetworkSimulationConfig(BaseModel):
+class SpikingNeuralNetworkSimulationConfig(BaseModel):
     """
     Core configuration for the Spiking Neural Network simulation.
     Ensures that parameters like recorded populations are not hardcoded.

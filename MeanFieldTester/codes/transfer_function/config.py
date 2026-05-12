@@ -127,6 +127,7 @@ class RunTFFittingConfig(BaseModel):
                                                         'disp' : False,
                                                         'maxiter' : 10000
                                                     })
+    tf_fits: Dict[str, TFCoefficients]
 
 class LoadTFFittingConfig(BaseModel):
     fit_transfer_function: Literal[False] = False

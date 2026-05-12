@@ -9,28 +9,29 @@ python -m codes.controller.config --schema
 
 """
 
+
 import yaml
 import json
 import argparse
 from pathlib import Path
 from pydantic import BaseModel
+from dataclasses import Field
 
 from ..neuron_simulation.config import NeuronSimulationConfig, RunSimulationConfig, GridConfig, SingleNeuronLinearGrid, SimulatorType
-from ..transfer_function.config import TransferFunctionConfig
-
-# from codes.meanfield_simulation.config import MeanFieldConfig
-# from codes.network_simulation.config import NetworkConfig
+from ..mf_simulation.config import MeanFieldSimulationConfig
+from ..snn_simulation.config import SpikingNeuralNetworkSimulationConfig
 
 class WorkflowConfig(BaseModel):
     neuron_simulation: NeuronSimulationConfig
-
-    # TODO: transfer_function will be part of meanfield_simulation, not a separate module
-    # it is here for testing (and because MeanFieldConfig is not yet defined)
-    transfer_function: TransferFunctionConfig
+    snn_simulation: SpikingNeuralNetworkSimulationConfig
+    mf_config_list: list[MeanFieldSimulationConfig] = Field(
+        default_factory=list, 
+        description=(
+            "A list of mean-field simulation configurations. Each entry should specify the model type, simulator, and all necessary parameters. " +
+            "This allows you to run multiple mean-field simulations with different settings in a single workflow."
+        )
+    )
     
-    # meanfield_simulation: MeanFieldConfig 
-    # network_simulation: NetworkConfig
-
 
 def load_workflow_config(source: str | Path | dict) -> WorkflowConfig:
     """Loads and validates the master workflow YAML file."""
@@ -48,6 +49,8 @@ def load_workflow_config(source: str | Path | dict) -> WorkflowConfig:
     return config
 
 def generate_default_yaml(output_path: str = "default_workflow.yaml"):
+    raise NotImplementedError("The default YAML template generation is currently not implemented. Please create your own workflow.yaml based on the schema and examples provided in the documentation.")
+
     """Generates a complete, blank template for the user to fill out."""
     
     # Create safe default dummies for the modules
@@ -84,6 +87,8 @@ def generate_default_yaml(output_path: str = "default_workflow.yaml"):
 
 
 def generate_json_schema(output_path: str = "workflow_schema.json"):
+    raise NotImplementedError("The JSON schema generation is currently not implemented. Please run the code with --schema flag to generate the schema once it's implemented.")
+
     """Exports the complete Pydantic schema with all descriptions and options."""
     # .model_json_schema() is a built-in Pydantic V2 method
     schema = WorkflowConfig.model_json_schema()
