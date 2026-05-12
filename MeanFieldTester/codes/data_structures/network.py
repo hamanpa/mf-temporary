@@ -509,16 +509,27 @@ class MFResults(base.Results):
         return self._get_scaled(self._inh_u_mean, default_unit, target_unit)
 
     def exc_voltage_mean(self, unit=None):
-        pass
+        return None
+        # NOTE: implementation issues:
+        # 1. MPF does not differentiate drive, stimulus, exc_neuron inputs
+        # 2. exc_neuron has adaptation, but drive and stimulus do not
+
+
     def inh_voltage_mean(self, unit=None):
-        pass
+        return None
+        # NOTE: implementation issues:
+        # 1. MPF does not differentiate drive, stimulus, exc_neuron inputs
+        # 2. exc_neuron has adaptation, but drive and stimulus do not
 
     def ee_conductance_mean(self, unit=None):
         pass
+    
     def ei_conductance_mean(self, unit=None):
         pass
+
     def ie_conductance_mean(self, unit=None):
         pass
+
     def ii_conductance_mean(self, unit=None):
         pass
 

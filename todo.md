@@ -252,7 +252,7 @@ Other Ideas:
 - [ ] SNNResults update to the new way of handling (make it the same as NeuronResults and MFResults)
 - [ ] MFResults add voltage and conductance
 - [ ] add models handling STP
-
+- [ ] compare results of mf_simulation and meanfield_simulation
 
 ## [Architecture Decision Record] SNN Simulation Reset Paradigm
 
@@ -284,3 +284,22 @@ When running multiple stimuli sequentially in PyNN with the NEST backend, using 
 We stick to **Option B (Clean Slate)** for all Mean-Field transfer-function fitting and validations, as trial independence is strictly required. 
 
 *Future Todo:* **Option A (Continuous Epochs)** should only be implemented if we start researching sequence-dependent network effects (e.g., how the network responds to a high-frequency train of different stimuli) or if simulation times become a critical bottleneck.
+
+
+TODO:
+- [ ] **mf_simulation**: add tsodyks models
+- [ ] **MFResults**: voltage and conductance data calculation
+  - implementation issues:
+    1. MPF does not differentiate drive, stimulus, exc_neuron inputs
+    2. exc_neuron has adaptation, but drive and stimulus do not
+  - make it a subclass?
+  - I can add different input sources in MPF
+- [ ] **run_workflow**: make it runable start to finish based on param files (with plotting)
+
+ACTIVE:
+
+- [ ] **SNNResults**: rewrite
+- [ ] **BaseResults**: create new Base Results class that would contain the the unit handling (currently NeuronResults and MFResults have it each on its own)
+
+
+DONE:
