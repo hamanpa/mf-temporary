@@ -15,7 +15,7 @@ SI_PREFIXES = {
     'n': 1e-9,  # nano
     'p': 1e-12  # pico
 }
-BASE_UNITS = ['V', 'A', 'F', 'S', 's', 'Hz']  # Extend as needed
+BASE_UNITS = ['V', 'A', 'F', 'S', 's', 'Hz', 'rad']  # Extend as needed
 
 
 def get_unit_multiplier(source_unit: str, target_unit: str) -> float:

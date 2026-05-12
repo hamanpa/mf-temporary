@@ -10,10 +10,10 @@ uses native simulator, it uses the units of the simulator. Be cautious!
 | ----------------- | --------- | ------------- | ------------- | --------- |
 | time              | ms        | ms            | ms            | ms        |
 | rate              | Hz        | Hz            | Hz            | kHz       |
-| voltage           | mV        | mV            | mV            |  mV       |
-| current           | nA        | nA            | pA            | --        |
-| conductance       | nS        | uS*           | nS            |           |
-| capacitance       | nF        | nF            | pF            |           |
+| voltage           | mV        | mV            | mV            | mV        |
+| current           | nA        | nA            | pA            | pA        |
+| conductance       | nS        | uS*           | nS            | nS        |
+| capacitance       | nF        | nF            | pF            | uF        |
 | phase/angle       |           | deg           |               |           |
 
 \* PyNN: Conductance for adaptation parameter 'a' is in [nS]!

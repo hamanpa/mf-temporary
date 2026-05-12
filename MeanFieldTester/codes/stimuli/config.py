@@ -25,7 +25,7 @@ class SinusoidalParams(BaseModel):
     offset: float = Field(..., description="Offset of the stimulus in [Hz].")
 
     freq: float = Field(..., description="Frequency of the sinusoidal stimulus in [Hz].")
-    phase: float = Field(0.0, description="Phase of the sinusoidal stimulus in radians.", ge=0.0, lt=2*pi)
+    phase: float = Field(0.0, description="Phase of the sinusoidal stimulus in [rad].", ge=0.0, lt=2*pi)
 
 class PulseTrainParams(BaseModel):
     model_config = ConfigDict(extra="forbid")

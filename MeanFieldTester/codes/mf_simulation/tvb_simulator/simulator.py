@@ -9,6 +9,8 @@ from ...stimuli.config import BaseStimulusConfig
 from .models.factory import setup_tvb_model
 from .stimuli import prepare_stimulus
 from ...utils.array_helpers import convert_to_array
+from ...data_structures.network import MFResults
+
 
 from tvb.simulator.simulator import Simulator
 from tvb.simulator.coupling import Linear
@@ -172,14 +174,68 @@ class TVBMFSimulator(BaseMFSimulator):
         
         # TODO: monitor part in progress, for now only raw monitor
 
-        raw_time, raw_data = [], []
+        times, results_raw = [], []
         for result in sim(simulation_length=duration):
-            raw_time.append(result[0][0])
-            raw_data.append(result[0][1:])
-            
-        # 4. Map back to universal MFResults structure
-        # (We will implement the MFResults mapping next!)
-        return {"time": np.array(raw_time), "data": np.array(raw_data)}
+            # TVB returns a generator that yields results at each time step; 
+            # we will need to accumulate these results and then map them to the MFResults structure.
+
+            # results in in the shape [[time, np.array(state_vars)]]
+            # probably first index is monitor index, second index labels time and state variables
+
+            time = result[0][0]  
+            data = result[0][1]
+            if data.shape != (len(self.model.state_variables), 1, 1):
+                # shape is (len(state_vars), 1, 1)  (I expect the ones are for nodes and trials, which we do not have at the moment)
+                raise ValueError(f"Unexpected data shape from TVB: {data.shape}. Expected ({len(self.model.state_variables)}, 1, 1).")
+            else:
+                data = data.flatten()  # shape becomes (len(state_vars),)
+
+            times.append(time)
+            results_raw.append(data)
+
+        times = np.array(times)
+        results_raw = np.array(results_raw)
+
+        keys = self.model.state_variables
+        results_dict = {key: results_raw[:, i] for i, key in enumerate(keys)}
+
+        result = MFResults( 
+            label_name = "MFResults",
+            mf_sim_params = self.mf_sim_params,
+            network_params = self.network_params,
+            stim_name = "test",
+            stim_params = stim_params,
+            times = times,
+            exc_rate_mean = results_dict["E"],
+            exc_rate_std = np.sqrt(results_dict["C_ee"]),
+            inh_rate_mean = results_dict["I"],
+            inh_rate_std = np.sqrt(results_dict["C_ii"]),
+            stim_rate_mean = results_dict["stimulus"],
+            drive_rate_mean = np.ones_like(times.astype(float))*stim_params.drive_rate,
+            exc_adaptation_mean = results_dict["W_e"],
+            inh_adaptation_mean = results_dict["W_i"],
+            rate_cov = results_dict["C_ei"],
+            # exc_x_mean: np.ndarray = None,
+            # exc_y_mean: np.ndarray = None,
+            # exc_u_mean: np.ndarray = None,
+            # inh_x_mean: np.ndarray = None,
+            # inh_y_mean: np.ndarray = None,
+            # inh_u_mean: np.ndarray = None,
+            input_units = {
+                "times" : "ms",
+                "exc_rate_mean" : "kHz",
+                "exc_rate_std" : "kHz",
+                "inh_rate_mean" : "kHz",
+                "inh_rate_std" : "kHz",
+                "stim_rate_mean" : "kHz",
+                "drive_rate_mean" : "Hz",  # this is not typo! we compute drive_rate_mean above directly in MFT units, not TVB units
+                "exc_adaptation_mean" : "pA",
+                "inh_adaptation_mean" : "pA",
+                "rate_cov" : "Hz^2",
+            },
+        )
+
+        return result
 
     def setup_stimulus(self, stim_params: BaseStimulusConfig) -> None:
 
@@ -192,7 +248,10 @@ class TVBMFSimulator(BaseMFSimulator):
             variables = [self.model.state_variables.index("stimulus")]
 
         weight = list(np.zeros(self.num_nodes))
-        weight[stim_params.target_nodes] = 1.0
+        # TODO: in the future make this part dynamic (with initial period by making another state variable)
+        # Not sure why the weight need this weird unit!!!!!!!!
+        # HACK
+        weight[stim_params.target_nodes] = 10.
 
         parameter_stimulus = {}
         parameter_stimulus['eqn_t'] = tvb_stimulus

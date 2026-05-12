@@ -249,8 +249,9 @@ Other Ideas:
         self.setup_monitors()
 - [ ] solution of having stimulus together with drive is dangerous once I move to grid, be careful!
 
-
-- [ ] translator (make it work for with Hz^2 and lists)
+- [ ] SNNResults update to the new way of handling (make it the same as NeuronResults and MFResults)
+- [ ] MFResults add voltage and conductance
+- [ ] add models handling STP
 
 
 ## [Architecture Decision Record] SNN Simulation Reset Paradigm

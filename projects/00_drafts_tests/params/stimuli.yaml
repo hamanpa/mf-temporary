@@ -26,7 +26,7 @@ Pulse:
     start : 1000
     end: 2000
     magnitude : 1
-    offset: 0
+    offset: 1
     pulse_duration : 500
     pulse_period : 1000
 
@@ -34,10 +34,10 @@ TwoSidedGaussian:
   <<: *SpontActivity
   pattern: TwoSidedGaussian
   stim_params:
-    start : 1000
+    start : 0
     end: 2000
     magnitude: 1
     center: 1000
     sigma_left: 100
     sigma_right: 200
-    offset: 0
+    offset: 1

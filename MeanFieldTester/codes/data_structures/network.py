@@ -9,8 +9,10 @@ It defines separate classes for results from SNN and mean-field simulations.
 import codes.data_structures.base as base
 import codes.utils.snn_helpers as snn_utils
 import numpy as np
+from pydantic import BaseModel
+from ..network_params.translators import get_unit_multiplier
 
-
+from ..transfer_function.neuropsi_tf import MembranePotentialFluctuations
 
 class SNNResults(base.NetworkResults):
     """Meta class for storing SNN results."""
@@ -330,162 +332,384 @@ class SNNFullResults(SNNResults):
         print("="*50)
 
 
-class MFResults(base.NetworkResults):
-    def __init__(self, mf_results, stim_params, net_params):
-        # Assuming mf_results are from TVB simulation run, the following does
-        # conversion to appropriate units
+class MFResults(base.Results):
+    DEFAULT_UNITS = {
+    "times" : "ms",
+    "exc_rate_mean" : "Hz",
+    "exc_rate_std" : "Hz",
+    "inh_rate_mean" : "Hz",
+    "inh_rate_std" : "Hz",
+    "stim_rate_mean" : "Hz",
+    "drive_rate_mean" : "Hz",
+    "exc_adaptation_mean" : "nA",
+    "inh_adaptation_mean" : "nA",
+    "rate_cov" : "Hz^2",
+    "exc_x_mean" : "",
+    "exc_y_mean" : "",
+    "exc_u_mean" : "",
+    "inh_x_mean" : "",
+    "inh_y_mean" : "",
+    "inh_u_mean" : "",
+    "exc_voltage_mean" : "mV",
+    "inh_voltage_mean" : "mV",
+    "ee_conductance_mean" : "nS",
+    "ei_conductance_mean" : "nS",
+    "ie_conductance_mean" : "nS",
+    "ii_conductance_mean" : "nS",
+    }
 
-        super().__init__(mf_results["time"], stim_params, net_params)
+    MODIFIABLE_ATTRIBUTES = [
+        "label_name",
+        "stim_name"
+    ]
 
-        self.drive_rate = mf_results["drive_rate"].flatten()*1e3
-        self.stim_rate = mf_results["stimulus"].flatten()*1e3
+    def __init__(self,
+                 label_name: str = None,
+                 mf_sim_params: BaseModel = None,
+                 network_params: BaseModel = None,
+                 stim_name: str = None,
+                 stim_params: BaseModel = None,
+                 times: np.ndarray = None,
+                 exc_rate_mean: np.ndarray = None,
+                 exc_rate_std: np.ndarray = None,
+                 inh_rate_mean: np.ndarray = None,
+                 inh_rate_std: np.ndarray = None,
+                 stim_rate_mean: np.ndarray = None,
+                 drive_rate_mean: np.ndarray = None,
+                 exc_adaptation_mean: np.ndarray = None,
+                 inh_adaptation_mean: np.ndarray = None,
+                 rate_cov: np.ndarray = None,
+                 exc_x_mean: np.ndarray = None,
+                 exc_y_mean: np.ndarray = None,
+                 exc_u_mean: np.ndarray = None,
+                 inh_x_mean: np.ndarray = None,
+                 inh_y_mean: np.ndarray = None,
+                 inh_u_mean: np.ndarray = None,
+                 input_units: dict = None,
+                 ):
 
-        # shape = (time, node)
-        self.exc_rate_mean = mf_results["E"].flatten()*1e3
-        self.inh_rate_mean = mf_results["I"].flatten()*1e3
-        self.exc_adaptation_mean = mf_results["W_e"].flatten()
-        self.inh_adaptation_mean = np.zeros_like(self.exc_adaptation_mean)
+        # --- Public Metadata (No units required) ---
+        self.label_name = label_name
+        self.stim_name = stim_name
+        self.mf_sim_params = mf_sim_params
+        self.network_params = network_params
+        self.stim_params = stim_params
+
+        input_units = input_units or {}
+
+        # --- Protected Physical Data (Stored in Default Units) ---
+        self._times = self._ingest(times, "times", input_units)
+        self._exc_rate_mean = self._ingest(exc_rate_mean, "exc_rate_mean", input_units)
+        self._exc_rate_std = self._ingest(exc_rate_std, "exc_rate_std", input_units)
+        self._inh_rate_mean = self._ingest(inh_rate_mean, "inh_rate_mean", input_units)
+        self._inh_rate_std = self._ingest(inh_rate_std, "inh_rate_std", input_units)
+        self._stim_rate_mean = self._ingest(stim_rate_mean, "stim_rate_mean", input_units)
+        self._drive_rate_mean = self._ingest(drive_rate_mean, "drive_rate_mean", input_units)
+        self._exc_adaptation_mean = self._ingest(exc_adaptation_mean, "exc_adaptation_mean", input_units)
+        self._inh_adaptation_mean = self._ingest(inh_adaptation_mean, "inh_adaptation_mean", input_units)
+        self._rate_cov = self._ingest(rate_cov, "rate_cov", input_units)
+        self._exc_x_mean = self._ingest(exc_x_mean, "exc_x_mean", input_units)
+        self._exc_y_mean = self._ingest(exc_y_mean, "exc_y_mean", input_units)
+        self._exc_u_mean = self._ingest(exc_u_mean, "exc_u_mean", input_units)
+        self._inh_x_mean = self._ingest(inh_x_mean, "inh_x_mean", input_units)
+        self._inh_y_mean = self._ingest(inh_y_mean, "inh_y_mean", input_units)
+        self._inh_u_mean = self._ingest(inh_u_mean, "inh_u_mean", input_units)
+
+        self._exc_neuron_mpf = MembranePotentialFluctuations(
+            neuron_name = network_params.exc_neuron_name,
+            network_params = network_params,
+        )
+
+        self._inh_neuron_mpf = MembranePotentialFluctuations(
+            neuron_name = network_params.inh_neuron_name,
+            network_params = network_params,
+        )
+
+        # Freeze the object to prevent accidental attribute creation or modification
+        self._finalized = True
+
+    def times(self, unit=None):
+        default_unit = self.DEFAULT_UNITS["times"]
+        target_unit = default_unit if unit is None else unit
+        return self._get_scaled(self._times, default_unit, target_unit)
+
+    def exc_rate_mean(self, unit=None):
+        default_unit = self.DEFAULT_UNITS["exc_rate_mean"]
+        target_unit = default_unit if unit is None else unit
+        return self._get_scaled(self._exc_rate_mean, default_unit, target_unit)
+
+    def exc_rate_std(self, unit=None):
+        default_unit = self.DEFAULT_UNITS["exc_rate_std"]
+        target_unit = default_unit if unit is None else unit
+        return self._get_scaled(self._exc_rate_std, default_unit, target_unit)
+
+    def inh_rate_mean(self, unit=None):
+        default_unit = self.DEFAULT_UNITS["inh_rate_mean"]
+        target_unit = default_unit if unit is None else unit
+        return self._get_scaled(self._inh_rate_mean, default_unit, target_unit)
+
+    def inh_rate_std(self, unit=None):
+        default_unit = self.DEFAULT_UNITS["inh_rate_std"]
+        target_unit = default_unit if unit is None else unit
+        return self._get_scaled(self._inh_rate_std, default_unit, target_unit)
+
+    def stim_rate_mean(self, unit=None):
+        default_unit = self.DEFAULT_UNITS["stim_rate_mean"]
+        target_unit = default_unit if unit is None else unit
+        return self._get_scaled(self._stim_rate_mean, default_unit, target_unit)
+
+    def drive_rate_mean(self, unit=None):
+        default_unit = self.DEFAULT_UNITS["drive_rate_mean"]
+        target_unit = default_unit if unit is None else unit
+        return self._get_scaled(self._drive_rate_mean, default_unit, target_unit)
+
+    def exc_adaptation_mean(self, unit=None):
+        default_unit = self.DEFAULT_UNITS["exc_adaptation_mean"]
+        target_unit = default_unit if unit is None else unit
+        return self._get_scaled(self._exc_adaptation_mean, default_unit, target_unit)
+
+    def inh_adaptation_mean(self, unit=None):
+        default_unit = self.DEFAULT_UNITS["inh_adaptation_mean"]
+        target_unit = default_unit if unit is None else unit
+        return self._get_scaled(self._inh_adaptation_mean, default_unit, target_unit)
+
+    def rate_cov(self, unit=None):
+        default_unit = self.DEFAULT_UNITS["rate_cov"]
+        target_unit = default_unit if unit is None else unit
+        return self._get_scaled(self._rate_cov, default_unit, target_unit)
+
+    def exc_x_mean(self, unit=None):
+        default_unit = self.DEFAULT_UNITS["exc_x_mean"]
+        target_unit = default_unit if unit is None else unit
+        return self._get_scaled(self._exc_x_mean, default_unit, target_unit)
+
+    def exc_y_mean(self, unit=None):
+        default_unit = self.DEFAULT_UNITS["exc_y_mean"]
+        target_unit = default_unit if unit is None else unit
+        return self._get_scaled(self._exc_y_mean, default_unit, target_unit)
+
+    def exc_u_mean(self, unit=None):
+        default_unit = self.DEFAULT_UNITS["exc_u_mean"]
+        target_unit = default_unit if unit is None else unit
+        return self._get_scaled(self._exc_u_mean, default_unit, target_unit)
+
+    def inh_x_mean(self, unit=None):
+        default_unit = self.DEFAULT_UNITS["inh_x_mean"]
+        target_unit = default_unit if unit is None else unit
+        return self._get_scaled(self._inh_x_mean, default_unit, target_unit)
+
+    def inh_y_mean(self, unit=None):
+        default_unit = self.DEFAULT_UNITS["inh_y_mean"]
+        target_unit = default_unit if unit is None else unit
+        return self._get_scaled(self._inh_y_mean, default_unit, target_unit)
+
+    def inh_u_mean(self, unit=None):
+        default_unit = self.DEFAULT_UNITS["inh_u_mean"]
+        target_unit = default_unit if unit is None else unit
+        return self._get_scaled(self._inh_u_mean, default_unit, target_unit)
+
+    def exc_voltage_mean(self, unit=None):
+        pass
+    def inh_voltage_mean(self, unit=None):
+        pass
+
+    def ee_conductance_mean(self, unit=None):
+        pass
+    def ei_conductance_mean(self, unit=None):
+        pass
+    def ie_conductance_mean(self, unit=None):
+        pass
+    def ii_conductance_mean(self, unit=None):
+        pass
+
+
+    def _ingest(self,var_value, var_name:str, input_units:dict):
+        """Rescales the input value to the DEFAULT_UNITS if needed."""
+        if var_value is None:
+            return None
         
-        try:
-            self.exc_rate_std = np.sqrt(mf_results["C_ee"]).flatten()*1e3
-            self.inh_rate_std = np.sqrt(mf_results["C_ii"]).flatten()*1e3
-            self.covariance = mf_results["C_ei"].flatten()*1e6
-        except KeyError:
-            print("Warning: MFResults does not contain C_ee, C_ii, C_ei (First order model). Skipping standard deviations and covariance.")
-            self.exc_rate_std = None
-            self.inh_rate_std = None
-            self.covariance = None
-
-        try:
-            self.exc_x_mean = mf_results["X_e"].flatten()
-            self.exc_y_mean = mf_results["Y_e"].flatten()
-            self.exc_u_mean = mf_results["U_dyn_e"].flatten()
-            self.inh_x_mean = mf_results["X_i"].flatten()
-            self.inh_y_mean = mf_results["Y_i"].flatten()
-            self.inh_u_mean = mf_results["U_dyn_i"].flatten()
-
-        except KeyError:
-            print("Warning: MFResults does not contain X_e, Y_e, X_i, Y_i. Skipping spatial coordinates.")
-            self.exc_x_mean = None
-            self.exc_y_mean = None
-            self.exc_u_mean = None
-            self.inh_x_mean = None
-            self.inh_y_mean = None
-            self.inh_u_mean = None
+        default_unit = self.DEFAULT_UNITS.get(var_name)
+        provided_unit = input_units.get(var_name, default_unit)
         
-        self.exc_voltage_mean = None
-        self.inh_voltage_mean = None
+        if provided_unit != default_unit:
+            factor = get_unit_multiplier(provided_unit, default_unit)
+            return var_value * factor
+        return var_value
 
-        self.ee_conductance_mean = None
-        self.ei_conductance_mean = None
-        self.ie_conductance_mean = None
-        self.ii_conductance_mean = None
+    def __setattr__(self, name, value):
+        if getattr(self, '_finalized', False) and name != '_finalized':
+            raise AttributeError(f"Instance of {self.__class__.__name__} is frozen. Data should not be modified post-simulation.")
+        super().__setattr__(name, value)
 
-    @property
-    def exc_voltage_mean(self):
-        if self._exc_voltage_mean is None or not hasattr(self, '_exc_voltage_mean'):
-            self.exc_voltage_mean = self.calculate_v_mean_tvb(
-                                            self.net_params['exc_neuron'], 
-                                            self.stim_params,
-                                            self.net_params['network'],
-                                            self.exc_rate_mean, 
-                                            self.inh_rate_mean, 
-                                            self.stim_rate, 
-                                            self.exc_adaptation_mean)
-
-        return self._exc_voltage_mean
+    # --- Data Retrieval Methods ---
     
-    @exc_voltage_mean.setter
-    def exc_voltage_mean(self, value):
-        self._exc_voltage_mean = value
+    def _get_scaled(self, data, source_unit, target_unit):
+        """Internal helper to serve data in requested units."""
+        if data is None or target_unit == source_unit:
+            return data
+        return data * get_unit_multiplier(source_unit, target_unit)
 
-    @property
-    def inh_voltage_mean(self):
-        if self._inh_voltage_mean is None or not hasattr(self, '_inh_voltage_mean'):
-            self._inh_voltage_mean = self.calculate_v_mean_tvb(
-                                            self.net_params['inh_neuron'], 
-                                            self.stim_params,
-                                            self.net_params['network'],
-                                            self.exc_rate_mean, 
-                                            self.inh_rate_mean, 
-                                            self.stim_rate*self.stim_params['stim_target_ratio'], 
-                                            w=0.)
-        return self._inh_voltage_mean
 
-    @inh_voltage_mean.setter
-    def inh_voltage_mean(self, value):
-        self._inh_voltage_mean = value
 
-    @staticmethod
-    def calculate_v_mean_tvb(neuron_params, stim_params, conn_params, exc_rate, inh_rate, stim_rate, w):
-        """
-        Calculate the mean membrane potential for a given neuron type.
+
+
+
+
+
+    # def __init__(self, mf_results, stim_params, net_params):
+    #     # Assuming mf_results are from TVB simulation run, the following does
+    #     # conversion to appropriate units
+
+    #     super().__init__(mf_results["time"], stim_params, net_params)
+
+    #     self.drive_rate = mf_results["drive_rate"].flatten()*1e3
+    #     self.stim_rate = mf_results["stimulus"].flatten()*1e3
+
+    #     # shape = (time, node)
+    #     self.exc_rate_mean = mf_results["E"].flatten()*1e3
+    #     self.inh_rate_mean = mf_results["I"].flatten()*1e3
+    #     self.exc_adaptation_mean = mf_results["W_e"].flatten()
+    #     self.inh_adaptation_mean = np.zeros_like(self.exc_adaptation_mean)
         
-        This is a placeholder function, as the actual implementation depends on the
-        specific neuron model and parameters.
-        """
-        from codes.tvb_models.models import Zerlaut_adaptation_first_order
-        Fe_ext = stim_params["drive_rate"] + stim_rate
-        Fi_ext = 0.
+    #     try:
+    #         self.exc_rate_std = np.sqrt(mf_results["C_ee"]).flatten()*1e3
+    #         self.inh_rate_std = np.sqrt(mf_results["C_ii"]).flatten()*1e3
+    #         self.covariance = mf_results["C_ei"].flatten()*1e6
+    #     except KeyError:
+    #         print("Warning: MFResults does not contain C_ee, C_ii, C_ei (First order model). Skipping standard deviations and covariance.")
+    #         self.exc_rate_std = None
+    #         self.inh_rate_std = None
+    #         self.covariance = None
 
-        v_mean, *_ = Zerlaut_adaptation_first_order.get_fluct_regime_vars(
-                        exc_rate*1e-3, 
-                        inh_rate*1e-3, 
-                        Fe_ext*1e-3, 
-                        Fi_ext*1e-3, 
-                        w, 
-                        neuron_params['exc_synapses']['syn_params']['weight'], 
-                        neuron_params["neuron_params"]["tau_syn_E"], 
-                        neuron_params["neuron_params"]["e_rev_E"], 
-                        neuron_params['inh_synapses']['syn_params']['weight'], 
-                        neuron_params["neuron_params"]["tau_syn_I"],
-                        neuron_params["neuron_params"]["e_rev_I"], 
-                        neuron_params["neuron_params"]['cm']/ neuron_params["neuron_params"]['tau_m']*1e3,
-                        neuron_params["neuron_params"]['cm']*1e3,
-                        neuron_params["neuron_params"]['v_rest'],
-                        conn_params['total_pop_size'], 
-                        conn_params['p_connect_exc'],
-                        conn_params['p_connect_inh'], 
-                        conn_params['g'], 
-                        int(conn_params["drive_pop_size"]*conn_params["p_connect_drive"]), 
-                        0)
-        return v_mean
+    #     try:
+    #         self.exc_x_mean = mf_results["X_e"].flatten()
+    #         self.exc_y_mean = mf_results["Y_e"].flatten()
+    #         self.exc_u_mean = mf_results["U_dyn_e"].flatten()
+    #         self.inh_x_mean = mf_results["X_i"].flatten()
+    #         self.inh_y_mean = mf_results["Y_i"].flatten()
+    #         self.inh_u_mean = mf_results["U_dyn_i"].flatten()
 
-    @staticmethod
-    def calculate_v_mean_tf(neuron_params, stim_params, conn_params, exc_rate, inh_rate, stim_rate, w):
-        import codes.transfer_function as tf
-        Fe_ext = stim_params["drive_rate"] + stim_rate
-        Fi_ext = 0.
-        v_mean, *_ = tf.MPF_with_adaptation(neuron_params)(
-                        (exc_rate+Fe_ext),
-                        (inh_rate+Fi_ext),
-                        w*1e-3, 
-                        flattened=True)
-        return v_mean
+    #     except KeyError:
+    #         print("Warning: MFResults does not contain X_e, Y_e, X_i, Y_i. Skipping spatial coordinates.")
+    #         self.exc_x_mean = None
+    #         self.exc_y_mean = None
+    #         self.exc_u_mean = None
+    #         self.inh_x_mean = None
+    #         self.inh_y_mean = None
+    #         self.inh_u_mean = None
+        
+    #     self.exc_voltage_mean = None
+    #     self.inh_voltage_mean = None
+    #     self.ee_conductance_mean = None
+    #     self.ei_conductance_mean = None
+    #     self.ie_conductance_mean = None
+    #     self.ii_conductance_mean = None
 
-    def print_time_averaged(self, start_time=None, end_time=None):
-        if start_time is None:
-            start_time = self.times[0]
-        if end_time is None:
-            end_time = self.times[-1]
-        mask = (self.times >= start_time) & (self.times <= end_time)
+    # @property
+    # def exc_voltage_mean(self):
+    #     if self._exc_voltage_mean is None or not hasattr(self, '_exc_voltage_mean'):
+    #         self.exc_voltage_mean = self.calculate_v_mean_tvb(
+    #                                         self.net_params['exc_neuron'], 
+    #                                         self.stim_params,
+    #                                         self.net_params['network'],
+    #                                         self.exc_rate_mean, 
+    #                                         self.inh_rate_mean, 
+    #                                         self.stim_rate, 
+    #                                         self.exc_adaptation_mean)
 
-        print("="*50)
-        print("MF NETWORK TIME-AVERAGED RESULTS")
-        print("="*50)
-        print(f"Time window: [{start_time:.2f} ms;{end_time:.2f} ms]")
+    #     return self._exc_voltage_mean
+    
+    # @exc_voltage_mean.setter
+    # def exc_voltage_mean(self, value):
+    #     self._exc_voltage_mean = value
 
-        print(f"exc rate = {self.exc_rate_mean[mask].mean():.2f} +- {self.exc_rate_std[mask].mean():.2f} Hz")
-        print(f"inh rate = {self.inh_rate_mean[mask].mean():.2f} +- {self.inh_rate_std[mask].mean():.2f} Hz")
-        print(f"exc w = {self.exc_adaptation_mean[mask].mean():.2f} pA")
-        print(f"inh w = {self.inh_adaptation_mean[mask].mean():.2f} pA")
+    # @property
+    # def inh_voltage_mean(self):
+    #     if self._inh_voltage_mean is None or not hasattr(self, '_inh_voltage_mean'):
+    #         self._inh_voltage_mean = self.calculate_v_mean_tvb(
+    #                                         self.net_params['inh_neuron'], 
+    #                                         self.stim_params,
+    #                                         self.net_params['network'],
+    #                                         self.exc_rate_mean, 
+    #                                         self.inh_rate_mean, 
+    #                                         self.stim_rate*self.stim_params['stim_target_ratio'], 
+    #                                         w=0.)
+    #     return self._inh_voltage_mean
 
-        exc_vv = self.calculate_v_mean_tf(self.net_params["exc_neuron"], self.stim_params, self.net_params["network"], self.exc_rate_mean, self.inh_rate_mean, self.stim_rate, self.exc_adaptation_mean)
-        inh_vv = self.calculate_v_mean_tf(self.net_params["inh_neuron"], self.stim_params, self.net_params["network"], self.exc_rate_mean, self.inh_rate_mean, self.stim_rate, 0.)
+    # @inh_voltage_mean.setter
+    # def inh_voltage_mean(self, value):
+    #     self._inh_voltage_mean = value
 
-        print(f"exc V_m = {self.exc_voltage_mean[mask].mean():.2f} +- {self.exc_voltage_mean[mask].std():.2f} mV")
-        print(f"inh V_m = {self.inh_voltage_mean[mask].mean():.2f} +- {self.inh_voltage_mean[mask].std():.2f} mV")
-        print(f"My exc V_m = {exc_vv[mask].mean():.2f} +- {exc_vv[mask].std():.2f} mV")
-        print(f"My inh V_m = {inh_vv[mask].mean():.2f} +- {inh_vv[mask].std():.2f} mV")        
+    # @staticmethod
+    # def calculate_v_mean_tvb(neuron_params, stim_params, conn_params, exc_rate, inh_rate, stim_rate, w):
+    #     """
+    #     Calculate the mean membrane potential for a given neuron type.
+        
+    #     This is a placeholder function, as the actual implementation depends on the
+    #     specific neuron model and parameters.
+    #     """
+    #     from codes.tvb_models.models import Zerlaut_adaptation_first_order
+    #     Fe_ext = stim_params["drive_rate"] + stim_rate
+    #     Fi_ext = 0.
+
+    #     v_mean, *_ = Zerlaut_adaptation_first_order.get_fluct_regime_vars(
+    #                     exc_rate*1e-3, 
+    #                     inh_rate*1e-3, 
+    #                     Fe_ext*1e-3, 
+    #                     Fi_ext*1e-3, 
+    #                     w, 
+    #                     neuron_params['exc_synapses']['syn_params']['weight'], 
+    #                     neuron_params["neuron_params"]["tau_syn_E"], 
+    #                     neuron_params["neuron_params"]["e_rev_E"], 
+    #                     neuron_params['inh_synapses']['syn_params']['weight'], 
+    #                     neuron_params["neuron_params"]["tau_syn_I"],
+    #                     neuron_params["neuron_params"]["e_rev_I"], 
+    #                     neuron_params["neuron_params"]['cm']/ neuron_params["neuron_params"]['tau_m']*1e3,
+    #                     neuron_params["neuron_params"]['cm']*1e3,
+    #                     neuron_params["neuron_params"]['v_rest'],
+    #                     conn_params['total_pop_size'], 
+    #                     conn_params['p_connect_exc'],
+    #                     conn_params['p_connect_inh'], 
+    #                     conn_params['g'], 
+    #                     int(conn_params["drive_pop_size"]*conn_params["p_connect_drive"]), 
+    #                     0)
+    #     return v_mean
+
+    # @staticmethod
+    # def calculate_v_mean_tf(neuron_params, stim_params, conn_params, exc_rate, inh_rate, stim_rate, w):
+    #     import codes.transfer_function as tf
+    #     Fe_ext = stim_params["drive_rate"] + stim_rate
+    #     Fi_ext = 0.
+    #     v_mean, *_ = tf.MPF_with_adaptation(neuron_params)(
+    #                     (exc_rate+Fe_ext),
+    #                     (inh_rate+Fi_ext),
+    #                     w*1e-3, 
+    #                     flattened=True)
+    #     return v_mean
+
+    # def print_time_averaged(self, start_time=None, end_time=None):
+    #     if start_time is None:
+    #         start_time = self.times[0]
+    #     if end_time is None:
+    #         end_time = self.times[-1]
+    #     mask = (self.times >= start_time) & (self.times <= end_time)
+
+    #     print("="*50)
+    #     print("MF NETWORK TIME-AVERAGED RESULTS")
+    #     print("="*50)
+    #     print(f"Time window: [{start_time:.2f} ms;{end_time:.2f} ms]")
+
+    #     print(f"exc rate = {self.exc_rate_mean[mask].mean():.2f} +- {self.exc_rate_std[mask].mean():.2f} Hz")
+    #     print(f"inh rate = {self.inh_rate_mean[mask].mean():.2f} +- {self.inh_rate_std[mask].mean():.2f} Hz")
+    #     print(f"exc w = {self.exc_adaptation_mean[mask].mean():.2f} pA")
+    #     print(f"inh w = {self.inh_adaptation_mean[mask].mean():.2f} pA")
+
+    #     exc_vv = self.calculate_v_mean_tf(self.net_params["exc_neuron"], self.stim_params, self.net_params["network"], self.exc_rate_mean, self.inh_rate_mean, self.stim_rate, self.exc_adaptation_mean)
+    #     inh_vv = self.calculate_v_mean_tf(self.net_params["inh_neuron"], self.stim_params, self.net_params["network"], self.exc_rate_mean, self.inh_rate_mean, self.stim_rate, 0.)
+
+    #     print(f"exc V_m = {self.exc_voltage_mean[mask].mean():.2f} +- {self.exc_voltage_mean[mask].std():.2f} mV")
+    #     print(f"inh V_m = {self.inh_voltage_mean[mask].mean():.2f} +- {self.inh_voltage_mean[mask].std():.2f} mV")
+    #     print(f"My exc V_m = {exc_vv[mask].mean():.2f} +- {exc_vv[mask].std():.2f} mV")
+    #     print(f"My inh V_m = {inh_vv[mask].mean():.2f} +- {inh_vv[mask].std():.2f} mV")        
 
 
