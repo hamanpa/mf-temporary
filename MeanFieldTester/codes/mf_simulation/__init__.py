@@ -5,7 +5,7 @@ from .config import MeanFieldSimulationConfig
 
 from ..stimuli.config import BaseStimulusConfig
 from ..network_params.models import BiologicalParameters
-from ..data_structures.network import MFResults
+from ..data_structures.mf_simulation import MFResults
 
 # --- Registry ---
 SIMULATOR_REGISTRY = {

@@ -6,7 +6,7 @@ from ..neuron_simulation.config import NeuronInitialValuesConfig
 
 class SmoothingConfig(BaseModel):
     function: Literal["sliding_window", "gaussian"]
-    time_constant: float = Field(description="Time constant for the smoothing function in ms.")
+    time_constant: float = Field(description="Time constant for the smoothing function in [ms].")
     kwargs: Dict[str, Any] = Field(default_factory=dict, description="Additional keyword arguments for the smoothing function.")
 
 
@@ -19,7 +19,7 @@ class SpikingNeuralNetworkSimulationConfig(BaseModel):
     execution_mode: Literal["run", "load", "skip"] = "run"
 
     simulator: str = Field(default="pynn.nest", description="The backend simulator to use.")
-    time_step: float = Field(default=0.1, gt=0, description="Integration time step in ms.")
+    time_step: float = Field(default=0.1, gt=0, description="Integration time step in [ms].")
     seed: int = Field(default=42, description="Random number generator seed.")
     n_runs: int = Field(default=1, ge=1, description="Number of statistical runs.")
     cpus: int = Field(default=1, ge=1, description="Number of CPU cores for multiprocessing.")

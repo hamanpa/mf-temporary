@@ -30,8 +30,7 @@ from codes import transfer_function as tf
 
 from codes.utils.list_helpers import indexed_linear_sample
 
-from codes.data_structures.network import MFResults, SNNResults
-from codes.data_structures.single_neuron import SingleNeuronResults
+from ..data_structures.base import BaseMFResults, BaseSNNResults, BaseSingleNeuronResults
 
 from codes.utils.snn_helpers import activity_from_spikes_histogram
 
@@ -151,7 +150,7 @@ class SingleNeuronActivityPlot(BaseSingleNeuronPlot):
         'capsize': 3,  # Error bar cap size
     }
 
-    def _draw(self, ax, neuron_results:SingleNeuronResults):
+    def _draw(self, ax, neuron_results:BaseSingleNeuronResults):
         plt.gca().set_prop_cycle(None)
             
         for j, (nu_i_idx, nu_i) in enumerate(indexed_linear_sample(neuron_results.inh_rate_grid()[0], self.full_params['curves_num'])):
@@ -190,7 +189,7 @@ class SingleNeuronAdaptationPlot(BaseSingleNeuronPlot):
         'capsize': 3,  # Error bar cap size
     }
 
-    def _draw(self, ax, neuron_results:SingleNeuronResults):
+    def _draw(self, ax, neuron_results:BaseSingleNeuronResults):
         plt.gca().set_prop_cycle(None)
             
         for j, (nu_i_idx, nu_i) in enumerate(indexed_linear_sample(neuron_results.inh_rate_grid()[0], self.full_params['curves_num'])):
@@ -227,7 +226,7 @@ class SingleNeuronAdaptationHeatmapPlot(BaseSingleNeuronPlot):
         'extend': 'neither',  # Extend the colorbar to the maximum value
     }
 
-    def _draw(self, ax, neuron_results:SingleNeuronResults):
+    def _draw(self, ax, neuron_results:BaseSingleNeuronResults):
         im = ax.contourf(neuron_results.exc_rate_grid(),
                          neuron_results.inh_rate_grid(),
                          neuron_results.adaptation_mean(),
@@ -254,7 +253,7 @@ class SingleNeuronActivityHeatmapPlot(BaseSingleNeuronPlot):
         'extend': 'max',  # Extend the colorbar to the maximum value
     }
 
-    def _draw(self, ax, neuron_results:SingleNeuronResults):
+    def _draw(self, ax, neuron_results:BaseSingleNeuronResults):
         im = ax.contourf(neuron_results.exc_rate_grid(),
                          neuron_results.inh_rate_grid(),
                          neuron_results.out_rate_mean(),
@@ -304,7 +303,7 @@ class TransferFunctionFitPlot(BaseTransferFunctionPlot):
 
     # NOTE: this one should follow plot_multiple_tf_fits
 
-    def _draw(self, ax, neuron_results:SingleNeuronResults, 
+    def _draw(self, ax, neuron_results:BaseSingleNeuronResults, 
               tf_funcs_list):
             #   tf_funcs_list:list[tf.TransferFunction]):
         if self.full_params['colors'] is None:
@@ -380,7 +379,7 @@ class TransferFunctionFitPlot(BaseTransferFunctionPlot):
 class BaseSNNPlot(BasePlot):    
     """Base class for plots base solely on results of Spiking Neural Network.
 
-    This class works only with data in helper.SNNResults
+    This class works only with data in helper.BaseSNNResults
     """
     pass
 
@@ -398,13 +397,13 @@ class SpikeRasterPlot(BaseSNNPlot):
         'inh_cells': RASTER_INH_CELLS,
     }
 
-    def _draw(self, ax, snn_results:SNNResults):
+    def _draw(self, ax, snn_results:BaseSNNResults):
         exc_cells = self.full_params['exc_cells']
         inh_cells = self.full_params['inh_cells']
-        for i, spiketrain in enumerate(snn_results.exc_spikes_all[:exc_cells], start=1):
+        for i, spiketrain in enumerate(snn_results.exc_spikes_all()[:exc_cells], start=1):
             ax.scatter(spiketrain, i * np.ones_like(spiketrain), color=self.full_params['exc_color'], 
                        marker=self.full_params['marker'], s=self.full_params['markersize'], lw=0)
-        for i, spiketrain in enumerate(snn_results.inh_spikes_all[:inh_cells], start=exc_cells + 1):
+        for i, spiketrain in enumerate(snn_results.inh_spikes_all()[:inh_cells], start=exc_cells + 1):
             ax.scatter(spiketrain, i * np.ones_like(spiketrain), color=self.full_params['inh_color'],
                        marker=self.full_params['marker'], s=self.full_params['markersize'], lw=0)
 
@@ -419,12 +418,12 @@ class ActivityHistogramPlot(BaseSNNPlot):
         'binsize': BIN_SIZE,  # Size of the bins for the histogram
     }
 
-    def _draw(self, ax, snn_results:SNNResults):
-        exc_activity = activity_from_spikes_histogram(snn_results.exc_spikes_all, snn_results.times, self.full_params['binsize'])
-        inh_activity = activity_from_spikes_histogram(snn_results.inh_spikes_all, snn_results.times, self.full_params['binsize'])
+    def _draw(self, ax, snn_results:BaseSNNResults):
+        exc_activity = activity_from_spikes_histogram(snn_results.exc_spikes_all(), snn_results.times(), self.full_params['binsize'])
+        inh_activity = activity_from_spikes_histogram(snn_results.inh_spikes_all(), snn_results.times(), self.full_params['binsize'])
         
-        ax.plot(snn_results.times, exc_activity, label='Excitatory', color=self.full_params['exc_color'])
-        ax.plot(snn_results.times, inh_activity, label='Inhibitory', color=self.full_params['inh_color'])
+        ax.plot(snn_results.times(), exc_activity, label='Excitatory', color=self.full_params['exc_color'])
+        ax.plot(snn_results.times(), inh_activity, label='Inhibitory', color=self.full_params['inh_color'])
 
 
 ################################################################################
@@ -474,17 +473,17 @@ class FiringRatePlot(BaseNetworkPlot):
         self.update_params(results_list)
 
         for results, ls, label in zip(results_list, self.full_params['linestyles'], self.full_params['labels']):
-            alpha = 0.5 if isinstance(results, SNNResults) else 1.0
-            ax.plot(results.times, results.exc_rate_mean, label=f'Exc {label}', ls=ls, color=self.full_params['exc_color'], alpha=alpha)
-            ax.plot(results.times, results.inh_rate_mean, label=f'Inh {label}', ls=ls, color=self.full_params['inh_color'], alpha=alpha)
-            if isinstance(results, MFResults) and ls != 'None':
-                ax.fill_between(results.times, 
-                                results.exc_rate_mean - results.exc_rate_std,
-                                results.exc_rate_mean + results.exc_rate_std, 
+            alpha = 0.5 if isinstance(results, BaseSNNResults) else 1.0
+            ax.plot(results.times(), results.exc_rate_mean(), label=f'Exc {label}', ls=ls, color=self.full_params['exc_color'], alpha=alpha)
+            ax.plot(results.times(), results.inh_rate_mean(), label=f'Inh {label}', ls=ls, color=self.full_params['inh_color'], alpha=alpha)
+            if isinstance(results, BaseMFResults) and ls != 'None':
+                ax.fill_between(results.times(), 
+                                results.exc_rate_mean() - results.exc_rate_std(),
+                                results.exc_rate_mean() + results.exc_rate_std(), 
                                 color=self.full_params['exc_color'], alpha=0.3)
-                ax.fill_between(results.times, 
-                                results.inh_rate_mean - results.inh_rate_std,
-                                results.inh_rate_mean + results.inh_rate_std, 
+                ax.fill_between(results.times(), 
+                                results.inh_rate_mean() - results.inh_rate_std(),
+                                results.inh_rate_mean() + results.inh_rate_std(), 
                                 color=self.full_params['inh_color'], alpha=0.3)
 
 
@@ -529,7 +528,7 @@ class FiringRateAndStimulusPlot(BaseNetworkPlot):
         self.apply_preplot_params(ax_lower, self.full_params | self.LOWER_PLOT_PARAMS)
 
         for results, ls, label in zip(results_list, self.full_params['linestyles'], self.full_params['labels']):
-            ax_lower.plot(results.times, results.drive_rate+results.stim_rate, label=label, ls=ls, color='black')
+            ax_lower.plot(results.times(), results.drive_rate_mean() + results.stim_rate_mean(), label=label, ls=ls, color='black')
             # NOTE: for some reason the loop take ridiculous amount of time,
             # so we plot only the first one
             break
@@ -551,10 +550,10 @@ class StimulusWithAdaptationPlot(BaseNetworkPlot):
 
         axtwin = ax.twinx()  
 
-        ax.plot(results_list[0].times, results_list[0].drive_rate, "--", color='black', label='Drive rate')
-        ax.plot(results_list[0].times, results_list[0].stim_rate, "-.", color='black', label='Stimulus rate')
+        ax.plot(results_list[0].times(), results_list[0].drive_rate_mean(), "--", color='black', label='Drive rate')
+        ax.plot(results_list[0].times(), results_list[0].stim_rate_mean(), "-.", color='black', label='Stimulus rate')
         for results, ls, label in zip(results_list, self.full_params['linestyles'], self.full_params['labels']):
-            axtwin.plot(results.times, results.exc_adaptation_mean, ls=ls, color='blue', label=label)
+            axtwin.plot(results.times(), results.exc_adaptation_mean(), ls=ls, color='blue', label=label)
 
         axtwin.set_ylabel("Adaptation current (pA)", color="blue")
         axtwin.tick_params(axis ='y', labelcolor = "blue")
@@ -575,8 +574,8 @@ class VoltagePlot(BaseNetworkPlot):
         self.update_params(results_list)
 
         for results, ls, label in zip(results_list, self.full_params['linestyles'], self.full_params['labels']):
-            ax.plot(results.times, results.exc_voltage_mean, label=f'Exc {label}', ls=ls, color=self.full_params['exc_color'])
-            ax.plot(results.times, results.inh_voltage_mean, label=f'Inh {label}', ls=ls, color=self.full_params['inh_color'])
+            ax.plot(results.times(), results.exc_voltage_mean(), label=f'Exc {label}', ls=ls, color=self.full_params['exc_color'])
+            ax.plot(results.times(), results.inh_voltage_mean(), label=f'Inh {label}', ls=ls, color=self.full_params['inh_color'])
 
 
 class FiringRateHistogramPlot(BaseNetworkPlot):
@@ -599,7 +598,7 @@ class FiringRateHistogramPlot(BaseNetworkPlot):
             if results.stim_params['pattern'] != 'NoStimulus':
                 raise ValueError("FiringRateHistogramPlot only works for no stimulus simulations.")
             
-            if isinstance(results, SNNResults):
+            if isinstance(results, BaseSNNResults):
                 exc_rates, inh_rates = results.per_cell_average_rates(start_time=self.full_params['start_time'])
                 exc_bins = int(np.ceil(((exc_rates.max() - exc_rates.min()) / self.full_params['binsize'])))
                 inh_bins = int(np.ceil(((inh_rates.max() - inh_rates.min()) / self.full_params['binsize'])))
@@ -607,7 +606,7 @@ class FiringRateHistogramPlot(BaseNetworkPlot):
                 ax.hist(exc_rates, bins=exc_bins, alpha=0.5, label=f'Exc {label}', edgecolor=self.full_params['exc_color'], color=self.full_params['exc_color'], linestyle=ls)
                 ax.hist(inh_rates, bins=inh_bins, alpha=0.5, label=f'Inh {label}', edgecolor=self.full_params['inh_color'], color=self.full_params['inh_color'], linestyle=ls)
 
-            elif isinstance(results, MFResults):
+            elif isinstance(results, BaseMFResults):
                 # plots gaussian distributioon based on mean and std
                 mask = results.times >= self.full_params['start_time']
                 exc_mean = np.mean(results.exc_rate_mean[mask])
@@ -651,8 +650,8 @@ class VoltageHistogramPlot(BaseNetworkPlot):
         for results, ls, label in zip(results_list, self.full_params['linestyles'], self.full_params['labels']):
             if results.stim_params['pattern'] != 'NoStimulus':
                 raise ValueError("VoltageHistogramPlot only works for no stimulus simulations.")
-            if isinstance(results, SNNResults):
-                mask = results.times >= self.full_params['start_time']
+            if isinstance(results, BaseSNNResults):
+                mask = results.times() >= self.full_params['start_time']
 
                 exc_voltage = results.exc_voltage_all[mask].mean(axis=0)
                 exc_bins = int(np.ceil(((exc_voltage.max() - exc_voltage.min()) / self.full_params['binsize'])))
@@ -680,8 +679,8 @@ class AdaptationHistogramPlot(BaseNetworkPlot):
         for results, ls, label in zip(results_list, self.full_params['linestyles'], self.full_params['labels']):
             if results.stim_params['pattern'] != 'NoStimulus':
                 raise ValueError("AdaptationHistogramPlot only works for no stimulus simulations.")
-            if isinstance(results, SNNResults):
-                mask = results.times >= self.full_params['start_time']
+            if isinstance(results, BaseSNNResults):
+                mask = results.times() >= self.full_params['start_time']
 
                 exc_adaptation = results.exc_adaptation_all[mask].mean(axis=0)
                 exc_bins = int(np.ceil(((exc_adaptation.max() - exc_adaptation.min()) / self.full_params['binsize'])))
@@ -705,8 +704,8 @@ class ExcitatoryNeuronConductanceHistogramPlot(BaseNetworkPlot):
         for results, ls, label in zip(results_list, self.full_params['linestyles'], self.full_params['labels']):
             if results.stim_params['pattern'] != 'NoStimulus':
                 raise ValueError("ExcitatoryNeuronConductanceHistogramPlot only works for no stimulus simulations.")
-            if isinstance(results, SNNResults):
-                mask = results.times >= self.full_params['start_time']
+            if isinstance(results, BaseSNNResults):
+                mask = results.times() >= self.full_params['start_time']
 
                 exc_conductance = results.ee_conductance_all[mask].mean(axis=0)
                 exc_bins = int(np.ceil(((exc_conductance.max() - exc_conductance.min()) / self.full_params['binsize'])))
@@ -733,8 +732,8 @@ class InhibitoryNeuronConductanceHistogramPlot(BaseNetworkPlot):
         for results, ls, label in zip(results_list, self.full_params['linestyles'], self.full_params['labels']):
             if results.stim_params['pattern'] != 'NoStimulus':
                 raise ValueError("InhibitoryNeuronConductanceHistogramPlot only works for no stimulus simulations.")
-            if isinstance(results, SNNResults):
-                mask = results.times >= self.full_params['start_time']
+            if isinstance(results, BaseSNNResults):
+                mask = results.times() >= self.full_params['start_time']
 
                 exc_conductance = results.ei_conductance_all[mask].mean(axis=0)
                 exc_bins = int(np.ceil(((exc_conductance.max() - exc_conductance.min()) / self.full_params['binsize'])))

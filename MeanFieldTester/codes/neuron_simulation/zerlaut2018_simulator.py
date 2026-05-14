@@ -16,7 +16,7 @@ doi: 10.1007/s10827-017-0668-2.
 
 from .base import BaseNeuronSimulator
 from .config import NeuronSimulationConfig
-from ..data_structures.single_neuron import SingleNeuronResults
+from ..data_structures.neuron_simulation import SingleNeuronResults
 from pathlib import Path
 from ..network_params.translators import TranslationRule, translate_params
 from pydantic import BaseModel

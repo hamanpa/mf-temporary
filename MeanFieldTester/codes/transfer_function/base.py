@@ -15,7 +15,7 @@ from abc import ABC, abstractmethod
 from typing import List, Dict
 import numpy as np
 
-from ..data_structures.single_neuron import SingleNeuronResults
+from ..data_structures.neuron_simulation import SingleNeuronResults
 from ..transfer_function.config import TransferFunctionConfig
 from ..network_params.models import BiologicalParameters
 

@@ -30,7 +30,7 @@ import numpy as np
 from scipy.interpolate import PchipInterpolator
 
 from .config import NeuronSimulationConfig
-from ..data_structures.single_neuron import SingleNeuronResults
+from ..data_structures.neuron_simulation import SingleNeuronResults
 from .base import BaseNeuronSimulator
 from ..network_params.translators import TranslationRule, translate_params
 from ..network_params.mappings import PYNN_ADEX_MAPPING, PYNN_STATIC_SYNAPSE_MAPPING, NEST_STATIC_SYNAPSE_MAPPING, NEST_TSODYKS_SYNAPSE_MAPPING, PYNN_INITIAL_VALUES_MAPPING
@@ -42,7 +42,9 @@ def simulate_adex_neuron_single_point(
                                 init_values : dict, 
                                 exc_synapses : dict, 
                                 inh_synapses : dict,
-                                simulation_time=1000.0, dt=0.1, seed=1,
+                                simulation_time=1000.0, 
+                                time_step=0.1, 
+                                seed=1,
                                 **kwargs) -> dict:
     """Simulates a single AdEx neuron with Poisson synaptic input.
 
@@ -76,7 +78,7 @@ def simulate_adex_neuron_single_point(
 
     simulator_backend = kwargs["simulator"].split(".")[1]  # e.g. "nest"
     sim = importlib.import_module(f"pyNN.{simulator_backend}")
-    sim.setup(timestep=dt, rng_seed=seed)
+    sim.setup(timestep=time_step, rng_seed=seed)
 
     # Test that the seed is set correctly
     # alternative way, something like this
@@ -286,8 +288,13 @@ def simulate_adex_neuron_full_grid_multiprocess(neuron_name: str, neuron_params:
             exc_rate = exc_rate_grid[exc_rate_idx, inh_rate_idx]
             inh_rate = inh_rate_grid[exc_rate_idx, inh_rate_idx]
             for n_run_idx in range(neuron_sim_params.n_runs):
-                neuron_sim_params_dict = neuron_sim_params.model_dump()
-                neuron_sim_params_dict['seed'] = seed + n_run_idx 
+                neuron_sim_params_dict = {
+                    "simulator": neuron_sim_params.simulator,
+                    "seed": seed + n_run_idx,
+                    "simulation_time": neuron_sim_params.simulation_time,
+                    "time_step": neuron_sim_params.time_step,
+                    "averaging_window": neuron_sim_params.averaging_window,
+                }
                 tasks.append((exc_rate, inh_rate, exc_rate_idx, inh_rate_idx, n_run_idx, neuron_name, neuron_params, neuron_sim_params_dict))
 
     print(f"Starting multiprocessing for {neuron_name}: {len(tasks)} tasks across {cpus} CPUs...")
@@ -477,14 +484,20 @@ def resolve_adaptive_grid(neuron_name, neuron_params, neuron_sim_params):
     n_coarse_points = grid_params.n_coarse_interpolation_points
     cpus = neuron_sim_params.cpus
 
+    neuron_sim_params_dict = {
+        "simulator": neuron_sim_params.simulator,
+        "seed": neuron_sim_params.seed,
+        "simulation_time": neuron_sim_params.simulation_time,
+        "time_step": neuron_sim_params.time_step,
+        "averaging_window": neuron_sim_params.averaging_window,
+    }
     print(f"Resolving adaptive grid for {neuron_name} using {cpus} CPUs...")
-
     # Build tasks
     tasks = []
     for inh_rate_idx, inh_rate in enumerate(inh_rates):
         tasks.append((
             inh_rate_idx, inh_rate, out_rate_targets, out_rate_max, n_coarse_points,
-            neuron_params, neuron_sim_params.model_dump()
+            neuron_params, neuron_sim_params_dict
         ))
 
 

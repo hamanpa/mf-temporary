@@ -6,12 +6,12 @@ This module defines the data structure for storing results from a single neuron 
 import numpy as np
 import warnings
 
-from .base import Results
+from .base import BaseSingleNeuronResults
 from ..network_params.translators import get_unit_multiplier
 from pydantic import BaseModel
 
 
-class SingleNeuronResults(Results):
+class SingleNeuronResults(BaseSingleNeuronResults):
     """
     Data structure for storing results from single neuron simulations.
     
@@ -66,49 +66,23 @@ class SingleNeuronResults(Results):
         # --- Unit Ingestion Logic ---
         input_units = input_units or {}
 
-        def _ingest(value, name):
-            """Rescales the input value to the DEFAULT_UNITS if needed."""
-            if value is None:
-                return None
-            
-            default_unit = self.DEFAULT_UNITS.get(name)
-            provided_unit = input_units.get(name, default_unit)
-            
-            if provided_unit != default_unit:
-                factor = get_unit_multiplier(provided_unit, default_unit)
-                return value * factor
-            return value
-
         # --- Protected Physical Data (Stored in Default Units) ---
-        self._exc_rate_grid = _ingest(exc_rate_grid, "exc_rate_grid")
-        self._inh_rate_grid = _ingest(inh_rate_grid, "inh_rate_grid")
-        self._out_rate_mean = _ingest(out_rate_mean, "out_rate_mean")
-        self._out_rate_std = _ingest(out_rate_std, "out_rate_std")
-        self._adaptation_mean = _ingest(adaptation_mean, "adaptation_mean")
-        self._adaptation_std = _ingest(adaptation_std, "adaptation_std")
-        self._voltage_mean = _ingest(voltage_mean, "voltage_mean")
-        self._voltage_std = _ingest(voltage_std, "voltage_std")
-        self._voltage_tau = _ingest(voltage_tau, "voltage_tau")
-        self._exc_conductance_mean = _ingest(exc_conductance_mean, "exc_conductance_mean")
-        self._exc_conductance_std = _ingest(exc_conductance_std, "exc_conductance_std")
-        self._inh_conductance_mean = _ingest(inh_conductance_mean, "inh_conductance_mean")
-        self._inh_conductance_std = _ingest(inh_conductance_std, "inh_conductance_std")
+        self._exc_rate_grid = self._ingest(exc_rate_grid, "exc_rate_grid", input_units)
+        self._inh_rate_grid = self._ingest(inh_rate_grid, "inh_rate_grid", input_units)
+        self._out_rate_mean = self._ingest(out_rate_mean, "out_rate_mean", input_units)
+        self._out_rate_std = self._ingest(out_rate_std, "out_rate_std", input_units)
+        self._adaptation_mean = self._ingest(adaptation_mean, "adaptation_mean", input_units)
+        self._adaptation_std = self._ingest(adaptation_std, "adaptation_std", input_units)
+        self._voltage_mean = self._ingest(voltage_mean, "voltage_mean", input_units)
+        self._voltage_std = self._ingest(voltage_std, "voltage_std", input_units)
+        self._voltage_tau = self._ingest(voltage_tau, "voltage_tau", input_units)
+        self._exc_conductance_mean = self._ingest(exc_conductance_mean, "exc_conductance_mean", input_units)
+        self._exc_conductance_std = self._ingest(exc_conductance_std, "exc_conductance_std", input_units)
+        self._inh_conductance_mean = self._ingest(inh_conductance_mean, "inh_conductance_mean", input_units)
+        self._inh_conductance_std = self._ingest(inh_conductance_std, "inh_conductance_std", input_units)
 
         # Freeze the object to prevent accidental attribute creation or modification
         self._finalized = True
-
-    def __setattr__(self, name, value):
-        if getattr(self, '_finalized', False) and name != '_finalized':
-            raise AttributeError(f"Instance of {self.__class__.__name__} is frozen. Data should not be modified post-simulation.")
-        super().__setattr__(name, value)
-
-    # --- Data Retrieval Methods ---
-    
-    def _get_scaled(self, data, source_unit, target_unit):
-        """Internal helper to serve data in requested units."""
-        if data is None or target_unit == source_unit:
-            return data
-        return data * get_unit_multiplier(source_unit, target_unit)
 
     def exc_rate_grid(self, unit=None): 
         default_unit = self.DEFAULT_UNITS["exc_rate_grid"]
@@ -174,90 +148,3 @@ class SingleNeuronResults(Results):
         default_unit=self.DEFAULT_UNITS["inh_conductance_std"]
         target_unit = default_unit if unit is None else unit
         return self._get_scaled(self._inh_conductance_std, default_unit, target_unit)
-    
-    # ==========================================
-    # DEPRECATED PROPERTIES (For backward compatibility)
-    # ==========================================
-    
-    def _warn_deprecated(self, old_name, new_name):
-        warnings.warn(
-            f"The attribute '{old_name}' is deprecated and will be removed in a future version. "
-            f"Please use the method '{new_name}()' instead.",
-            category=FutureWarning,
-            stacklevel=3
-        )
-
-    @property
-    def exc_drive_mean(self):
-        self._warn_deprecated('exc_drive_mean', 'exc_rate_grid')
-        return self.exc_rate_grid()
-
-    @property
-    def nu_e(self):
-        self._warn_deprecated('nu_e', 'exc_rate_grid')
-        return self.exc_rate_grid()
-
-    @property
-    def nu_i(self):
-        self._warn_deprecated('nu_i', 'inh_rate_grid')
-        return self.inh_rate_grid()
-
-    @property
-    def inh_drive_mean(self):
-        self._warn_deprecated('inh_drive_mean', 'inh_rate_grid')
-        return self.inh_rate_grid()
-
-    @property
-    def nu_out_mean(self):
-        self._warn_deprecated('nu_out_mean', 'out_rate_mean')
-        return self.out_rate_mean()
-    
-    @property
-    def nu_out_std(self):
-        self._warn_deprecated('nu_out_std', 'out_rate_std')
-        return self.out_rate_std()
-
-    @property
-    def w_mean(self):
-        self._warn_deprecated('w_mean', 'adaptation_mean')
-        return self.adaptation_mean()
-
-    @property
-    def w_std(self):
-        self._warn_deprecated('w_std', 'adaptation_std')
-        return self.adaptation_std()
- 
-    @property
-    def v_mean(self):
-        self._warn_deprecated('v_mean', 'voltage_mean')
-        return self.voltage_mean()
-
-    @property
-    def v_std(self):
-        self._warn_deprecated('v_std', 'voltage_std')
-        return self.voltage_std()
-
-    @property
-    def v_tau(self):
-        self._warn_deprecated('v_tau', 'voltage_tau')
-        return self.voltage_tau()
-
-    @property
-    def gsyn_e_mean(self):
-        self._warn_deprecated('gsyn_e_mean', 'exc_conductance_mean')
-        return self.exc_conductance_mean()
-
-    @property
-    def gsyn_e_std(self):
-        self._warn_deprecated('gsyn_e_std', 'exc_conductance_std')
-        return self.exc_conductance_std()
-
-    @property
-    def gsyn_i_mean(self):
-        self._warn_deprecated('gsyn_i_mean', 'inh_conductance_mean')
-        return self.inh_conductance_mean()
-
-    @property
-    def gsyn_i_std(self):
-        self._warn_deprecated('gsyn_i_std', 'inh_conductance_std')
-        return self.inh_conductance_std()  

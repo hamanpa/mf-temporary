@@ -1,9 +1,9 @@
 from abc import ABC, abstractmethod
 from typing import Any
 
-from ..data_structures.network import SNNResults
+from ..data_structures.snn_simulation import SNNResults
 from ..network_params.models import BiologicalParameters
-from .config import NetworkSimulationConfig
+from .config import SpikingNeuralNetworkSimulationConfig
 from ..stimuli.config import BaseStimulusConfig
 
 class BaseSNNSimulator(ABC):
@@ -15,7 +15,7 @@ class BaseSNNSimulator(ABC):
     """
 
     @abstractmethod
-    def build_network(self, network_params: BiologicalParameters, snn_sim_params: NetworkSimulationConfig) -> None:
+    def build_network(self, network_params: BiologicalParameters, snn_sim_params: SpikingNeuralNetworkSimulationConfig) -> None:
         """
         Builds the network structure (populations, projections) based on the parameters.
         This should only be called once per simulation workflow.

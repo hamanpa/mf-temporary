@@ -4,7 +4,7 @@ from .base import BaseNeuronSimulator
 from .pynn_simulator import PyNNSimulator
 from .zerlaut2018_simulator import Zerlaut2018Simulator
 from .config import NeuronSimulationConfig
-from ..data_structures.single_neuron import SingleNeuronResults
+from ..data_structures.neuron_simulation import SingleNeuronResults
 from ..network_params.models import BiologicalParameters
 
 # The Registry: Add new simulators here in the future

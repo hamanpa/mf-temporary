@@ -1,6 +1,6 @@
 from abc import ABC, abstractmethod
 from typing import Any
-from codes.data_structures.single_neuron import SingleNeuronResults
+from ..data_structures.neuron_simulation import SingleNeuronResults
 
 class BaseNeuronSimulator(ABC):
     """
@@ -23,8 +23,8 @@ class BaseNeuronSimulator(ABC):
 
         Returns
         -------
-        Dict[str, DataclassSingleNeuronResults]
+        Dict[str, SingleNeuronResults]
             A dictionary where keys are neuron names and values are the standardized 
-            DataclassSingleNeuronResults objects.
+            SingleNeuronResults objects.
         """
         pass

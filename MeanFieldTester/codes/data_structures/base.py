@@ -8,12 +8,13 @@ This module also define constants
 """
 
 import pickle
-
-BIN_SIZE = 5  # [ms], size for making histograms
-WINDOW_SIZE = 50  # [ms], size of the window for calculating floating averages
+from ..network_params.translators import get_unit_multiplier
 
 
-class Results:
+class BaseResults:
+    DEFAULT_UNITS = {
+        
+    }
     """
     Data structure for storing results from the SNN and MF simulations.
 
@@ -24,6 +25,30 @@ class Results:
     - conductance: [nS]
     - voltage: [mV] 
     """
+
+    def __setattr__(self, name, value):
+        if getattr(self, '_finalized', False) and name in self.DEFAULT_UNITS:
+            raise AttributeError(f"Instance of {self.__class__.__name__} is frozen. Data should not be modified post-simulation.")
+        super().__setattr__(name, value)
+
+    def _ingest(self,var_value, var_name:str, input_units:dict):
+        """Rescales the input value to the DEFAULT_UNITS if needed."""
+        if var_value is None:
+            return None
+        
+        default_unit = self.DEFAULT_UNITS.get(var_name)
+        provided_unit = input_units.get(var_name, default_unit)
+        
+        if provided_unit != default_unit:
+            factor = get_unit_multiplier(provided_unit, default_unit)
+            return var_value * factor
+        return var_value
+
+    def _get_scaled(self, data, source_unit, target_unit):
+        """Internal helper to serve data in requested units."""
+        if data is None or target_unit == source_unit:
+            return data
+        return data * get_unit_multiplier(source_unit, target_unit)
 
     def save(self, filepath):
         """
@@ -36,92 +61,24 @@ class Results:
         print(f"WARNING: File size: {int(file_size)} MB")
 
 
-class NetworkResults(Results):
+class BaseSingleNeuronResults(BaseResults):
     """
-    Data structure for storing results from the SNN and MF simulations.
-
-    Units:
-    - time: [ms]
-    - rate, frequency: [Hz]
-    - adaptation, current: [pA]
-    - conductance: [nS]
-    - voltage: [mV] 
+    Intermediate base class for single neuron simulations.
     """
+    pass
 
-    def __init__(self, times, stim_params, net_params):
-        self.times = times
-        self.dt = times[1] - times[0]
-        self.duration = times[-1] - times[0]
-        
-        self.stim_params = stim_params
-        self.net_params = net_params
 
-    @property
-    def exc_rate_mean(self):
-        """Get the excitatory activity."""
-        if not hasattr(self, '_exc_rate_mean'):
-            raise NotImplementedError("exc_rate_mean is not set. Please implement this in the subclass.")
-        return self._exc_rate_mean
+class BaseMFResults(BaseResults):
+    """
+    Intermediate base class for all Mean-Field results.
+    Use this for `isinstance(obj, BaseMFResults)` checks.
+    """
+    pass
 
-    @exc_rate_mean.setter
-    def exc_rate_mean(self, value):
-        self._exc_rate_mean = value
+class BaseSNNResults(BaseResults):
+    """
+    Intermediate base class for all Spiking Neural Network results.
+    Use this for `isinstance(obj, BaseSNNResults)` checks.
+    """
+    pass
 
-    @property
-    def inh_rate_mean(self):
-        """Get the inhibitory activity."""
-        if not hasattr(self, '_inh_rate_mean'):
-            raise NotImplementedError("inh_rate_mean is not set. Please implement this in the subclass.")
-        return self._inh_rate_mean
-
-    @inh_rate_mean.setter
-    def inh_rate_mean(self, value):
-        self._inh_rate_mean = value
-
-    @property
-    def exc_adaptation_mean(self):
-        """Get the excitatory adaptation."""
-        if not hasattr(self, '_exc_adaptation_mean'):
-            raise NotImplementedError("exc_adaptation_mean is not set. Please implement this in the subclass.")
-        return self._exc_adaptation_mean
-
-    @exc_adaptation_mean.setter
-    def exc_adaptation_mean(self, value):
-        self._exc_adaptation_mean = value
-
-    @property
-    def inh_adaptation_mean(self):
-        """Get the inhibitory adaptation."""
-        if not hasattr(self, '_inh_adaptation_mean'):
-            raise NotImplementedError("inh_adaptation_mean is not set. Please implement this in the subclass.")
-        return self._inh_adaptation_mean
-
-    @inh_adaptation_mean.setter
-    def inh_adaptation_mean(self, value):
-        self._inh_adaptation_mean = value   
-
-    @property
-    def exc_voltage_mean(self):
-        """Get the excitatory membrane potential."""
-        if not hasattr(self, '_exc_voltage_mean'):
-            raise NotImplementedError("exc_voltage_mean is not set. Please implement this in the subclass.")
-        return self._exc_voltage_mean
-
-    @exc_voltage_mean.setter
-    def exc_voltage_mean(self, value):
-        self._exc_voltage_mean = value
-
-    @property
-    def inh_voltage_mean(self):
-        """Get the inhibitory membrane potential."""
-        if not hasattr(self, '_inh_voltage_mean'):
-            raise NotImplementedError("inh_voltage_mean is not set. Please implement this in the subclass.")
-        return self._inh_voltage_mean
-
-    @inh_voltage_mean.setter
-    def inh_voltage_mean(self, value):
-        self._inh_voltage_mean = value
-
-    def print_time_averaged(self, start_time=None, end_time=None):
-        """Print the time averages of the results."""
-        raise NotImplementedError("This method should be implemented in subclasses.")

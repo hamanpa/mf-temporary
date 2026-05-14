@@ -16,8 +16,7 @@ import numpy as np
 
 from codes import plotting as ax_plt
 
-from codes.data_structures.network import MFResults, SNNResults
-from codes.data_structures.single_neuron import SingleNeuronResults
+from ..data_structures.base import BaseMFResults, BaseSNNResults, BaseSingleNeuronResults
 # from codes.transfer_function import TransferFunction
 
 DEFAULT_FIG_PARAMS = {
@@ -58,10 +57,10 @@ def finish_fig(fig, fig_params):
     plt.close(fig)
 
 ################################################################################
-#                           SingleNeuronResults plots                          #
+#                           BaseSingleNeuronResults plots                          #
 ################################################################################
 
-def fig_neuron_activity(neuron_results:dict[SingleNeuronResults], 
+def fig_neuron_activity(neuron_results:dict[BaseSingleNeuronResults], 
                         common_params:dict, 
                         fig_params:dict):
     """Plot neuron activity as a heatmap and individual neuron activity.
@@ -72,10 +71,10 @@ def fig_neuron_activity(neuron_results:dict[SingleNeuronResults],
 
     Parameters
     ----------
-    neuron_results : dict[SingleNeuronResults]
+    neuron_results : dict[BaseSingleNeuronResults]
         Dictionary containing results for each neuron.
         Keys are neuron names, values are instances
-        of SingleNeuronResults containing neuron activity data.
+        of BaseSingleNeuronResults containing neuron activity data.
     common_params : dict
         Common parameters for the plots.
     fig_params : dict
@@ -125,7 +124,7 @@ def fig_neuron_activity(neuron_results:dict[SingleNeuronResults],
 #                           TransferFunction plots                             #
 ################################################################################
 
-def fig_tf_fits_together(neuron_results:dict[SingleNeuronResults], 
+def fig_tf_fits_together(neuron_results:dict[BaseSingleNeuronResults], 
                 tf_funcs, 
                 # tf_funcs:dict[TransferFunction], 
                 common_params:dict, 
@@ -137,10 +136,10 @@ def fig_tf_fits_together(neuron_results:dict[SingleNeuronResults],
 
     Parameters
     ----------
-    neuron_results : dict[SingleNeuronResults]
+    neuron_results : dict[BaseSingleNeuronResults]
         Dictionary containing results for each neuron.
         Keys are neuron names, values are instances
-        of SingleNeuronResults containing neuron activity data.
+        of BaseSingleNeuronResults containing neuron activity data.
     tf_funcs : dict
         Dictionary of transfer function fit results for each neuron.
     common_params : dict
@@ -191,8 +190,8 @@ def fig_tf_fits_together(neuron_results:dict[SingleNeuronResults],
 #                           MF & SNN results plots                             #
 ################################################################################
 
-def fig_full_network_overview_together(snn_results: SNNResults, 
-                                       mf_results_list: list[MFResults], 
+def fig_full_network_overview_together(snn_results: BaseSNNResults, 
+                                       mf_results_list: list[BaseMFResults], 
                                        common_params: dict, 
                                        fig_params: dict): 
     """Plot full network overview for SNN and MF results together.
@@ -205,9 +204,9 @@ def fig_full_network_overview_together(snn_results: SNNResults,
 
     Parameters
     ----------
-    snn_results : SNNResults
+    snn_results : BaseSNNResults
         Results of the SNN simulation.
-    mf_results_list : list[MFResults]
+    mf_results_list : list[BaseMFResults]
         List of results for each mean-field network.
     common_params : dict
         Common parameters for the plots.
@@ -261,8 +260,8 @@ def fig_full_network_overview_together(snn_results: SNNResults,
 
     finish_fig(fig, fig_params)
 
-def fig_full_network_overview_per_column(snn_results: SNNResults, 
-                                         mf_results_list: list[MFResults], 
+def fig_full_network_overview_per_column(snn_results: BaseSNNResults, 
+                                         mf_results_list: list[BaseMFResults], 
                                          common_params: dict, 
                                          fig_params: dict): 
     """Plot full network overview for SNN and MF results per column.
@@ -275,9 +274,9 @@ def fig_full_network_overview_per_column(snn_results: SNNResults,
 
     Parameters
     ----------
-    snn_results : SNNResults
+    snn_results : BaseSNNResults
         Results of the SNN simulation.
-    mf_results_list : list[MFResults]
+    mf_results_list : list[BaseMFResults]
         List of results for each mean-field network.
     common_params : dict
         Common parameters for the plots.
@@ -326,8 +325,8 @@ def fig_full_network_overview_per_column(snn_results: SNNResults,
 
     finish_fig(fig, fig_params)
 
-def fig_network_activity_together(snn_results: SNNResults, 
-                                  mf_results_list: list[MFResults], 
+def fig_network_activity_together(snn_results: BaseSNNResults, 
+                                  mf_results_list: list[BaseMFResults], 
                                   common_params: dict, 
                                   fig_params: dict):
     """Plot network activity for SNN and MF results together.
@@ -339,9 +338,9 @@ def fig_network_activity_together(snn_results: SNNResults,
     
     Parameters
     ----------
-    snn_results : SNNResults
+    snn_results : BaseSNNResults
         Results of the SNN simulation.
-    mf_results_list : list[MFResults]
+    mf_results_list : list[BaseMFResults]
         List of results for each mean-field network.
     common_params : dict
         Common parameters for the plots.
@@ -388,8 +387,8 @@ def fig_network_activity_together(snn_results: SNNResults,
 
     finish_fig(fig, fig_params)
 
-def fig_network_activity_overview_per_column(snn_results: SNNResults, 
-                                             mf_results_list: list[MFResults], 
+def fig_network_activity_overview_per_column(snn_results: BaseSNNResults, 
+                                             mf_results_list: list[BaseMFResults], 
                                              common_params: dict, 
                                              fig_params: dict): 
     """Plot network activity overview for SNN and MF results per column.
@@ -401,9 +400,9 @@ def fig_network_activity_overview_per_column(snn_results: SNNResults,
 
     Parameters
     ----------
-    snn_results : SNNResults
+    snn_results : BaseSNNResults
         Results of the SNN simulation.
-    mf_results_list : list[MFResults]
+    mf_results_list : list[BaseMFResults]
         List of results for each mean-field network.
     common_params : dict
         Common parameters for the plots.

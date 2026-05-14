@@ -6,7 +6,7 @@ from .base import BaseTransferFunction
 from .config import TransferFunctionConfig
 
 from ..network_params.models import BiologicalParameters
-from ..data_structures.single_neuron import SingleNeuronResults
+from ..data_structures.neuron_simulation import SingleNeuronResults
 
 from .zerlaut2018_tf import Zerlaut2018TF
 from .divolo2019_tf import DiVolo2019TF

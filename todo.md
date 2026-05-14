@@ -1,113 +1,6 @@
-# Design choice
-- **Modularity:** Modules should be easily swappable (e.g., changing the MF model should not require changing the rest of the workflow).
-- **Separation of Concerns (Plotting):** No computations inside plotting modules. Results generation, analysis, and plotting must be strictly separate.
-- **Data Handling:** The runner/controller should not store data internally; data must be explicitly returned to or saved for the user.
-- **Consistent User-Facing Units:** Units that the user interacts with (network params, results) should always be identical. Any necessary conversions must happen internally within modules.
-- **Naming Conventions:** Use underscores instead of hyphens for attribute names (e.g., `my_attribute`, not `my-attribute`).
-- **Code Style Standard:** Use standard Python conventions (PEP 8) and a consistent docstring style (e.g., Google or NumPy style) across the codebase.
-- **Testing Framework:** Use a standard testing framework (e.g., `pytest`) to ensure updates do not break existing functionality.
-
-
-YAGNI (You Aren't Gonna Need It) principle
-
-
-- **The Open/Closed Principle (OCP)** 
-states that software entities (classes, modules, functions) should be open for extension (you can add new behavior) but closed for modification (you don't have to alter existing code to add that behavior).
-If a PhD student in your lab writes a custom simulator for a new type of hardware, with the match statement, they must edit your WorkflowRunner.py to add case "custom_hardware":. If you use an interface, they can just pass their custom class to your runner, and your runner will execute it blindly because it trusts the abstract class structure. Your core code remains untouched.
-
-
-Single Responsibility Principle (SRP)
-Single Responsibility Principle (they hold data and validate it, leaving the simulation logic to other classes).
-
-Avoid "anti-patterns"
-In software engineering, relying on the name of a variable to determine its physical properties is an anti-pattern known as "Stringly Typed Programming."
-
-In software design, there is a golden rule: "Code should be open for extension, but closed for modification."
 
 # Todos (code base)
 
-### General MFT Code
-- [ ] **Units handling setup**
-  - [ ] Correct adaptation conversion logic.
-  - [ ] Establish a central overview/handler module for units.
-  - [ ] Ensure units for user-facing network parameters match the results outputs.
-- [ ] **Implement logging**
-  - [ ] Set up a base logger config for the MFT package.
-  - [ ] Replace `print()` statements with appropriate `logger.info()`, `logger.debug()`, or `logger.warning()` calls.
-  - [ ] Expand logging (so that tracking issues is easier)
-- [ ] **Documentation**
-  - [ ] Add module-level docstrings/help strings to core files.
-  - [ ] Complete the tutorial notebook (`workflow.ipynb`).
-  - [ ] Update the `README.md` with basic setup and usage instructions.
-- [ ] **Parameter validation**
-  - [ ] Implement an `__init__` reader/validator that checks for required parameters.
-  - [ ] Add backend compatibility checks (e.g., "does TVB/NEST support these params?").
-- [ ] **Clean up**
-  - [ ] Remove dead, unused, or commented-out code across the repository.
-- [ ] **Standardize naming convention**
-  - [ ] Enforce consistent variable names (e.g., use `rate` over `nu/activity`, `params` over `pars`).
-  - [ ] Ensure all class attributes use underscores instead of hyphens.
-- [ ] **Setup Testing**
-  - [ ] Initialize a `pytest` suite infrastructure.
-  - [ ] Write basic tests to check core functions quickly.
-
-### Controller & Workflow
-- [ ] controller is god class, is it antipattern? should I change it?
-- [ ] **`workflow_params` improvements**
-- [ ] **Model selection**
-  - [ ] Update `workflow_params` to accept MF model name strings.
-  - [ ] Update `workflow_params` to accept SNN model name strings.
-- [ ] **`run_workflow` shortcut**
-  - [ ] Create a high-level API method to execute the entire workflow based on a single parameter dictionary/file.
-- [ ] **Parallelization**
-  - [ ] Implement parallel simulation capabilities for SNN (PyNN).
-  - [ ] Implement parallelization for MF simulations.
-  - [ ] Implement parallelization for stimuli generation.
-
-
-
-### Cell Library
-- [ ] Replace this module by `network_params`
-- [ ] Once `network_params` is fully integrated, remove this module.
-
-### Network params
-
-
-### Neuron Simulation
-- [ ] implement execution modes 'skip", 'validate' (comparison of existing data and newly generated ones)
-- [ ] **Implement specific computations**
-  - [ ] Add computation for `voltage_tau`.
-  - [ ] Add computation for `adaptation_std`.
-- [ ] 
-
-### Transfer function
-- [ ] implement Zerlaut2018
-- [ ] implement DiVolo2018
-
-
-### Network simulation
-- [ ] rename to `snn_simulation` (clearer name)
-- [ ] implement new config, base, more modular approach (same as `neuron_simulation` and `transfer_function`)
-- [ ]
-
-### Mean-field simulation
-- [ ] implement new config, base, more modular approach (same as `neuron_simulation` and `transfer_function`)
-- [ ] 
-
-
-
-### Plotting
-- [ ] **Remove naming convention reliance**
-  - [ ] Add an internal `.results_type` property to all results data classes (e.g., `neuron`, `snn`, `mf`).
-  - [ ] Refactor plotting logic to use `.results_type` instead of `.startswith("SNN")`.
-- [ ] **Handle missing variables gracefully**
-  - [ ] Update plots to handle missing adaptation variables (e.g., in first-order MF).
-  - [ ] Update simulation result plots to handle other conditionally absent variables.
-- [ ] **New plots implementation**
-  - [ ] Implement a generic Figure Plot Controller ("Style Plot" system).
-  - [ ] Create predefined inspection plots (e.g., `SpontRateHistogramPlot`, `ActivityInspectionPlot`).
-  - [ ] Create synaptic conductivity plot.
-  - [ ] Create STP plots.
 
 # Todos (research)
 - [ ] **TF fitting replication**
@@ -152,65 +45,6 @@ In software design, there is a golden rule: "Code should be open for extension, 
   - QIF neuron and STP (Helmut Schmidt)
 
 
-# Unsorted
-
-From neuron_simulation module
-
-Phase 3: Mathematical Completeness (Medium Priority)
-
-These are hidden TODOs I found inside your code that are necessary for accurate Mean-Field fitting.
-    [ ] Implement tau_V calculation: Currently, tau_V is set to 0 or left as a TODO (Lines 115, 230). The Di Volo TF fit relies heavily on the membrane voltage autocorrelation time (τV​).
-    [ ] Remove Hardcoded Neuron Names: In resolve_adaptive_grid (Line 414), "exc_neuron" and "inh_neuron" are hardcoded. We should make this dynamic based on the configuration rather than string matching.
-    [ ] Adaptive Grid for Inhibitory Neurons: Implement the logic to allow inh_rate to be the adaptive variable. This will require carefully handling the interpolation since the roles of the axes are flipped.
-
-Phase 4: Cleanup & Quality of Life (Low Priority)
-    [ ] Unit Conversion: Handle the TODO at Line 65: Convert internal PyNN units (nA, mV) to standard MFT units (pA, V) directly as they come out of the simulation, so the rest of your pipeline doesn't have to guess.
-    [ ] Naming Conventions: Align variable names (rate vs nu, activity, firing) according to your todo_ideas.txt master plan.
-    [ ] Documentation: Add docstrings to all functions, especially the main workflow and the unified batch runner, to clarify their purpose and expected inputs/outputs.
-    [ ] SingleNeuronResults: should I provide the results as a dictionory in the instance or keyword arguments?
-        [ ] When dealing with this is it possible to add print depreciated attribute?
-    [ ] Migrate away from Pickle (Optional but recommended). Pickle is notoriously brittle if you rename classes (SingleNeuronResults). For long-term PhD research, storing simulation metrics in HDF5 or Parquet is much safer.
-
-Other Ideas:
-    [ ] Implement Zerlaut_simulator (Low Priority)
-    [ ] Subthreshold grid: allow adaptive grid to also cover subthreshold region
-    [ ] Check all the commented notes and todos and put them on todo.md instead
-        so there is a single source of truth for all the todos and ideas, and they are not lost in the code comments.
-    [ ] Make this work nicer condes.controller.config --template --schema
-    [ ] DataclassSingleNeuronResults - if I do not find any reason why not to use dataclass use this as default and remove previous SingleNeuronResults class
-    [ ] grid resolving (at least linear) could be in some helper function, not necessary to copy to each simulator
-
-
-    [ ] In network neuron_params add split of neuron model (type of neuron) and postsynaptic_model, have cell properties and input properties. At the moment irrelevant since only one neuron type is supported.
-    [ ] network connectivity type also might need extension, whether its probability of out going or incoming
-
-    [ ] PyNN simulator - translator of synaptic params
-    [ ] PyNN simulator - translator of initial values
-    [ ] PyNN simulator - translator of 'syn_type' now it is in accordance to PyNN but in the future we might want to have some more abstract way of defining synapse types in the config and then translating them to the specific simulator syntax, etc.
-    [ ] PyNN simulator, load the units from the model used? Such that I do not have to hard code the units and do not have to make mapping for each neuron model
-
-    [ ] when possible remove cell_library
-
-    [ ] neuron_simulation - execution modes skip, validation
-    [ ] neuron_simulation - linear, custom grid can be resolved the same for all the simulators, only custom has to be implemented specifically for each simulator
-    [ ] neuron_simulation - option to pick neuron model
-    
-
-    transfer_function
-      [ ] clean up my code, it definitely can be refactored (united into one MFT class with parameter telling what is required) instead of class for each case
-      [ ] after testing transfer function neuropsi_tf remove `obsolete.py`
-      [ ] 
-
-    Verify:
-    [ ] I have changed the adaptation units to nA (removed the 1e3 factor, be aware of it and ensure it is ok)
-
-  data_structure
-  [ ] keep info about units? such that I could create some conversion for this as well with some automatic identification of the units given?
-
-  SNNFullResults - update the class
-    [ ] add dealing with units the same way as neuron results
-    [ ] adaptation is in native PyNN units
-
 ### API Refactoring & Parallelization
 - [ ] Evaluate `neuron_simulation` API against the new `network_simulation` lifecycle.
     - **Context:** `network_simulation` now uses `build() -> run_stimulus() -> reset()`. 
@@ -241,18 +75,6 @@ Other Ideas:
 - [ ] snn_simulation recorders options
 
 
-### MF simulator
-- [ ] add options for connectivity, coupling, etc. at the moment, followings are hardcoded!
-        self.setup_connectivity()
-        self.setup_coupling()
-        self.setup_integrator()
-        self.setup_monitors()
-- [ ] solution of having stimulus together with drive is dangerous once I move to grid, be careful!
-
-- [ ] SNNResults update to the new way of handling (make it the same as NeuronResults and MFResults)
-- [ ] MFResults add voltage and conductance
-- [ ] add models handling STP
-- [ ] compare results of mf_simulation and meanfield_simulation
 
 ## [Architecture Decision Record] SNN Simulation Reset Paradigm
 
@@ -286,20 +108,92 @@ We stick to **Option B (Clean Slate)** for all Mean-Field transfer-function fitt
 *Future Todo:* **Option A (Continuous Epochs)** should only be implemented if we start researching sequence-dependent network effects (e.g., how the network responds to a high-frequency train of different stimuli) or if simulation times become a critical bottleneck.
 
 
-TODO:
-- [ ] **mf_simulation**: add tsodyks models
-- [ ] **MFResults**: voltage and conductance data calculation
+----
+
+Task pattern:
+- [ ] Priority **module part**: *name of the task*
+  - additional info
+Priority
+(1) Critical/Blocker: Immediate action required. These tasks prevent the code from running (bugs/crashes) or are architectural dependencies for all other planned features.
+(2) Essential/High: Important for research progress. These are core features or experiments that are necessary for the next stage of your thesis.
+(3) Important/Medium: Non-blocking features that improve usability, code quality, or provide supplementary data.
+(4) Nice-to-have/Low: Minor optimizations, documentation polish, or experimental ideas that don't have a specific deadline.
+
+# TODO:
+- [ ] () **module**: *task*
+
+- [ ] (3) **codebase**: *update README.md files and other files providing explanations*
+- [ ] (3) **codebase**: *Check all the commented notes and todos and put them on todo.md instead*
+  -  Keep a single source of truth for all the todos and ideas, and they are not lost in the code comments.
+- [ ] (4) **codebase**: *Unify documentation and docstrings*
+  - Add docstrings to all functions, especially the main workflow and the unified batch runner, to clarify their purpose and expected inputs/outputs.
+- [ ] (4) **codebase**: *Migrate away from Pickle*
+  - Pickle is notoriously brittle if you rename classes (SingleNeuronResults). For long-term PhD research, storing simulation metrics in HDF5 or Parquet is much safer.
+- [ ] (3) **codebase**: *Write description of units handling setup in `units.md`*
+- [ ] (4) **codebase**: *Implement logging*
+- [ ] (4) **codebase**: *Create a tutorial notebook*
+- [ ] (3) **codebase**: *Clean up - Remove dead, unused, or commented-out code across the repository.*
+- [ ] (4) **codebase**: *Setup Testing - Write basic tests to check core functions quickly.*
+
+- [ ] (4) **controller**: *Generation of template config params - Make this work nicer codes.controller.config --template --schema*
+
+- [ ] (3) **data_structures**: *MFResults voltage and conductance data calculation*
   - implementation issues:
     1. MPF does not differentiate drive, stimulus, exc_neuron inputs
     2. exc_neuron has adaptation, but drive and stimulus do not
   - make it a subclass?
   - I can add different input sources in MPF
-- [ ] **run_workflow**: make it runable start to finish based on param files (with plotting)
+- [ ] (3) **data_structures**: *SingleNeuronResults should keep spikes as data with default units*
+- [ ] (3) **data_structures**: *Create a method for all results classes listing measured values (what is not None)*
+- [ ] (3) **data_structures**: *Other methods of saving (due to spike data) np.save_compressed() or the h5py*
+- [ ] (3) **data_structures**: *InspectionResults write in accordance with the new setup*
+- [ ] (4) **data_structures**: *Add load method (e.g., a @classmethod for load(cls, filepath))*
 
-ACTIVE:
+- [ ] (2) **neuron_simulation**: *Subthreshold grid: allow adaptive grid to also cover subthreshold region*
+- [ ] (3) **neuron_simulation**: *implement execution modes 'skip", 'validate' (comparison of existing data and newly generated ones)* 
+- [ ] (3) **neuron_simulation.pynn_simulator**: *Make it work with init_values*
+- [ ] (4) **neuron_simulation.pynn_simulator**: *Redo the `legacy_neuron_params`*
+  - currently relies on hardcoded string names in legace neuron_params format!
+- [ ] (4) **neuron_simulation**: *Adaptive Grid for Inhibitory Neurons*
+  - Implement the logic to allow inh_rate to be the adaptive variable. This will require carefully handling the interpolation since the roles of the axes are flipped.
+- [ ] (4) **neuron_simulation**: *Implement computation of `voltage_tau`*
+- [ ] (4) **neuron_simulation**: *Implement computation of `adaptation_std`*
+- [ ] (4) **neuron_simulation**: *grid resolving (at least linear) could be in some helper function, not necessary to copy to each simulator*
+- [ ] (4) **neuron_simulation**: *PyNN simulator, load the units from the model used? Such that I do not have to hard code the units and do not have to make mapping for each neuron model*
+- [ ] (4) **neuron_simulation**: *Option to pick neuron model*
 
-- [ ] **SNNResults**: rewrite
-- [ ] **BaseResults**: create new Base Results class that would contain the the unit handling (currently NeuronResults and MFResults have it each on its own)
+- [ ] (4) **snn_simulation**: *implement parallelization (or use PyNN methods of parallelization)*
+
+- [ ] (4) **mf_simulation**: *implement parallelization? at least with various stimuli*
+- [ ] (2) **mf_simulation**: *add tsodyks models (models handling STP)*
+- [ ] (3) **mf_simulation.tvb_simulator**: *Make a way for drive rate to increase gradually*
+  -  solution of having stimulus together with drive is dangerous once I move to grid, also drive and stimulus can have different targets!
+- [ ] (4) **mf_simulation.tvb_simulator**: *add options for `self.setup_connectivity()`, currently hardcoded*
+- [ ] (4) **mf_simulation.tvb_simulator**: *add options for `self.setup_coupling()`, currently hardcoded*
+- [ ] (4) **mf_simulation.tvb_simulator**: *add options for `self.setup_integrator()`, currently hardcoded*
+- [ ] (4) **mf_simulation.tvb_simulator**: *add options for `self.setup_monitors()`, currently hardcoded*
+
+- [ ] (3) **plotting** : *Remove naming convention reliance (Refactor plotting logic to use `.results_type` instead of `.startswith("SNN")`)*
+- [ ] **plotting**: *Handle missing variables gracefully*
+- [ ] **plotting**: *Implement a generic Figure Plot Controller ("Style Plot" system).*
+- [ ] **plotting**: *Create predefined inspection plots (e.g., `SpontRateHistogramPlot`, `ActivityInspectionPlot`)*
+- [ ] **plotting**: *Create synaptic conductivity plot.*
+- [ ] **plotting**: *Create STP plots*
+
+- [ ] (3) **utils.snn_helpers**: *Update activity calculation so that all method return 2D array*
+
+- [ ] (2) **research**: **
 
 
-DONE:
+
+
+# ACTIVE:
+
+- [ ] (1) **controller**: *make it runable start to finish based on param files* (with plotting)
+- [ ] (1) **controller**: *Full workflow config and loading*
+- [ ] (2) **controller**: *Make some high level API instead of the god-like class*
+
+# DONE:
+- [x] (1) **data_structures**: *Clean up old code and update simulators*
+- [x] **data_structures**: *rewrite SNNResults*
+- [x] **BaseResults**: *create new Base Results class that would contain the the unit handling* 

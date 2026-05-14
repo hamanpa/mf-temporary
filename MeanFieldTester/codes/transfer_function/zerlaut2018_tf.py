@@ -7,7 +7,7 @@ from typing import List
 import numpy as np
 from .base import BaseTransferFunction
 from ..network_params.translators import translate_params, TranslationRule
-from ..data_structures.single_neuron import SingleNeuronResults
+from ..data_structures.neuron_simulation import SingleNeuronResults
 
 
 

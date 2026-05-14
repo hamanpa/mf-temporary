@@ -1,8 +1,7 @@
 from abc import ABC, abstractmethod
 from typing import Any
 
-# TODO: We will need to create MFResults in the data_structures module
-# from ..data_structures.meanfield import MFResults 
+from ..data_structures.mf_simulation import MFResults 
 from ..network_params.models import BiologicalParameters
 from .config import MeanFieldSimulationConfig
 from ..stimuli.config import BaseStimulusConfig
@@ -28,7 +27,7 @@ class BaseMFSimulator(ABC):
         pass
 
     @abstractmethod
-    def run_stimulus(self, stim_params: BaseStimulusConfig) -> Any: # Replace Any with MFResults
+    def run_stimulus(self, stim_params: BaseStimulusConfig) -> MFResults:
         """
         Executes the Mean-Field simulation for a single stimulus.
 

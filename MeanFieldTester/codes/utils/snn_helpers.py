@@ -36,7 +36,7 @@ def activity_from_spikes_histogram(spikes:list[list], times:np.array, bin_size:f
 
     return activity
 
-def activity_from_spikes_sliding_window(spikes, times, window_size):
+def activity_from_spikes_sliding_window(spikes: list[np.ndarray], times: np.ndarray, window_size: float|int):
     """
     Calculate the mean activity from population spikes using a sliding window.
     The sliding window is a simple moving average.
@@ -46,41 +46,41 @@ def activity_from_spikes_sliding_window(spikes, times, window_size):
     
     Parameters
     ----------
-    spikes : list of lists of float, [ms]
+    spikes : list of np.ndarray of float, [ms]
         spike times for each neuron in the network, 
         first list indexes the neuron and the second indexes the spike times
-    times : 1D array, [ms]
+    times : 1D np.ndarray, [ms]
         time points at which to calculate the activity
     window_size : float, [ms]
         size of the sliding window
 
     Returns
     -------
-    activity : 1D array, [Hz]
-        mean activity at each time point
+    activity : 2D np.ndarray, [Hz]
+        mean activity of each neuron at each time point, shape is (time points, cells)
     """
 
     cells = len(spikes)
-    spikes = np.concatenate(spikes)
-    activity = np.zeros_like(times)
+    activity = np.zeros((times.size, cells), dtype=float)
 
-    for i, t in enumerate(times):
-        valid_spikes = ((spikes >= t-window_size/2) & (spikes < t + window_size/2)).sum()
-        activity[i] = valid_spikes / cells / (window_size / 1000)
+    for cell_idex, spike_train in enumerate(spikes):
+        for time_idx, time in enumerate(times):
+            valid_spikes = ((spike_train >= time-window_size/2) & (spike_train < time + window_size/2)).sum()
+            activity[time_idx, cell_idex] = valid_spikes / (window_size *1e-3)
 
     return activity
 
-def activity_from_spikes_alpha_window(spikes, times, alpha_tau, method="numpy"):
+def activity_from_spikes_alpha_window(spikes: list[np.ndarray], times: np.ndarray, alpha_tau: float, method: str="numpy"):
     """
     Calculate the mean activity from population spikes using an alpha window.
     The alpha window is a function of time that decays exponentially.
     
     Parameters
     ----------
-    spikes : list of lists of float, [ms]
+    spikes : list of np.ndarray of float, [ms]
         spike times for each neuron in the network, 
         first list indexes the neuron and the second indexes the spike times
-    times : 1D array, [ms]
+    times : 1D np.ndarray, [ms]
         time points at which to calculate the activity
     alpha_tau : float, [ms]
         time constant for the alpha window

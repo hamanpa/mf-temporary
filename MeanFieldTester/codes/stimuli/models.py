@@ -16,7 +16,7 @@ class BaseRateProfile(ABC):
     """
     def __init__(self, stim_params: BaseStimulusConfig):
         self.drive_rate_const = stim_params.drive_rate
-        self.drive_increase_duration = stim_params.drive_increase_duration
+        self.initial_increase_duration = stim_params.initial_increase_duration
         self.stim_target_ratio = stim_params.stim_target_ratio
         self.simulation_duration = stim_params.simulation_duration
         self.target_nodes = stim_params.target_nodes
@@ -37,8 +37,8 @@ class BaseRateProfile(ABC):
         pass
 
     def drive_rate(self, times: np.ndarray, target_unit: str = "Hz") -> np.ndarray:
-        rate = np.where(times<self.drive_increase_duration, 
-                        times*self.drive_rate_const/self.drive_increase_duration, 
+        rate = np.where(times<self.initial_increase_duration, 
+                        times*self.drive_rate_const/self.initial_increase_duration, 
                         self.drive_rate_const)
         
         return rate * get_unit_multiplier("Hz", target_unit)
@@ -66,8 +66,8 @@ class SinusoidalRateProfile(BaseRateProfile):
         self.phase = stim_params.stim_params.phase
 
     def stim_rate(self, times: np.ndarray, target_unit: str = "Hz") -> np.ndarray:
-        rate = np.where(times<self.drive_increase_duration, 
-                        times*self.offset/self.drive_increase_duration, 
+        rate = np.where(times<self.initial_increase_duration, 
+                        times*self.offset/self.initial_increase_duration, 
                         self.offset)
 
         mask = (times >= self.stim_start) & (times <= self.stim_end)
@@ -90,8 +90,8 @@ class TwoSidedGaussianRateProfile(BaseRateProfile):
         self.sigma_right = stim_params.stim_params.sigma_right
 
     def stim_rate(self, times: np.ndarray, target_unit: str = "Hz") -> np.ndarray:
-        rate = np.where(times < self.drive_increase_duration, 
-                        times * self.offset / self.drive_increase_duration, 
+        rate = np.where(times < self.initial_increase_duration, 
+                        times * self.offset / self.initial_increase_duration, 
                         self.offset)
 
         mask = (times >= self.stim_start) & (times <= self.stim_end)
@@ -116,8 +116,8 @@ class PulseTrainRateProfile(BaseRateProfile):
         self.pulse_period = stim_params.stim_params.pulse_period
 
     def stim_rate(self, times: np.ndarray, target_unit: str = "Hz") -> np.ndarray:
-        rate = np.where(times < self.drive_increase_duration, 
-                        times * self.offset / self.drive_increase_duration, 
+        rate = np.where(times < self.initial_increase_duration, 
+                        times * self.offset / self.initial_increase_duration, 
                         self.offset)
 
         window_mask = (times >= self.stim_start) & (times <= self.stim_end)

@@ -29,5 +29,9 @@ Additional notes
 - PyNN: these units does not hold everywhere!!!!! E.g. neuron model in PyNN [EIF_cond_exp_isfa_ista](https://pynn.readthedocs.io/en/latest/reference/neuronmodels.html#pyNN.standardmodels.cells.EIF_cond_exp_isfa_ista) has units for adaptation 'a': 'nS', 'b': 'nA'
 
 
+# Handling units inside MFT
 
-
+- input units
+- result units
+    - data are returned as method call, which allow optional argument `unit` to specify
+    the units in which I want the data

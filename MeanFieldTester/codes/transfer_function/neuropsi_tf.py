@@ -36,7 +36,7 @@ from scipy.optimize import minimize
 from .base import BaseTransferFunction
 from .config import TransferFunctionConfig
 from ..network_params.models import BiologicalParameters
-from ..data_structures.single_neuron import SingleNeuronResults
+from ..data_structures.neuron_simulation import SingleNeuronResults
 
 
 class NeuroPSICustomTF(BaseTransferFunction):

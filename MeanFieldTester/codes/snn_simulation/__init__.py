@@ -3,12 +3,12 @@ import pickle
 from .base import BaseSNNSimulator
 
 from .pynn_simulator import PyNNSNNSimulator
-from .config import NetworkSimulationConfig
+from .config import SpikingNeuralNetworkSimulationConfig
 
 from ..stimuli.config import BaseStimulusConfig
 from ..network_params.models import BiologicalParameters
 
-from ..data_structures.network import SNNResults
+from ..data_structures.snn_simulation import SNNResults
 
 SIMULATOR_REGISTRY = {
     "pynn.nest": PyNNSNNSimulator,
@@ -21,7 +21,7 @@ def get_simulator(method_name: str) -> BaseSNNSimulator:
     return SIMULATOR_REGISTRY[method_name]()
 
 def run_snn_simulation_workflow(
-        snn_sim_params: NetworkSimulationConfig, 
+        snn_sim_params: SpikingNeuralNetworkSimulationConfig, 
         network_params: BiologicalParameters,
         stimuli_dict: dict[str, BaseStimulusConfig]
     ) -> dict[str, SNNResults]:

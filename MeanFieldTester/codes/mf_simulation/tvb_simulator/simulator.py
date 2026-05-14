@@ -9,7 +9,7 @@ from ...stimuli.config import BaseStimulusConfig
 from .models.factory import setup_tvb_model
 from .stimuli import prepare_stimulus
 from ...utils.array_helpers import convert_to_array
-from ...data_structures.network import MFResults
+from ...data_structures.mf_simulation import MFResults
 
 
 from tvb.simulator.simulator import Simulator
@@ -152,7 +152,7 @@ class TVBMFSimulator(BaseMFSimulator):
         # pass
 
 
-    def run_stimulus(self, stim_params: BaseStimulusConfig) -> Any:
+    def run_stimulus(self, stim_params: BaseStimulusConfig) -> MFResults:
         
         self.setup_stimulus(stim_params)
         

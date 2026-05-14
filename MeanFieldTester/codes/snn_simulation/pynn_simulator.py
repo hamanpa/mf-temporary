@@ -2,10 +2,10 @@ import importlib
 import numpy as np
 from typing import Dict, Any
 
-from .config import NetworkSimulationConfig
+from .config import SpikingNeuralNetworkSimulationConfig
 from .base import BaseSNNSimulator
 from ..stimuli.config import BaseStimulusConfig
-from ..data_structures.network import SNNFullResults
+from ..data_structures.snn_simulation import SNNResults
 from ..network_params.models import BiologicalParameters
 from ..network_params.translators import TranslationRule, translate_params
 from ..neuron_simulation.pynn_simulator import PYNN_ADEX_MAPPING, PYNN_STATIC_SYNAPSE_MAPPING, NEST_STATIC_SYNAPSE_MAPPING, NEST_TSODYKS_SYNAPSE_MAPPING, PYNN_INITIAL_VALUES_MAPPING
@@ -26,7 +26,7 @@ class PyNNSNNSimulator(BaseSNNSimulator):
         self.sim_params = None
 
 
-    def build_network(self, network_params: BiologicalParameters, snn_sim_params: NetworkSimulationConfig) -> None:
+    def build_network(self, network_params: BiologicalParameters, snn_sim_params: SpikingNeuralNetworkSimulationConfig) -> None:
         """Phase 1: Setup environment, build neurons, and wire connections."""
         self.network_params = network_params
         self.sim_params = snn_sim_params
@@ -92,7 +92,7 @@ class PyNNSNNSimulator(BaseSNNSimulator):
                 self.projections.append(proj)
         self._network_built = True
 
-    def run_stimulus(self, stim_params: BaseStimulusConfig) -> SNNFullResults:
+    def run_stimulus(self, stim_params: BaseStimulusConfig) -> SNNResults:
         """Phase 2: Inject specific stimulus, run the simulation, extract data."""
 
         if not self._network_built:
@@ -121,14 +121,28 @@ class PyNNSNNSimulator(BaseSNNSimulator):
         exc_data = self.populations["exc_neuron"].get_data().segments[0]
         inh_data = self.populations["inh_neuron"].get_data().segments[0]
 
-        results = SNNFullResults(
-            exc_data,
-            inh_data,
-            drive_rate,
-            stim_rate,
-            stim_params,
-            self.network_params
+        results = SNNResults(
+            label_name = None,
+            stim_name = None,
+            snn_sim_params = self.sim_params,
+            network_params = self.network_params,
+            stim_params = stim_params,
+            exc_spikes_all = [np.array(spike_train) for spike_train in exc_data.spiketrains],
+            inh_spikes_all = [np.array(spike_train) for spike_train in inh_data.spiketrains],
+            times = exc_data.filter(name='v')[0].times.magnitude,
+            drive_rate_mean = drive_rate,
+            stim_rate_mean = stim_rate,
+            exc_voltage_all = exc_data.filter(name='v')[0].magnitude,
+            inh_voltage_all = inh_data.filter(name='v')[0].magnitude,
+            exc_adaptation_all = exc_data.filter(name='w')[0].magnitude,
+            inh_adaptation_all = inh_data.filter(name='w')[0].magnitude,
+            ee_conductance_all = exc_data.filter(name='gsyn_exc')[0].magnitude,
+            ei_conductance_all = exc_data.filter(name='gsyn_inh')[0].magnitude,
+            ie_conductance_all = inh_data.filter(name='gsyn_exc')[0].magnitude,
+            ii_conductance_all = inh_data.filter(name='gsyn_inh')[0].magnitude,
+            input_units = None,
         )
+
         return results
 
     def end(self) -> None:

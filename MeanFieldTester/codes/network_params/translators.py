@@ -1,6 +1,9 @@
 from typing import Any, Dict
+from numbers import Number
 from dataclasses import dataclass
 from pydantic import BaseModel
+import numpy as np
+
 
 # ==========================================
 # 1. THE UNIT CONVERSION ENGINE
@@ -64,6 +67,23 @@ class TranslationRule:
 # 3. THE SMART TRANSLATOR
 # ==========================================
 
+def multiply(raw_val, multiplier):
+    """
+    Recursively multiplies a scalar, numpy array, or nested list/tuple of these types by a multiplier.
+    Optimized for ragged arrays of NumPy objects (e.g., spike trains).
+    """
+    if isinstance(raw_val, (Number, np.ndarray)):
+        return raw_val * multiplier
+    elif isinstance(raw_val, (list, tuple)):
+        # Recursively apply to elements. Only goes one level deep if elements are ndarrays.
+        return [multiply(val, multiplier) for val in raw_val]
+    else:
+        raise TypeError(
+            f"Unsupported type for translation: {type(raw_val)}. "
+            "Only numbers, numpy arrays, and lists/tuples of these are supported."
+        )
+
+
 def translate_params(pydantic_model: BaseModel, mapping_rules: Dict[str, TranslationRule]) -> Dict[str, Any]:
     simulator_dict = {}
     
@@ -107,15 +127,8 @@ def translate_params(pydantic_model: BaseModel, mapping_rules: Dict[str, Transla
                 )
                 
             mft_unit = parts_close[0].strip()
-            
             multiplier = get_unit_multiplier(source_unit=mft_unit, target_unit=rule.sim_unit)
-            if isinstance(raw_val, (int, float)):
-                raw_val = raw_val * multiplier
-            elif isinstance(raw_val, list):
-                raw_val = [v * multiplier for v in raw_val]
-            else:
-                raise TypeError(f"Unsupported type for translation: {type(raw_val)}. Only int, float, and list of numbers are supported.")
-
+            raw_val = multiply(raw_val, multiplier)
 
         simulator_dict[sim_key] = raw_val
 
