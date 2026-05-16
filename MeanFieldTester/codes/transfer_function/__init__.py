@@ -3,7 +3,7 @@ import pickle
 from typing import Dict
 
 from .base import BaseTransferFunction
-from .config import TransferFunctionConfig
+from .config import TransferFunctionConfig, TFCoefficients
 
 from ..network_params.models import BiologicalParameters
 from ..data_structures.neuron_simulation import SingleNeuronResults
@@ -71,5 +71,6 @@ def run_tf_fitting_workflow(
             print(f"Fit complete. Metrics: {metrics}")
             
         fitted_tfs[neuron_name] = tf_instance
-        
+        tf_params.tf_fits[neuron_name] = TFCoefficients(**tf_instance.fitted_params)
+
     return fitted_tfs

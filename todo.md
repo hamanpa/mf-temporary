@@ -162,6 +162,8 @@ Priority
 - [ ] (4) **neuron_simulation**: *PyNN simulator, load the units from the model used? Such that I do not have to hard code the units and do not have to make mapping for each neuron model*
 - [ ] (4) **neuron_simulation**: *Option to pick neuron model*
 
+- [ ] (4) **transfer_function**: *Rename to tf_fitting? or rename the `run_tf_fittinf_workflow`*
+
 - [ ] (4) **snn_simulation**: *implement parallelization (or use PyNN methods of parallelization)*
 
 - [ ] (4) **mf_simulation**: *implement parallelization? at least with various stimuli*

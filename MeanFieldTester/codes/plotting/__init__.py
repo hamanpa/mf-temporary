@@ -336,7 +336,7 @@ class TransferFunctionFitPlot(BaseTransferFunctionPlot):
                         color=color,
                         )
 
-            for tf_funcs, ls in zip(tf_funcs_list, self.full_params['linestyles']):
+            for tf_funcs, ls in zip(tf_funcs_list, self.full_params['linestyles'], strict=True):
                 if "adaptation"  in tf_funcs.required_inputs():
                     adaptation = neuron_results.adaptation_mean()[:, nu_i_idx]
                 else:

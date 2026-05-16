@@ -14,8 +14,8 @@ import yaml
 import json
 import argparse
 from pathlib import Path
-from pydantic import BaseModel
-from dataclasses import Field
+from typing import Dict
+from pydantic import BaseModel, Field
 
 from ..neuron_simulation.config import NeuronSimulationConfig, RunSimulationConfig, GridConfig, SingleNeuronLinearGrid, SimulatorType
 from ..mf_simulation.config import MeanFieldSimulationConfig
@@ -24,10 +24,10 @@ from ..snn_simulation.config import SpikingNeuralNetworkSimulationConfig
 class WorkflowConfig(BaseModel):
     neuron_simulation: NeuronSimulationConfig
     snn_simulation: SpikingNeuralNetworkSimulationConfig
-    mf_config_list: list[MeanFieldSimulationConfig] = Field(
-        default_factory=list, 
+    mf_models: Dict[str, MeanFieldSimulationConfig] = Field(
+        default_factory=dict,
         description=(
-            "A list of mean-field simulation configurations. Each entry should specify the model type, simulator, and all necessary parameters. " +
+            "A dictionary of mean-field simulation configurations. Each key should be a unique identifier for the model, and each value should specify the model type, simulator, and all necessary parameters. " +
             "This allows you to run multiple mean-field simulations with different settings in a single workflow."
         )
     )
