@@ -152,6 +152,8 @@ Priority
 - [ ] (2) **neuron_simulation**: *Subthreshold grid: allow adaptive grid to also cover subthreshold region*
 - [ ] (3) **neuron_simulation**: *implement execution modes 'skip", 'validate' (comparison of existing data and newly generated ones)* 
 - [ ] (3) **neuron_simulation.pynn_simulator**: *Make it work with init_values*
+- [ ] (3) **neuron_simulation.pynn_simulator**: *inspect what happened and debug it, extremely weir results!*
+  - the data in `project/04_debug`
 - [ ] (4) **neuron_simulation.pynn_simulator**: *Redo the `legacy_neuron_params`*
   - currently relies on hardcoded string names in legace neuron_params format!
 - [ ] (4) **neuron_simulation**: *Adaptive Grid for Inhibitory Neurons*
@@ -174,6 +176,8 @@ Priority
 - [ ] (4) **mf_simulation.tvb_simulator**: *add options for `self.setup_coupling()`, currently hardcoded*
 - [ ] (4) **mf_simulation.tvb_simulator**: *add options for `self.setup_integrator()`, currently hardcoded*
 - [ ] (4) **mf_simulation.tvb_simulator**: *add options for `self.setup_monitors()`, currently hardcoded*
+- [ ] (2) **mf_simulation**: *test first order model, added models handling STP but works only for second order and I did not even test the first order divolo*
+
 
 - [ ] (3) **plotting** : *Remove naming convention reliance (Refactor plotting logic to use `.results_type` instead of `.startswith("SNN")`)*
 - [ ] **plotting**: *Handle missing variables gracefully*
@@ -191,11 +195,11 @@ Priority
 
 # ACTIVE:
 
-- [ ] (1) **controller**: *make it runable start to finish based on param files* (with plotting)
 - [ ] (1) **controller**: *Full workflow config and loading*
 - [ ] (2) **controller**: *Make some high level API instead of the god-like class*
 
 # DONE:
+- [x] (1) **controller**: *make it runable start to finish based on param files* (with plotting)
 - [x] (1) **data_structures**: *Clean up old code and update simulators*
 - [x] **data_structures**: *rewrite SNNResults*
 - [x] **BaseResults**: *create new Base Results class that would contain the the unit handling* 

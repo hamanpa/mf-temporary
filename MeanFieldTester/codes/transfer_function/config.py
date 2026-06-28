@@ -95,6 +95,7 @@ class NeuropsiModelParams(BaseModel):
     square_terms: bool = Field(True, description="Whether to include square terms in the polynomial expansion.")
     log_term: bool = Field(False, description="Whether to include a logarithmic term of conductance_mean")
     adaptation: bool = Field(True, description="Whether to include adaptation terms.")
+    static_synapses: bool = Field(False, description="Whether to enforce static synapses (no STP) in the transfer function fitting. If True, the TF will be fitted assuming no STP dynamics, even if the network has STP.")
 
 TFModelParams = Annotated[
     Zerlaut2018ModelParams | DiVolo2019ModelParams | NeuropsiModelParams,
@@ -127,7 +128,7 @@ class RunTFFittingConfig(BaseModel):
                                                         'disp' : False,
                                                         'maxiter' : 10000
                                                     })
-    tf_fits: Dict[str, TFCoefficients] | None = None
+    tf_fits: Dict[str, TFCoefficients] = Field(default_factory=dict, description="Dictionary mapping neuron names to their fitted transfer function coefficients. Populated after fitting.")
 
 class LoadTFFittingConfig(BaseModel):
     fit_transfer_function: Literal[False] = False

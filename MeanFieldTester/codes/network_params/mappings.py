@@ -38,8 +38,8 @@ NEST_STATIC_SYNAPSE_MAPPING = {
 NEST_TSODYKS_SYNAPSE_MAPPING = {
     "weight": TranslationRule("weight", sim_unit="nS"),
     "delay": TranslationRule("delay", sim_unit="ms"),
-    "tau_psc": TranslationRule("tau_rp", sim_unit="ms"),
-    "tau_fac": TranslationRule("tau_psc", sim_unit="ms"),
+    "tau_psc": TranslationRule("tau_psc", sim_unit="ms"),
+    "tau_fac": TranslationRule("tau_fac", sim_unit="ms"),
     "tau_rec": TranslationRule("tau_rec", sim_unit="ms"),
     "U": TranslationRule("U", sim_unit="")
 }

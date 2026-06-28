@@ -2,7 +2,7 @@ from .base import BaseSNNResults
 from ..utils import snn_helpers
 from pydantic import BaseModel
 import numpy as np
-
+from functools import partial
 
 class SNNResults(BaseSNNResults):
     DEFAULT_UNITS = {
@@ -62,12 +62,6 @@ class SNNResults(BaseSNNResults):
         self.network_params = network_params
         self.stim_params = stim_params
 
-        self.set_smoothing_function(
-            snn_sim_params.smoothing.function, 
-            snn_sim_params.smoothing.time_constant, 
-            **(snn_sim_params.smoothing.kwargs or {}),
-        )
-
         input_units = input_units or {}
 
         # --- Protected Physical Data (Stored in Default Units) ---
@@ -88,6 +82,12 @@ class SNNResults(BaseSNNResults):
         self._ie_conductance_all = self._ingest(ie_conductance_all, "ie_conductance_all", input_units)
         self._ii_conductance_all = self._ingest(ii_conductance_all, "ii_conductance_all", input_units)
 
+        self.set_smoothing_function(
+            snn_sim_params.smoothing.function, 
+            snn_sim_params.smoothing.time_constant, 
+            **(snn_sim_params.smoothing.kwargs or {}),
+        )
+
         self._finalized = True
 
 
@@ -104,11 +104,11 @@ class SNNResults(BaseSNNResults):
         function = self.smoothing_options[smoothing_function]
         match smoothing_function:
             case "histogram":
-                self._smoothing_function = lambda x: function(x, self.times(), bin_size=smoothing_constant, **kwargs)
+                self._smoothing_function = partial(function, times=self.times(), bin_size=smoothing_constant, **kwargs)
             case "sliding_window":
-                self._smoothing_function = lambda x: function(x, self.times(), window_size=smoothing_constant, **kwargs)
+                self._smoothing_function = partial(function, times=self.times(), window_size=smoothing_constant, **kwargs)
             case "alpha_window":
-                self._smoothing_function = lambda x: function(x, self.times(), alpha_tau=smoothing_constant, **kwargs)
+                self._smoothing_function = partial(function, times=self.times(), alpha_tau=smoothing_constant, **kwargs)
 
         # every time we set a new smoothing function, we reset the cached rates
         self._exc_rate_all = None

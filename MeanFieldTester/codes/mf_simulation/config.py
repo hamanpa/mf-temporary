@@ -9,9 +9,18 @@ class SimulatorType(str, Enum):
 
 
 class ModelType(str, Enum):
-    ZERLAUT2018 = "zerlaut2018"
-    DIVOLO2019_SO = "divolo2019.second_order"
+    ZERLAUT2018_FO = "zerlaut2018.first_order"
+    ZERLAUT2018_SO = "zerlaut2018.second_order"
+
     DIVOLO2019_FO = "divolo2019.first_order"
+    DIVOLO2019_SO = "divolo2019.second_order"
+
+    STP_ASYPTOTIC_FO = "stp_asymptotic.first_order"
+    STP_ASYPTOTIC_SO = "stp_asymptotic.second_order"
+
+    STP_DYNAMIC_FO = "stp_dynamic.first_order"
+    STP_DYNAMIC_SO = "stp_dynamic.second_order"
+
     CUSTOMNEUROPSI = "custom.neuropsi"
 
 class BaseInitValues(BaseModel):
@@ -87,6 +96,11 @@ class CustomNeuroPSIInitialValuesConfig(Divolo2019InitialValuesConfig):
         serialization_alias='exc_stp_y_mean',
         description="Initial mean of the STP variable Y for the excitatory population."
     )
+    exc_stp_u_mean: List[float] = Field(
+        validation_alias=AliasChoices('U_dyn_e', 'U_e', 'exc_stp_u_mean'),
+        serialization_alias='exc_stp_u_mean',
+        description="Initial mean of the STP variable U for the excitatory population."
+    )
     inh_stp_x_mean: List[float] = Field(
         validation_alias=AliasChoices('X_i', 'inh_stp_x_mean'),
         serialization_alias='inh_stp_x_mean',
@@ -96,6 +110,11 @@ class CustomNeuroPSIInitialValuesConfig(Divolo2019InitialValuesConfig):
         validation_alias=AliasChoices('Y_i', 'inh_stp_y_mean'),
         serialization_alias='inh_stp_y_mean',
         description="Initial mean of the STP variable Y for the inhibitory population."
+    )
+    inh_stp_u_mean: List[float] = Field(
+        validation_alias=AliasChoices('U_dyn_i', 'U_i', 'inh_stp_u_mean'),
+        serialization_alias='inh_stp_u_mean',
+        description="Initial mean of the STP variable U for the inhibitory population."
     )
 
 
@@ -151,11 +170,11 @@ class RunSimulationConfig(BaseModel):
             return data
 
         match model_type:
-            case ModelType.ZERLAUT2018:
+            case ModelType.ZERLAUT2018_FO | ModelType.ZERLAUT2018_SO:
                 data["init_values"] = Zerlaut2018InitialValuesConfig(**init_data)
-            case ModelType.DIVOLO2019_FO | ModelType.DIVOLO2019_SO:
+            case ModelType.DIVOLO2019_FO | ModelType.DIVOLO2019_SO | ModelType.STP_ASYPTOTIC_FO | ModelType.STP_ASYPTOTIC_SO:
                 data["init_values"] = Divolo2019InitialValuesConfig(**init_data)
-            case ModelType.CUSTOMNEUROPSI:
+            case ModelType.CUSTOMNEUROPSI | ModelType.STP_DYNAMIC_FO | ModelType.STP_DYNAMIC_SO:
                 data["init_values"] = CustomNeuroPSIInitialValuesConfig(**init_data)
             case _:
                 raise ValueError(f"Unknown model type: {model_type}")

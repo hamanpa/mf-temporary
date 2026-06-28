@@ -45,7 +45,7 @@ class NeuroPSICustomTF(BaseTransferFunction):
         super().__init__(neuron_name, network_params, tf_params)
         
         # Instantiate the standalone physics calculator
-        self.mpf = MembranePotentialFluctuations(neuron_name, network_params)
+        self.mpf = MembranePotentialFluctuations(neuron_name, network_params, ignore_stp=tf_params.tf_model.static_synapses)
         self.g_L = network_params.neurons[neuron_name].neuron_params.g_L
 
     def required_inputs(self) -> list[str]:
@@ -244,7 +244,6 @@ class NeuroPSICustomTF(BaseTransferFunction):
         }
 
 
-# TODO: add Tsodyks synapse
 class MembranePotentialFluctuations:
     """
     This class should be used to compute the subthreshold membrane potential fluctuations.
@@ -255,9 +254,10 @@ class MembranePotentialFluctuations:
         self, 
         neuron_name: str,
         network_params: BiologicalParameters,
-
+        ignore_stp: bool = False
     ):
         self.neuron_name = neuron_name
+        self.ignore_stp = ignore_stp
 
         self.exc_syn_tau = network_params.neurons[neuron_name].neuron_params.tau_syn_E
         self.exc_syn_v = network_params.neurons[neuron_name].neuron_params.e_rev_E
@@ -286,35 +286,73 @@ class MembranePotentialFluctuations:
         self.inh_syn_weight = network_params.synapses[network_params.inh_neuron_name].syn_params.weight
 
 
-        if self.exc_syn_type == 'tsodyks_synapse':
-            raise NotImplementedError("Tsodyks synapse is not yet implemented in the mean potential fluctuations calculation")
-            # self.u_e = params['exc_synapses']['syn_params']['U']
-            # self.tau_rec_e = params['exc_synapses']['syn_params']['tau_rec']
-        if self.inh_syn_type == 'tsodyks_synapse':
-            raise NotImplementedError("Tsodyks synapse is not yet implemented in the mean potential fluctuations calculation")
-            # self.u_i = params['inh_synapses']['syn_params']['U']
-            # self.tau_rec_i = params['inh_synapses']['syn_params']['tau_rec']
+        if not self.ignore_stp and self.exc_syn_type == 'tsodyks_synapse':
+            self.u_e = network_params.synapses[network_params.exc_neuron_name].syn_params.U
+            self.tau_rec_e = network_params.synapses[network_params.exc_neuron_name].syn_params.tau_rec
+            self.tau_fac_e = network_params.synapses[network_params.exc_neuron_name].syn_params.tau_fac
+        else:
+            self.u_e = 1.0
+            self.tau_rec_e = 0.0
+            self.tau_fac_e = 0.0
 
+        if not self.ignore_stp and self.inh_syn_type == 'tsodyks_synapse':
+            self.u_i = network_params.synapses[network_params.inh_neuron_name].syn_params.U
+            self.tau_rec_i = network_params.synapses[network_params.inh_neuron_name].syn_params.tau_rec
+            self.tau_fac_i = network_params.synapses[network_params.inh_neuron_name].syn_params.tau_fac
+        else:
+            self.u_i = 1.0
+            self.tau_rec_i = 0.0
+            self.tau_fac_i = 0.0
+
+    def _weight_effective(self, rate, syn_type, syn_weight, u, tau_rec, tau_fac):
+        """Calculates the effective synaptic weight considering STP."""
+        if self.ignore_stp or syn_type != 'tsodyks_synapse':
+            return syn_weight
+        else:
+            # synaptic facilitation
+            if tau_fac > 0:
+                exp = np.exp(-1 / (rate*1e-3 * tau_fac))
+                u_steady = u / (1 - (1-u)*exp)
+            else:
+                u_steady = u
+
+            # synaptic depression
+            if tau_rec > 0:
+                exp = np.exp(-1 / (rate*1e-3 * tau_rec))
+                x_steady = (1-exp) / (1 -(1-u_steady)*exp)
+            else:
+                x_steady = 1
+            
+            # steady-state effective synaptic weight 
+            return syn_weight * u_steady * x_steady
+
+    def exc_syn_weight_effective(self, exc_rate):
+        """Calculates the effective excitatory synaptic weight considering STP."""
+        return self._weight_effective(exc_rate, self.exc_syn_type, self.exc_syn_weight, self.u_e, self.tau_rec_e, self.tau_fac_e)
+
+    def inh_syn_weight_effective(self, inh_rate):
+        """Calculates the effective inhibitory synaptic weight considering STP."""
+        return self._weight_effective(inh_rate, self.inh_syn_type, self.inh_syn_weight, self.u_i, self.tau_rec_i, self.tau_fac_i)
 
     def exc_conductance_mean(self, exc_rate):
         """Calculates the mean excitatory conductance in [nS]."""
         # [Hz * number * ms * nS] = [pS], thus factor 1e-3 to convert to [nS]
-        return exc_rate * self.exc_syn_num * (self.exc_syn_tau * 1e-3) * self.exc_syn_weight
+        return exc_rate * self.exc_syn_num * (self.exc_syn_tau * 1e-3) * self.exc_syn_weight_effective(exc_rate)
 
     def exc_conductance_std(self, exc_rate):
         """Calculates the standard deviation of the excitatory conductance in [nS]."""
         # factor 1e-3 to have the term inside square root unitless, thus the result is in [nS]
-        return np.sqrt(exc_rate * self.exc_syn_num * (self.exc_syn_tau * 1e-3) / 2) * self.exc_syn_weight
+        return np.sqrt(exc_rate * self.exc_syn_num * (self.exc_syn_tau * 1e-3) / 2) * self.exc_syn_weight_effective(exc_rate)
 
     def inh_conductance_mean(self, inh_rate):
         """Calculates the mean inhibitory conductance in [nS]."""
         # [Hz * number * ms * nS] = [pS], thus factor 1e-3 to convert to [nS]
-        return inh_rate * self.inh_syn_num * (self.inh_syn_tau * 1e-3) * self.inh_syn_weight
+        return inh_rate * self.inh_syn_num * (self.inh_syn_tau * 1e-3) * self.inh_syn_weight_effective(inh_rate)
 
     def inh_conductance_std(self, inh_rate):
         """Calculates the standard deviation of the inhibitory conductance in [nS]."""
         # factor 1e-3 to have the term inside square root unitless, thus the result is in [nS]
-        return np.sqrt(inh_rate * self.inh_syn_num * (self.inh_syn_tau * 1e-3) / 2) * self.inh_syn_weight
+        return np.sqrt(inh_rate * self.inh_syn_num * (self.inh_syn_tau * 1e-3) / 2) * self.inh_syn_weight_effective(inh_rate)
 
     def conductance_mean(self, exc_rate, inh_rate):
         """Calculates the mean total conductance in [nS]."""
@@ -364,8 +402,8 @@ class MembranePotentialFluctuations:
         conductance_mean = self.conductance_mean(exc_rate, inh_rate)
         tau_eff = self.tau_eff(exc_rate, inh_rate)
 
-        exc_syn_u = self.exc_syn_weight * (self.exc_syn_v - voltage_mean) / conductance_mean  # [mV]
-        inh_syn_u = self.inh_syn_weight * (self.inh_syn_v - voltage_mean) / conductance_mean  # [mV]
+        exc_syn_u = self.exc_syn_weight_effective(exc_rate) * (self.exc_syn_v - voltage_mean) / conductance_mean  # [mV]
+        inh_syn_u = self.inh_syn_weight_effective(inh_rate) * (self.inh_syn_v - voltage_mean) / conductance_mean  # [mV]
 
         exc_term = self.exc_syn_num * (exc_rate * 1e-3) * (exc_syn_u * self.exc_syn_tau)**2 / (2 * (tau_eff + self.exc_syn_tau))
         inh_term = self.inh_syn_num * (inh_rate * 1e-3) * (inh_syn_u * self.inh_syn_tau)**2 / (2 * (tau_eff + self.inh_syn_tau))
@@ -379,8 +417,8 @@ class MembranePotentialFluctuations:
         conductance_mean = self.conductance_mean(exc_rate, inh_rate)
         tau_eff = self.tau_eff(exc_rate, inh_rate)
 
-        exc_syn_u = self.exc_syn_weight * (self.exc_syn_v - voltage_mean) / conductance_mean  # [mV]
-        inh_syn_u = self.inh_syn_weight * (self.inh_syn_v - voltage_mean) / conductance_mean  # [mV]
+        exc_syn_u = self.exc_syn_weight_effective(exc_rate) * (self.exc_syn_v - voltage_mean) / conductance_mean  # [mV]
+        inh_syn_u = self.inh_syn_weight_effective(inh_rate) * (self.inh_syn_v - voltage_mean) / conductance_mean  # [mV]
 
         exc_term = (self.exc_syn_num * exc_rate + 1e-9) * 1e-3 * (exc_syn_u * self.exc_syn_tau)**2
         inh_term = (self.inh_syn_num * inh_rate + 1e-9) * 1e-3 * (inh_syn_u * self.inh_syn_tau)**2

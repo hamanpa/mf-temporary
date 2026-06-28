@@ -574,8 +574,9 @@ class VoltagePlot(BaseNetworkPlot):
         self.update_params(results_list)
 
         for results, ls, label in zip(results_list, self.full_params['linestyles'], self.full_params['labels']):
-            ax.plot(results.times(), results.exc_voltage_mean(), label=f'Exc {label}', ls=ls, color=self.full_params['exc_color'])
-            ax.plot(results.times(), results.inh_voltage_mean(), label=f'Inh {label}', ls=ls, color=self.full_params['inh_color'])
+            if isinstance(results, BaseSNNResults):
+                ax.plot(results.times(), results.exc_voltage_mean(), label=f'Exc {label}', ls=ls, color=self.full_params['exc_color'])
+                ax.plot(results.times(), results.inh_voltage_mean(), label=f'Inh {label}', ls=ls, color=self.full_params['inh_color'])
 
 
 class FiringRateHistogramPlot(BaseNetworkPlot):
