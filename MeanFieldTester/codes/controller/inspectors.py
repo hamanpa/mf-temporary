@@ -8,6 +8,8 @@ from ..snn_simulation import run_snn_simulation_workflow
 from ..data_structures.base import BaseResults, BaseMFResults, BaseSNNResults, BaseInspectionResults
 from ..data_structures.inspection import SpontInspectionResults, DynamicStimulusInspectionResults
 
+from ..plotting import fig_plots
+
 from pydantic import BaseModel
 
 
@@ -146,101 +148,6 @@ class ComparisonExtractor:
         return extracted_data
 
 
-
-# class SpontActivityInspector:
-#     """
-#     Orchestrates the parameter sweep for spontaneous activity.
-#     Adheres to the Clean Slate paradigm to prevent memory leaks and state contamination.
-#     """
-#     def __init__(self, 
-#                  base_network_params: BaseModel, 
-#                  base_stimulus_params: BaseModel, 
-#                  base_sim_params: BaseModel,
-#                  ):
-        
-#         self.base_network_params = base_network_params
-#         self.base_stimulus_params = base_stimulus_params
-#         self.base_sim_params = base_sim_params
-
-#     def run_inspection(
-#             self, 
-#             inspected_param: str, 
-#             inspected_values: list | np.ndarray, 
-#             measured_variables: list[str], 
-#             start_time: float = 1000.0,
-#             end_time: float = np.inf,
-#             ) -> SpontInspectionResults:
-        
-#         extractor = SpontActivityExtractor(
-#                         measured_variables=measured_variables, 
-#                         start_time=start_time,
-#                         end_time=end_time
-#                     )
-        
-#         mf_names = list(self.base_sim_params.mf_models.keys())
-#         network_names = ["SNN"] + mf_names
-        
-#         results_container = SpontInspectionResults(
-#             inspected_param=inspected_param,
-#             inspected_values=inspected_values,
-#             network_names=network_names,
-#             measured_variables=measured_variables,
-#             network_params=self.base_network_params,
-#             stimulus_params=self.base_stimulus_params
-#         )
-        
-#         is_network = inspected_param.startswith("network.")
-#         is_stimulus = inspected_param.startswith("stimulus.")
-#         if not (is_network or is_stimulus):
-#             raise ValueError("param_path must start with 'network.' or 'stimulus.'")
-            
-#         inspected_param_path = inspected_param.split(".", maxsplit=1)[-1]
-        
-#         for value in inspected_values:
-#             print(f"\n--- Inspecting {inspected_param} = {value} ---")
-            
-#             current_net_params = copy.deepcopy(self.base_network_params)
-#             current_stim_params = copy.deepcopy(self.base_stimulus_params)
-            
-#             if is_network:
-#                 current_net_params = inject_pydantic_param(current_net_params, inspected_param_path, value)
-#             else:
-#                 current_stim_params = inject_pydantic_param(current_stim_params, inspected_param_path, value)
-                
-#             current_stimulus_config = {"InspectionStimulus" : current_stim_params}
-            
-
-#             print("Running SNN Simulation...")
-            
-#             snn_results = run_snn_simulation_workflow(
-#                             self.base_sim_params.snn_simulation, 
-#                             current_net_params, 
-#                             current_stimulus_config
-#                             )
-            
-#             extracted_snn = extractor.extract(snn_results["InspectionStimulus"])
-            
-#             extracted_mfs = []
-#             for mf_model_name, mf_sim_params in self.base_sim_params.mf_models.items():
-#                 print(f"Running MF Simulation: {mf_model_name}...")
-#                 mf_results = run_mf_simulation_workflow(mf_sim_params, current_net_params, current_stimulus_config)
-#                 extracted_mfs.append(extractor.extract(mf_results["InspectionStimulus"]))
-                
-#             results_container.add_inspection_data([extracted_snn] + extracted_mfs)
-            
-#             # NOTE: if memory issues arise, consider using `del` and `gc.collect()`
-#             # since Python may store references to large objects in memory even after they go out of scope.
-
-#             # del snn_results
-#             # del mf_results 
-#             # gc.collect() 
-
-#         print("\nInspection Complete. Freezing results...")
-#         results_container.freeze()
-        
-#         return results_container
-
-
 class ParameterInspector:
     """
     Master controller for parameter inspections. 
@@ -264,7 +171,9 @@ class ParameterInspector:
             inspected_values: list | np.ndarray, 
             measured_variables: list[str], 
             start_time: float = 1000.0,
-            end_time: float = np.inf
+            end_time: float = np.inf,
+            plot: bool = False,
+            project_path: str | None = None,
             ) -> Dict[str, BaseInspectionResults]:
 
         spont_vars = [v for v in measured_variables if v in SpontInspectionResults.DEFAULT_UNITS]
@@ -346,11 +255,13 @@ class ParameterInspector:
             if dynamic_vars:
                 exctracted_dyn_data =  []
 
+            mf_results_dict = {}
             for mf_model_name, mf_sim_params in self.base_sim_params.mf_models.items():
                 print(f"Running MF Simulation: {mf_model_name}...")
                 mf_results = run_mf_simulation_workflow(mf_sim_params, current_network_params, current_stimulus_config)
                 mf_data = mf_results["InspectionStimulus"]
-                
+                mf_results_dict[mf_model_name] = mf_data
+
                 if spont_vars:
                     extracted_spont_data.append(extractors["spont"].extract(mf_data))
                 if dynamic_vars:
@@ -361,7 +272,27 @@ class ParameterInspector:
             if dynamic_vars:
                 results_containers["dynamic"].add_inspection_data(exctracted_dyn_data)
 
-                
+
+            if plot:
+                fig_plots.fig_full_network_overview_together(
+                    snn_data, 
+                    list(mf_results_dict.values()),
+                    common_params={
+                        'xmargin': 0.0,
+                        'ymargin': 0.0,
+                        'labels': network_names,
+                        'legend': {'loc': 'upper left'},
+                        'xlim' : (0, snn_data.times()[-1])
+                    },
+                    fig_params={
+                        'figsize': (20, 10),  # width, height
+                        'tight_layout': True,
+                        'savefig': True,
+                        'savefig_path': project_path /f"{inspected_param}_{value}_Full_network_overview_together.png",
+                        'title' : f"Network overview for: '{inspected_param}={value}'",
+                    }
+                )
+
             # NOTE: if memory issues arise, consider using `del` and `gc.collect()`
             # since Python may store references to large objects in memory even after they go out of scope.
 

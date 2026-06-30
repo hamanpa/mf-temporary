@@ -165,6 +165,10 @@ class DynamicStimulusInspectionResults(CoreInspectionResults):
         "inh_rate_error_std": "Hz",
         "inh_rate_pearson": "Hz",
 
+        "exc_adaptation_rmse": "Hz",
+        "exc_adaptation_error_mean": "Hz",
+        "exc_adaptation_error_std": "Hz",
+        "exc_adaptation_pearson": "Hz",
         # TODO:
         # add voltage
         # add adaptation
