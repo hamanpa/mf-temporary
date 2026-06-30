@@ -1,0 +1,87 @@
+neurons:
+  exc_neuron:
+    neuron_type: excitatory
+    neuron_model: adex
+    neuron_params: &exc_neuron_params
+      v_rest: -65.0         # [mV], resting membrane potential
+      v_reset: -65.0        # [mV], reset potential after a spike
+      tau_refrac: 5.0       # [ms], refractory period
+      tau_m: 15.0           # [ms], membrane time constant
+      cm: 0.150             # [nF], capacitance
+      e_rev_E: 0.0          # [mV], reversal potential for excitatory synapses
+      e_rev_I: -80.0        # [mV], reversal potential for inhibitory synapses
+      tau_syn_E: &tau_syn_E 5.0        # [ms], time constant for excitatory synapses
+      tau_syn_I: &tau_syn_I 5.0        # [ms], time constant for inhibitory synapses
+      a: 4.0                # [nS], subthreshold adaptation
+      b: 0.02               # [nA], spike-triggered adaptation
+      delta_T: 2.0          # [mV], slope factor for exponential term
+      tau_w: 500.0          # [ms], adaptation time constant
+      v_thresh: -50.0       # [mV], spike threshold
+  inh_neuron:
+    neuron_type: inhibitory
+    neuron_model: adex
+    neuron_params:
+      <<: *exc_neuron_params
+      a: 0.0
+      b: 0.0
+      delta_T: 0.5
+  drive_neuron:
+    neuron_type: excitatory
+    neuron_model: poisson_generator
+  stim_neuron:
+    neuron_type: excitatory
+    neuron_model: poisson_generator
+network:
+  size:
+    exc_neuron: &exc_size 8000
+    inh_neuron: 2000
+    drive_neuron: *exc_size
+    stim_neuron: *exc_size
+  connectivity:
+    exc_neuron:
+      exc_neuron: &conn_prob 0.05
+      inh_neuron: *conn_prob
+      drive_neuron: *conn_prob
+      stim_neuron: *conn_prob
+    inh_neuron:
+      exc_neuron: *conn_prob
+      inh_neuron: *conn_prob
+      drive_neuron: *conn_prob
+      stim_neuron: *conn_prob
+    drive_neuron:
+      exc_neuron: &no_conn 0.0
+      inh_neuron: *no_conn
+      drive_neuron: *no_conn
+      stim_neuron: *no_conn
+    stim_neuron:
+      exc_neuron: *no_conn
+      inh_neuron: *no_conn
+      drive_neuron: *no_conn
+      stim_neuron: *no_conn
+synapses:
+  exc_neuron:
+    syn_type: tsodyks_synapse
+    syn_params:
+      weight: 1.0       # [nS], synaptic weight
+      delay: 0.1        # [ms], synaptic delay
+      U: 0.75
+      tau_rec: 30
+      tau_psc: *tau_syn_E
+      tau_fac: 0
+  inh_neuron:
+    syn_type: tsodyks_synapse
+    syn_params:
+      weight: 5.0
+      delay: 0.1
+      U: 0.75
+      tau_rec: 70
+      tau_psc: *tau_syn_I
+      tau_fac: 0
+  drive_neuron: &drive_syn_params
+    syn_type: static_synapse
+    syn_params:
+      weight: 1.0
+      delay: 0.1
+  stim_neuron: *drive_syn_params
+
+

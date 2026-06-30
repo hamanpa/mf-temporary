@@ -82,3 +82,10 @@ class BaseSNNResults(BaseResults):
     """
     pass
 
+
+class BaseInspectionResults(BaseResults):
+    """
+    Intermediate base class for all inspection results.
+    Use this for `isinstance(obj, BaseInspectionResults)` checks.
+    """
+    pass

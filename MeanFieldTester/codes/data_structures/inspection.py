@@ -9,211 +9,165 @@ may require different data to be stored, hence different classes.
 
 """
 
+"""
+Data structures for storing the results of parameter inspections.
+"""
 
-import codes.data_structures.base as base
+from .base import BaseInspectionResults
 import numpy as np
-
-def _create_array_property(var_name):
-    """Creates a property that returns the NumPy array conversion of the internal list."""
-    # Helper function to generate a property method dynamically
-    # The internal list name (e.g., '_exc_rate_mean')
-    internal_name = f"_{var_name}"
-    
-    # Define the getter method for the property
-    @property
-    def getter(self):
-        # Access the internal list attribute (e.g., self._exc_rate_mean)
-        return np.array(getattr(self, internal_name))
-    
-    # Return the property (which is the getter method decorated with @property)
-    return getter
+from pydantic import BaseModel
 
 
-
-
-class SpontaneousActivityInspectionResults:
-    """Inspection results for spontaneous activity simulations.
-
-    Spontaneous activity allows meaningful time-averaging of rates, voltages and
-    adaptation variables over a steady-state period of the simulation.
-    
-    Here the 'mean' means time average over the steady-state period of the simulation.
-    The 'std' means standard deviation over time in the same period.
-    
-    One network per inspection! (the same as with simulations)
-    such that I iterate it like a list as previously.
-
-    Attributes:
-        inspected_network_name (str): Name of the inspected network.
-        inspected_network_params (dict): Parameters of the inspected network.
-        inspected_stimulus_name (str): Name of the inspected stimulus.
-        inspected_stimulus_params (dict): Parameters of the inspected stimulus.
-        inspected_param (str): The name of the inspected parameter.
-        param_values (list): The list of inspected parameter values.
-        measured_variables (list): List of measured variable names stored as attributes.
-    
+class CoreInspectionResults(BaseInspectionResults):
     """
-    ALLOWED_MEASURED_VARS = [
-        "exc_rate_time_mean",
-        "exc_rate_time_std",
-        "inh_rate_time_mean",
-        "inh_rate_time_std",
-        "exc_voltage_time_mean",
-        "exc_voltage_time_std",
-        "inh_voltage_time_mean",
-        "inh_voltage_time_std",
-        "exc_adaptation_time_mean",
-        "exc_adaptation_time_std",
-        "inh_adaptation_time_mean",
-        "inh_adaptation_time_std",
-    ]
+    Abstract base class for all Inspection Results.
+    Handles incremental data collection, array freezing (transposition), 
+    and dynamic unit-scaling getters.
+    """
+    
+    DEFAULT_UNITS = {}
+    ALLOWED_MEASURED_VARS = []
+
 
     def __init__(self, 
-                 inspected_network_name:str,
-                 inspected_network_params:dict,
-                 inspected_stimulus_name:str, 
-                 inspected_stimulus_params:dict,
-                 inspected_param:str,
-                 measured_variables:list[str]=None,
-                 param_values:list|float|int=None,
-                 **kwargs):
-
-        # Save the information about the network, stimulus and inspection parameter
-        self.inspected_network_name = inspected_network_name
-        self.inspected_network_params = inspected_network_params
-        
-        self.inspected_stimulus_name = inspected_stimulus_name
-        self.inspected_stimulus_params = inspected_stimulus_params
+                 inspected_param: str, 
+                 inspected_values: list | np.ndarray, 
+                 network_names: list[str], 
+                 network_params: BaseModel,
+                 stimulus_params: BaseModel,
+                 measured_variables: list[str] = None,
+                 ):
         
         self.inspected_param = inspected_param
+        self.param_values = np.array(inspected_values)
+        self.network_names = network_names
 
-        # Setup the information about measured variables
+        self.network_params = network_params
+        self.stimulus_params = stimulus_params
+
         if measured_variables is not None:
-            for var in measured_variables:
-                if var not in self.ALLOWED_MEASURED_VARS:
-                    raise ValueError(f"Measured variable '{var}' is not allowed. Allowed variables are: {self.ALLOWED_MEASURED_VARS}")
+            var_difference = set(measured_variables) - set(self.ALLOWED_MEASURED_VARS)
+            if var_difference:
+                raise ValueError(f"Measured variables {var_difference} are not allowed. Allowed variables are: {self.ALLOWED_MEASURED_VARS}")
             self.measured_variables = measured_variables
         else:
             self.measured_variables = self.ALLOWED_MEASURED_VARS
-        
+
+        self._finalized = False
+
         # Init data containers
-        self.param_values = []
         for var in self.measured_variables:
-            setattr(self, var, [])
+            setattr(self, f"_{var}", [])
 
-        if isinstance(param_values, (float, int)):
-            self.add_result_point(param_values, **kwargs)
-        elif isinstance(param_values, list):
-            self.add_result_list(param_values, **kwargs)
-        elif param_values is None:
-            pass  # None is valid value (no data provided upon initialization)
-        else:
-            raise ValueError(f"param_values must be a list, float, or int, not {type(param_values).__name__}")
 
-    def add_result_point(self,
-                   param_value:float|int,
-                   **kwargs):
+    def __getattr__(self, name):
+        """
+        Dynamically catches requests for measured variables (e.g., results.exc_rate_time_mean).
+        Returns a callable that applies unit scaling, matching the SNNResults API.
+        """
+        if '_finalized' not in self.__dict__:
+            raise AttributeError(f"Attribute '{name}' not found. Object not initialized.")
         
-        # 1. VALIDATION: Check for data consistency before modifying internal state
-        self._verify_kwargs(**kwargs)
-        self._verify_data_type(param_value, mode="point", **kwargs)
+        if name in self.measured_variables:
+            
+            def getter_method(unit=None):
+                if not self._finalized:
+                    raise RuntimeError("Cannot access data before freezing. Call freeze() first.")
+                
+                internal_data = getattr(self, f"_{name}")
+                default_unit = self.DEFAULT_UNITS.get(name)
+                target_unit = default_unit if unit is None else unit
+                return self._get_scaled(internal_data, default_unit, target_unit)
 
-        # 2. ADD RESULTS: the new data to the internal state
-        self.param_values.append(param_value)
-        for key, value in kwargs.items():
-            getattr(self, key).append(value)
+            return getter_method
 
-    def add_result_list(self,
-                   param_value:list,
-                   **kwargs):
+        elif name in self.ALLOWED_MEASURED_VARS:
+            raise AttributeError(f"'{name}' is a valid measured variable but has not been collected yet. Ensure it is included in `measured_variables` during initialization.")            
 
-        # 1. VALIDATION: Check for data consistency before modifying internal state
-        self._verify_kwargs(**kwargs)
-        self._verify_data_type(param_value, mode="list", **kwargs)
+        raise AttributeError(f"'{self.__class__.__name__}' object has no attribute '{name}'")
 
-        # 2. ADD RESULTS: the new data to the internal state
-        self.param_values.extend(param_value)
-        for key, value in kwargs.items():
-            getattr(self, key).extend(value)
-    
-    def add_result(self, param_value:float|int, results:base.NetworkResults, start_time:float=0.0):
-        """"""
 
-        if not isinstance(results, base.NetworkResults):
-            raise TypeError(f"The value for 'results' must be 'base.NetworkResults' not {type(results).__name__}")
+    def add_inspection_data(self, extracted_metrics: list[dict[str, float]]):
+        """
+        Adds one step of the parameter sweep.
+        
+        Parameters
+        ----------
+        extracted_metrics : list[dict[str, float]]
+            A list of extracted metrics. Must match the exact length and order 
+            of `self.network_names` (e.g., [SNN_dict, DiVolo_dict, Zerlaut_dict]).
+        """
+        if self._finalized:
+            raise RuntimeError("Cannot add data to a finalized InspectionResult.")
+            
+        if len(extracted_metrics) != len(self.network_names):
+            raise ValueError("Length of extracted_metrics must match length of network_names.")
 
-        self.param_values.append(param_value)
-
-        mask = results.times >= start_time
+        # Reorganize the data so each variable gets a list of values for this sweep
         for var in self.measured_variables:
-            match var:
-                case "exc_rate_time_mean":
-                    getattr(self, var).append(results.exc_rate_mean[mask].mean())
-                case "exc_rate_time_std":
-                    getattr(self, var).append(results.exc_rate_mean[mask].std())
-                case "inh_rate_time_mean":
-                    getattr(self, var).append(results.inh_rate_mean[mask].mean())
-                case "inh_rate_time_std":
-                    getattr(self, var).append(results.inh_rate_mean[mask].std())
-                case "exc_voltage_time_mean":
-                    getattr(self, var).append(results.exc_voltage_mean[mask].mean())
-                case "exc_voltage_time_std":
-                    getattr(self, var).append(results.exc_voltage_mean[mask].std())
-                case "inh_voltage_time_mean":
-                    getattr(self, var).append(results.inh_voltage_mean[mask].mean())
-                case "inh_voltage_time_std":
-                    getattr(self, var).append(results.inh_voltage_mean[mask].std())
-                case "exc_adaptation_time_mean":
-                    getattr(self, var).append(results.exc_adaptation_mean[mask].mean())
-                case "exc_adaptation_time_std":
-                    getattr(self, var).append(results.exc_adaptation_mean[mask].std())
-                case "inh_adaptation_time_mean":
-                    getattr(self, var).append(results.inh_adaptation_mean[mask].mean())
-                case "inh_adaptation_time_std":
-                    getattr(self, var).append(results.inh_adaptation_mean[mask].std())
-                case _:
-                    raise ValueError(f"Variable '{var}' not recognized for inspection.")
+            extracted_values = [net_metrics[var] for net_metrics in extracted_metrics]
+            getattr(self, f"_{var}").append(extracted_values)
 
-    def to_numpy_data(self):
-        """Returns the collected results as a dictionary of NumPy arrays."""
-        data = {
-            self.inspected_param: np.array(self.param_values)
-        }
+    def freeze(self):
+        """
+        Converts internal lists into NumPy arrays and locks the data structure.
+        The resulting arrays have shape: (number_of_networks, number_of_parameters)
+        This shape makes plotting easy: plt.plot(param_values, data[network_idx])
+        """
         for var in self.measured_variables:
-            data[var] = np.array(getattr(self, var))
-        return data
+            # list of lists (shape: num_params x num_networks)
+            raw_list = getattr(self, f"_{var}")
+            
+            # Convert to numpy and Transpose to (inspected_network_index, inspected_param_index)
+            frozen_array = np.array(raw_list).T
+            
+            # Set the public attribute and delete the private list
+            setattr(self, f"_{var}", frozen_array)
+            
+        self._finalized = True
 
-    def _verify_kwargs(self, **kwargs):
-        provided_vars = set(kwargs.keys())
-        required_vars = set(self.measured_variables)
-        if provided_vars != required_vars:
-            missing = required_vars - provided_vars
-            extra = provided_vars - required_vars
-            error_message = f"Provided arguments are inconsistent with measured variables.\n"
-            if missing:
-                error_message += f"Missing required variables: {sorted(list(missing))}."
-            if extra:
-                error_message += f"Extra, unexpected variables provided: {sorted(list(extra))}."
-            raise ValueError(error_message)
 
-    def _verify_data_type(self, param_value, mode:str, **kwargs):
-        """Verifies the type and structure of the data based on the mode."""
 
-        if mode == 'point':
-            if not isinstance(param_value, (float, int)):
-                raise TypeError(f"'param_value' must be a float or int, not {type(param_value).__name__}")
-            for key, value in kwargs.items():
-                if not isinstance(value, (float, int)):
-                    raise TypeError(f"Value for '{key}' must be a single number (float or int), not {type(value).__name__}")
+class SpontInspectionResults(CoreInspectionResults):
+    """
+    Data structure for spontaneous activity inspections.
+    Incrementally collects data and freezes it into NumPy arrays.
+    """
+    DEFAULT_UNITS = {
+        "exc_rate_time_mean" : "Hz",
+        "exc_rate_time_std" : "Hz",
+        "inh_rate_time_mean" : "Hz",
+        "inh_rate_time_std" : "Hz",
+        "exc_voltage_time_mean" : "mV",
+        "exc_voltage_time_std" : "mV",
+        "inh_voltage_time_mean" : "mV",
+        "inh_voltage_time_std" : "mV",
+        "exc_adaptation_time_mean" : "nA",
+        "exc_adaptation_time_std" : "nA",
+        "inh_adaptation_time_mean" : "nA",
+        "inh_adaptation_time_std" : "nA",
+    }
 
-        elif mode == 'list':
-            if not isinstance(param_value, list):
-                raise TypeError(f"'param_value' must be a list, not {type(param_value).__name__}")
-            N = len(param_value)
-            for key, value in kwargs.items():
-                if not isinstance(value, list):
-                    raise TypeError(f"Value for '{key}' must be a list when using 'add_result_list', not {type(value).__name__}")
-                if len(value) != N:
-                     raise ValueError(f"Length mismatch: 'param_value' has {N} items, but '{key}' has {len(value)}.")
-        else:
-            raise ValueError(f"Internal error: Unknown verification mode '{mode}'.")
+    ALLOWED_MEASURED_VARS = list(DEFAULT_UNITS.keys())
+
+
+class DynamicStimulusInspectionResults(CoreInspectionResults):
+    """Data structure for dynamic stimulus comparisons (SNN vs MF)."""
+
+    DEFAULT_UNITS = {
+        "exc_rate_rmse": "Hz",
+        "exc_rate_error_mean": "Hz",
+        "exc_rate_error_std": "Hz",
+        "exc_rate_pearson": "Hz",
+
+        "inh_rate_rmse": "Hz",
+        "inh_rate_error_mean": "Hz",
+        "inh_rate_error_std": "Hz",
+        "inh_rate_pearson": "Hz",
+
+        # TODO:
+        # add voltage
+        # add adaptation
+    }
+
+    ALLOWED_MEASURED_VARS = list(DEFAULT_UNITS.keys())

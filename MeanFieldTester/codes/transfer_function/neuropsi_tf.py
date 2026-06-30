@@ -311,17 +311,21 @@ class MembranePotentialFluctuations:
         else:
             # synaptic facilitation
             if tau_fac > 0:
-                exp = np.exp(-1 / (rate*1e-3 * tau_fac))
+                exp = np.zeros_like(rate)
+                mask = rate > 0.
+                exp[mask] = np.exp(-1 / (rate[mask]*1e-3 * tau_fac))
                 u_steady = u / (1 - (1-u)*exp)
             else:
-                u_steady = u
+                u_steady = u * np.ones_like(rate)
 
             # synaptic depression
             if tau_rec > 0:
-                exp = np.exp(-1 / (rate*1e-3 * tau_rec))
+                exp = np.zeros_like(rate)
+                mask = rate > 0.
+                exp[mask] = np.exp(-1 / (rate[mask]*1e-3 * tau_rec))
                 x_steady = (1-exp) / (1 -(1-u_steady)*exp)
             else:
-                x_steady = 1
+                x_steady = np.ones_like(rate)
             
             # steady-state effective synaptic weight 
             return syn_weight * u_steady * x_steady

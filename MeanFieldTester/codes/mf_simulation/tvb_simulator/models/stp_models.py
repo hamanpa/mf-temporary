@@ -227,13 +227,13 @@ class NeuroPSI_STP_asymptotic_first_order(Model):
     tau_rec_e = NArray(
         label=":math:`\tau_d_e`",
         default=numpy.array([0.0]),
-        domain=Range(lo=1.0, hi=1000.0, step=1.0),
+        domain=Range(lo=0.0, hi=1000.0, step=1.0),
         doc="""excitatory synaptic depression time constant [ms]""")
 
     tau_fac_e = NArray(
         label=":math:`\tau_f_e`",
         default=numpy.array([0.0]),
-        domain=Range(lo=1.0, hi=1000.0, step=1.0),
+        domain=Range(lo=0.0, hi=1000.0, step=1.0),
         doc="""excitatory synaptic facilitation time constant [ms]""")
 
     U_i = NArray(
@@ -245,13 +245,13 @@ class NeuroPSI_STP_asymptotic_first_order(Model):
     tau_rec_i = NArray(
         label=":math:`\tau_d_i`",
         default=numpy.array([0.0]),
-        domain=Range(lo=1.0, hi=1000.0, step=1.0),
+        domain=Range(lo=0.0, hi=1000.0, step=1.0),
         doc="""inhibitory synaptic depression time constant [ms]""") 
 
     tau_fac_i = NArray(
         label=":math:`\tau_f_i`",
         default=numpy.array([0.0]),
-        domain=Range(lo=1.0, hi=1000.0, step=1.0),
+        domain=Range(lo=0.0, hi=1000.0, step=1.0),
         doc="""inhibitory synaptic facilitation time constant [ms]""")
     ############################################################################
 
@@ -1227,13 +1227,13 @@ class NeuroPSI_STP_dynamic_first_order(Model):
     tau_rec_e = NArray(
         label=":math:`\tau_d_e`",
         default=numpy.array([0.0]),
-        domain=Range(lo=1.0, hi=1000.0, step=1.0),
+        domain=Range(lo=0.0, hi=1000.0, step=1.0),
         doc="""excitatory synaptic depression time constant [ms]""")
 
     tau_fac_e = NArray(
         label=":math:`\tau_f_e`",
         default=numpy.array([0.0]),
-        domain=Range(lo=1.0, hi=1000.0, step=1.0),
+        domain=Range(lo=0.0, hi=1000.0, step=1.0),
         doc="""excitatory synaptic facilitation time constant [ms]""")
 
     U_i = NArray(
@@ -1245,13 +1245,13 @@ class NeuroPSI_STP_dynamic_first_order(Model):
     tau_rec_i = NArray(
         label=":math:`\tau_d_i`",
         default=numpy.array([0.0]),
-        domain=Range(lo=1.0, hi=1000.0, step=1.0),
+        domain=Range(lo=0.0, hi=1000.0, step=1.0),
         doc="""inhibitory synaptic depression time constant [ms]""") 
 
     tau_fac_i = NArray(
         label=":math:`\tau_f_i`",
         default=numpy.array([0.0]),
-        domain=Range(lo=1.0, hi=1000.0, step=1.0),
+        domain=Range(lo=0.0, hi=1000.0, step=1.0),
         doc="""inhibitory synaptic facilitation time constant [ms]""")
     ############################################################################
 
@@ -2000,19 +2000,25 @@ class NeuroPSI_STP_dynamic_second_order(NeuroPSI_STP_dynamic_first_order):
         if self.tau_rec_e:
             derivative[7] = (1-X_e-Y_e)/self.tau_rec_e - self.U_e*X_e*E
             derivative[8] = -Y_e/self.tau_e + self.U_e*X_e*E
-            derivative[9] = -U_dyn_e/self.tau_fac_e + self.U_e*(1.-U_dyn_e)*E
         else:
             derivative[7] = 0.
             derivative[8] = 0.
+
+        if self.tau_fac_e:
+            derivative[9] = -U_dyn_e/self.tau_fac_e + self.U_e*(1.-U_dyn_e)*E
+        else:
             derivative[9] = 0.
 
         if self.tau_rec_i:
             derivative[10] = (1-X_i-Y_i)/self.tau_rec_i - self.U_i*X_i*I
             derivative[11] = -Y_i/self.tau_i + self.U_i*X_i*I
-            derivative[12] = -U_dyn_i/self.tau_fac_i + self.U_i*(1.-U_dyn_i)*I
         else:
             derivative[10] = 0.
             derivative[11] = 0.
+            
+        if self.tau_fac_i:
+            derivative[12] = -U_dyn_i/self.tau_fac_i + self.U_i*(1.-U_dyn_i)*I
+        else:
             derivative[12] = 0.
         
         derivative[13] = -noise/self.tau_OU
