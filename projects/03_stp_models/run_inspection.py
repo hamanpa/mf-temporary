@@ -17,11 +17,10 @@ from codes.controller.config import load_workflow_config
 from codes.stimuli.loader import load_stimuli_config
 from codes.network_params.loader import load_network_parameters
 
-from codes.neuron_simulation import run_neuron_simulation_workflow
-from codes.transfer_function import run_tf_fitting_workflow
 from codes.controller.inspectors import ParameterInspector
 
 from codes.plotting import fig_plots
+import codes.plotting as ax_plt
 
 
 
@@ -47,91 +46,11 @@ def main():
 
 
 
-    # 1. neuron simulation
-
-    neuron_results_file = project_path / "results" / "neuron_results.pkl"
-
-    with open(neuron_results_file, "rb") as f:
-        neuron_results = pickle.load(f)
-
-    # neuron_results = run_neuron_simulation_workflow(sim_params.neuron_simulation, network_params)
-    # neuron_results_file = results_path / "neuron_results.pkl"
-    # with open(neuron_results_file, "wb") as f:
-    #     pickle.dump(neuron_results, f)
-
-    fig_name = f"neuron_activity.png"
-    fig_path = results_path / fig_name
-    fig_plots.fig_neuron_activity(
-        neuron_results, 
-        common_params={}, 
-        fig_params={
-            'tight_layout': True,
-            'savefig': True,
-            'savefig_path': fig_path,
-            'title': f"Neuron Activity"
-        }
-    )
-
-    fig_name = f"neuron_activity_std.png"
-    fig_path = results_path / fig_name
-    fig_plots.fig_tf_fits_together(
-        neuron_results, 
-        {"exc_neuron": [],
-        "inh_neuron": []
-        }, 
-        common_params={
-            'labels' : [],
-            'linestyles' : [],
-            # 'xlim' : (0,7),
-            'ylim' : (0, 60),
-        }, 
-        fig_params={
-            'fontsize': 14,
-            'figsize': (15, 10),  # width, height
-            'tight_layout': True,
-            'savefig': True,
-            'savefig_path': fig_path,
-            'title': f"Neuron Activity (STD)"
-    })    
-
-    # 2. Transfer function
-    tf_results_dict = {}
-    tf_results_legacy = {
-        "exc_neuron": [],
-        "inh_neuron": []
-    }
-
-    for mf_model_name, mf_sim_params in sim_params.mf_models.items():
-        tf_results = run_tf_fitting_workflow(mf_sim_params.transfer_function, network_params, neuron_results)
-        tf_results_dict[mf_model_name] = tf_results
-        tf_results_legacy["exc_neuron"].append(tf_results["exc_neuron"])
-        tf_results_legacy["inh_neuron"].append(tf_results["inh_neuron"])
-
-    fig_name = f"neuron_activity_tf.png"
-    fig_path = results_path / fig_name
-    fig_plots.fig_tf_fits_together(
-        neuron_results,
-        tf_results_legacy,
-        common_params={
-            'labels' : list(sim_params.mf_models.keys()),
-            'linestyles' : ["--", "-.", ":"],
-            # 'xlim' : (0,7),
-            'ylim' : (0, 30),
-        }, 
-        fig_params={
-            'fontsize': 14,
-            'figsize': (15, 10),  # width, height
-            'tight_layout': True,
-            'savefig': True,
-            'savefig_path': fig_path,
-            'title': f"Neuron Activity (TF)"
-    })
-
-    # 3. Inspection of SNN and MF models
+    
+    
     inspected_param = args.param
     inspected_values = np.array(json.loads(args.values))
     inspected_stimulus = stimuli_config[args.stim]
-    values = np.array(json.loads(args.values))
 
     inspector = ParameterInspector(
         base_network_params=network_params,
@@ -170,39 +89,77 @@ def main():
     )
     
     spont_results = inspection_results["spont"]
-    for measured_variable in spont_results.measured_variables:
-        if measured_variable.endswith("_time_std"):
-            continue
-        fig, ax = plt.subplots(figsize=(8, 6))
 
-        ax.errorbar(
-            spont_results.param_values, 
-            getattr(spont_results, measured_variable)()[0], 
-            yerr=getattr(spont_results, measured_variable.replace("_mean", "_std"))()[0], 
-            fmt='o', 
-            label = "SNN"
-        )
-        ax.plot(spont_results.param_values, getattr(spont_results, measured_variable)()[1:].T, label=spont_results.network_names[1:])
+    fig, axes = plt.subplots(ncols=3, figsize=(16, 8))
 
-        ax.set_title(f"inspected parameter: {spont_results.inspected_param}")
-        ax.set_xlabel(f"{spont_results.inspected_param} (Hz)")
-        ax.set_ylabel(measured_variable)
-        ax.legend()
-        fig.tight_layout()
-        fig.savefig(results_path / f"StaticInspection_{measured_variable}_vs_{inspected_param}.png")
+    plot = ax_plt.FiringRateInspectionPlot({
+        "linestyles": [""] + [ ':', '-.', '--'],
+        "legend": True,
+        "xlabel": "Drive Rate (Hz)"
+    })
+    plot.draw(axes[0], inspection_results["spont"])
+
+    plot = ax_plt.VoltageInspectionPlot({
+        "linestyles": [""] + [ ':', '-.', '--'],
+        "legend": True,
+        "xlabel": "Drive Rate (Hz)"
+    })
+    plot.draw(axes[1], inspection_results["spont"])
+
+    plot = ax_plt.AdaptationInspectionPlot({
+        "linestyles": [""] + [ ':', '-.', '--'],
+        "legend": True,
+        "xlabel": "Drive Rate (Hz)"
+    })
+    plot.draw(axes[2], inspection_results["spont"])
+
+    fig.suptitle("Spontaneous Activity Inspection Results")
+    fig.tight_layout()
+    fig.savefig(results_path / f"SpontaneousInspection_{inspected_param}.png")
 
     dynamic_results = inspection_results["dynamic"]
-    for measured_variable in dynamic_results.measured_variables:
-        fig, ax = plt.subplots(figsize=(8, 6))
+    dynamic_measures = dynamic_results.measured_variables
+    variables = set("_".join(var.split("_")[:2]) for var in dynamic_measures)
+    measures = set("_".join(var.split("_")[2:]) for var in dynamic_measures)
+    fig, axes = plt.subplots(ncols=4, nrows=len(variables), figsize=(24, 8)*len(variables))
 
-        ax.plot(dynamic_results.param_values, getattr(dynamic_results, measured_variable)().T, label=dynamic_results.network_names)
+    for i, variable in enumerate(variables):
+        if variable + "_rmse" in dynamic_measures:
+            plot = ax_plt.CustomInspectionPlot({
+                "legend": True,
+                "linestyles": [':', '-.', '--'],
+                "title": r"$RMSE : \sqrt{1/T\int (SNN-MF)^2}$",
+                "ylabel": variable,
+            })
+            plot.draw(axes[i, 0], inspection_results["dynamic"], "exc_rate_rmse")
 
-        ax.set_title(f"inspected parameter: {dynamic_results.inspected_param}")
-        ax.set_xlabel(f"{dynamic_results.inspected_param} (Hz)")
-        ax.set_ylabel(measured_variable)
-        ax.legend()
-        fig.tight_layout()
-        fig.savefig(results_path / f"DynamicInspection_{measured_variable}_vs_{inspected_param}.png")
+        if variable + "_error_mean" in dynamic_measures:
+            plot = ax_plt.CustomInspectionPlot({
+                "legend": True,
+                "linestyles": [':', '-.', '--'],
+                "title": r"$Error : (SNN-MF)$",
+            })
+            plot.draw(axes[i, 1], inspection_results["dynamic"], "exc_rate_error_mean")
+
+        if variable + "_error_std" in dynamic_measures:
+            plot = ax_plt.CustomInspectionPlot({
+                "legend": True,
+                "linestyles": [':', '-.', '--'],
+                "title": r"$Error : (SNN-MF)$",
+            })
+            plot.draw(axes[i, 2], inspection_results["dynamic"], "exc_rate_error_std")
+
+        if variable + "_pearson" in dynamic_measures:
+            plot = ax_plt.CustomInspectionPlot({
+                "legend": True,
+                "linestyles": [':', '-.', '--'],
+                "title": r"$Pearson$",
+            })
+            plot.draw(axes[i, 3], inspection_results["dynamic"], "exc_rate_pearson")
+
+    fig.suptitle("Spontaneous Activity Inspection Results")
+    fig.tight_layout()
+    fig.savefig(results_path / f"DynamicInspection_{inspected_param}.png")
 
 if __name__ == "__main__":
     main()

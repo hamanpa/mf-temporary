@@ -28,11 +28,13 @@ import copy
 
 from codes import transfer_function as tf
 
-from codes.utils.list_helpers import indexed_linear_sample
+from ..utils.list_helpers import indexed_linear_sample
+from ..utils.snn_helpers import activity_from_spikes_histogram
+from ..analysis.spike_metrics import calc_per_cell_rates
 
-from ..data_structures.base import BaseMFResults, BaseSNNResults, BaseSingleNeuronResults
 
-from codes.utils.snn_helpers import activity_from_spikes_histogram
+from ..data_structures.base import BaseMFResults, BaseSNNResults, BaseSingleNeuronResults, BaseInspectionResults
+
 
 LINESTYLES = ['-', '--', '-.', ':']
 MAX_NTW_ACTIVITY = 200  # Hz
@@ -578,31 +580,58 @@ class VoltagePlot(BaseNetworkPlot):
                 ax.plot(results.times(), results.exc_voltage_mean(), label=f'Exc {label}', ls=ls, color=self.full_params['exc_color'])
                 ax.plot(results.times(), results.inh_voltage_mean(), label=f'Inh {label}', ls=ls, color=self.full_params['inh_color'])
 
-
-class FiringRateHistogramPlot(BaseNetworkPlot):
-    """Plot the firing rate histogram of excitatory and inhibitory neurons."""
+class BaseNetworkHistogramPlot(BaseNetworkPlot):
+    """Base class for histogram plots based on network result, can be used to plot network results."""
     DEFAULT_PARAMS = {
         **BaseNetworkPlot.DEFAULT_PARAMS,
-        'title': 'Firing Rate Histogram',
-        'xlabel': 'Firing Rate (Hz)',
         'ylabel': 'Count',
-        'binsize': BIN_SIZE,  # Size of the bins for the histogram
-        'start_time': 0,  # Start time for the histogram
+        'bins' : None,
+        'binsize': None,  # Size of the bins for the histogram
+        'start_time': None,  # Start time for the histogram
+        'end_time': None,  # End time for the histogram
     }
 
+    def update_params(self, results_list:list):
+        super().update_params(results_list)
+
+        if self.full_params['start_time'] is None:
+            self.full_params['start_time'] = max([results.times()[0] for results in results_list])
+
+        if self.full_params['end_time'] is None:
+            self.full_params['end_time'] = min([results.times()[-1] for results in results_list])
+
+        if self.full_params['bins'] is None and self.full_params['binsize'] is None:
+            print(f"Warning: Neither 'bins' nor 'binsize' specified for histogram plots. Using default binsize of {BIN_SIZE} ms.")
+            self.full_params['binsize'] = BIN_SIZE
+        elif self.full_params['bins'] is not None and self.full_params['binsize'] is not None:
+            raise ValueError("Only one of 'bins' or 'binsize' should be specified for histogram plots.")
 
 
-    def _draw(self, ax, results_list:list):
+class FiringRateHistogramPlot(BaseNetworkHistogramPlot):
+    """Plot the firing rate histogram of excitatory and inhibitory neurons."""
+    DEFAULT_PARAMS = {
+        **BaseNetworkHistogramPlot.DEFAULT_PARAMS,
+        'title': 'Firing Rate Histogram',
+        'xlabel': 'Firing Rate (Hz)',
+    }
+
+    def _draw(self, ax, results_list:list[BaseSNNResults | BaseMFResults]):
         self.update_params(results_list)
 
         for results, ls, label in zip(results_list, self.full_params['linestyles'], self.full_params['labels']):
-            if results.stim_params['pattern'] != 'NoStimulus':
+            if results.stim_params.pattern != 'NoStimulus':
                 raise ValueError("FiringRateHistogramPlot only works for no stimulus simulations.")
             
             if isinstance(results, BaseSNNResults):
-                exc_rates, inh_rates = results.per_cell_average_rates(start_time=self.full_params['start_time'])
-                exc_bins = int(np.ceil(((exc_rates.max() - exc_rates.min()) / self.full_params['binsize'])))
-                inh_bins = int(np.ceil(((inh_rates.max() - inh_rates.min()) / self.full_params['binsize'])))
+                exc_rates = calc_per_cell_rates(results.exc_spikes_all(), start_time=self.full_params['start_time'], end_time=self.full_params['end_time'])
+                inh_rates = calc_per_cell_rates(results.inh_spikes_all(), start_time=self.full_params['start_time'], end_time=self.full_params['end_time'])
+
+                if self.full_params['binsize']:
+                    exc_bins = int(np.ceil(((exc_rates.max() - exc_rates.min()) / self.full_params['binsize'])))
+                    inh_bins = int(np.ceil(((inh_rates.max() - inh_rates.min()) / self.full_params['binsize'])))
+                else:
+                    exc_bins = self.full_params['bins']
+                    inh_bins = self.full_params['bins']
 
                 ax.hist(exc_rates, bins=exc_bins, alpha=0.5, label=f'Exc {label}', edgecolor=self.full_params['exc_color'], color=self.full_params['exc_color'], linestyle=ls)
                 ax.hist(inh_rates, bins=inh_bins, alpha=0.5, label=f'Inh {label}', edgecolor=self.full_params['inh_color'], color=self.full_params['inh_color'], linestyle=ls)
@@ -634,114 +663,122 @@ class FiringRateHistogramPlot(BaseNetworkPlot):
                     ax.axvline(inh_mean, label=f'Inh {label}', color=self.full_params['inh_color'], linestyle=ls)
 
 
-class VoltageHistogramPlot(BaseNetworkPlot):
+class VoltageHistogramPlot(BaseNetworkHistogramPlot):
     """Plot the voltage histogram of excitatory and inhibitory neurons."""
     DEFAULT_PARAMS = {
-        **BaseNetworkPlot.DEFAULT_PARAMS,
+        **BaseNetworkHistogramPlot.DEFAULT_PARAMS,
         'title': 'Voltage Histogram',
         'xlabel': 'Membrane potential (mV)',
-        'ylabel': 'Count',
-        'binsize': BIN_SIZE,  # Size of the bins for the histogram
-        'start_time': 0,  # Start time for the histogram
     }
 
-    def _draw(self, ax, results_list:list):
+    def _draw(self, ax, results_list:list[BaseSNNResults | BaseMFResults]):
         self.update_params(results_list)
 
         for results, ls, label in zip(results_list, self.full_params['linestyles'], self.full_params['labels']):
-            if results.stim_params['pattern'] != 'NoStimulus':
+            if results.stim_params.pattern != 'NoStimulus':
                 raise ValueError("VoltageHistogramPlot only works for no stimulus simulations.")
             if isinstance(results, BaseSNNResults):
-                mask = results.times() >= self.full_params['start_time']
+                mask = (results.times() >= self.full_params['start_time']) & (results.times() <= self.full_params['end_time'])
 
-                exc_voltage = results.exc_voltage_all[mask].mean(axis=0)
-                exc_bins = int(np.ceil(((exc_voltage.max() - exc_voltage.min()) / self.full_params['binsize'])))
+                exc_voltage = results._exc_voltage_all[mask].mean(axis=0)
+                inh_voltage = results._inh_voltage_all[mask].mean(axis=0)
+                
+                if self.full_params['binsize']:
+                    exc_bins = int(np.ceil(((exc_voltage.max() - exc_voltage.min()) / self.full_params['binsize'])))
+                    inh_bins = int(np.ceil(((inh_voltage.max() - inh_voltage.min()) / self.full_params['binsize'])))
+                else:
+                    exc_bins = self.full_params['bins']
+                    inh_bins = self.full_params['bins']
+
                 ax.hist(exc_voltage, bins=exc_bins, alpha=0.5, label=f'Exc {label}', edgecolor=self.full_params['exc_color'], color=self.full_params['exc_color'], linestyle=ls)
-
-                inh_voltage = results.inh_voltage_all[mask].mean(axis=0)
-                inh_bins = int(np.ceil(((inh_voltage.max() - inh_voltage.min()) / self.full_params['binsize'])))
                 ax.hist(inh_voltage, bins=inh_bins, alpha=0.5, label=f'Inh {label}', edgecolor=self.full_params['inh_color'], color=self.full_params['inh_color'], linestyle=ls)
 
 
-class AdaptationHistogramPlot(BaseNetworkPlot):
+class AdaptationHistogramPlot(BaseNetworkHistogramPlot):
     """Plot the adaptation histogram of excitatory neurons."""
     DEFAULT_PARAMS = {
-        **BaseNetworkPlot.DEFAULT_PARAMS,
+        **BaseNetworkHistogramPlot.DEFAULT_PARAMS,
         'title': 'Adaptation Histogram',
-        'xlabel': 'Adaptation current (pA)',
-        'ylabel': 'Count',
-        'binsize': BIN_SIZE,  # Size of the bins for the histogram
-        'start_time': 0,  # Start time for the histogram
+        'xlabel': 'Adaptation current (nA)',
     }
 
-    def _draw(self, ax, results_list:list):
+    def _draw(self, ax, results_list:list[BaseSNNResults | BaseMFResults]):
         self.update_params(results_list)
 
         for results, ls, label in zip(results_list, self.full_params['linestyles'], self.full_params['labels']):
-            if results.stim_params['pattern'] != 'NoStimulus':
+            if results.stim_params.pattern != 'NoStimulus':
                 raise ValueError("AdaptationHistogramPlot only works for no stimulus simulations.")
             if isinstance(results, BaseSNNResults):
-                mask = results.times() >= self.full_params['start_time']
+                mask = (results.times() >= self.full_params['start_time']) & (results.times() <= self.full_params['end_time'])
 
-                exc_adaptation = results.exc_adaptation_all[mask].mean(axis=0)
-                exc_bins = int(np.ceil(((exc_adaptation.max() - exc_adaptation.min()) / self.full_params['binsize'])))
+                exc_adaptation = results._exc_adaptation_all[mask].mean(axis=0)
+
+                if self.full_params['binsize']:
+                    exc_bins = int(np.ceil(((exc_adaptation.max() - exc_adaptation.min()) / self.full_params['binsize'])))
+                else:
+                    exc_bins = self.full_params['bins']
+
                 ax.hist(exc_adaptation, bins=exc_bins, alpha=0.5, label=f'Exc {label}', edgecolor='blue', color='blue', linestyle=ls)
 
 
-class ExcitatoryNeuronConductanceHistogramPlot(BaseNetworkPlot):
+class ExcitatoryNeuronConductanceHistogramPlot(BaseNetworkHistogramPlot):
     """Plot the conductance histogram of excitatory neurons."""
     DEFAULT_PARAMS = {
-        **BaseNetworkPlot.DEFAULT_PARAMS,
+        **BaseNetworkHistogramPlot.DEFAULT_PARAMS,
         'title': 'Exc Neuron Conductances',
         'xlabel': 'Conductance (nS)',
-        'ylabel': 'Count',
-        'binsize': BIN_SIZE,  # Size of the bins for the histogram
-        'start_time': 0,  # Start time for the histogram
     }
 
-    def _draw(self, ax, results_list:list):
+    def _draw(self, ax, results_list:list[BaseSNNResults | BaseMFResults]):
         self.update_params(results_list)
 
         for results, ls, label in zip(results_list, self.full_params['linestyles'], self.full_params['labels']):
-            if results.stim_params['pattern'] != 'NoStimulus':
+            if results.stim_params.pattern != 'NoStimulus':
                 raise ValueError("ExcitatoryNeuronConductanceHistogramPlot only works for no stimulus simulations.")
             if isinstance(results, BaseSNNResults):
-                mask = results.times() >= self.full_params['start_time']
+                mask = (results.times() >= self.full_params['start_time']) & (results.times() <= self.full_params['end_time'])
 
-                exc_conductance = results.ee_conductance_all[mask].mean(axis=0)
-                exc_bins = int(np.ceil(((exc_conductance.max() - exc_conductance.min()) / self.full_params['binsize'])))
+                exc_conductance = results._ee_conductance_all[mask].mean(axis=0)
+                inh_conductance = results._ie_conductance_all[mask].mean(axis=0)
+
+                if self.full_params['binsize']:
+                    exc_bins = int(np.ceil(((exc_conductance.max() - exc_conductance.min()) / self.full_params['binsize'])))
+                    inh_bins = int(np.ceil(((inh_conductance.max() - inh_conductance.min()) / self.full_params['binsize'])))
+                else:
+                    exc_bins = self.full_params['bins']
+                    inh_bins = self.full_params['bins']
+
                 ax.hist(exc_conductance, bins=exc_bins, alpha=0.5, label=f'Exc {label}', edgecolor=self.full_params['exc_color'], color=self.full_params['exc_color'], linestyle=ls)
-
-                inh_conductance = results.ie_conductance_all[mask].mean(axis=0)
-                inh_bins = int(np.ceil(((inh_conductance.max() - inh_conductance.min()) / self.full_params['binsize'])))
                 ax.hist(inh_conductance, bins=inh_bins, alpha=0.5, label=f'Inh {label}', edgecolor=self.full_params['inh_color'], color=self.full_params['inh_color'], linestyle=ls)
 
-class InhibitoryNeuronConductanceHistogramPlot(BaseNetworkPlot):
+class InhibitoryNeuronConductanceHistogramPlot(BaseNetworkHistogramPlot):
     """Plot the conductance histogram of inhibitory neurons."""
     DEFAULT_PARAMS = {
-        **BaseNetworkPlot.DEFAULT_PARAMS,
+        **BaseNetworkHistogramPlot.DEFAULT_PARAMS,
         'title': 'Inh Neuron Conductances',
         'xlabel': 'Conductance (nS)',
-        'ylabel': 'Count',
-        'binsize': BIN_SIZE,  # Size of the bins for the histogram
-        'start_time': 0,  # Start time for the histogram
     }
 
-    def _draw(self, ax, results_list:list):
+    def _draw(self, ax, results_list:list[BaseSNNResults | BaseMFResults]):
         self.update_params(results_list)
 
         for results, ls, label in zip(results_list, self.full_params['linestyles'], self.full_params['labels']):
-            if results.stim_params['pattern'] != 'NoStimulus':
+            if results.stim_params.pattern != 'NoStimulus':
                 raise ValueError("InhibitoryNeuronConductanceHistogramPlot only works for no stimulus simulations.")
             if isinstance(results, BaseSNNResults):
-                mask = results.times() >= self.full_params['start_time']
+                mask = (results.times() >= self.full_params['start_time']) & (results.times() <= self.full_params['end_time'])
 
-                exc_conductance = results.ei_conductance_all[mask].mean(axis=0)
-                exc_bins = int(np.ceil(((exc_conductance.max() - exc_conductance.min()) / self.full_params['binsize'])))
+                exc_conductance = results._ei_conductance_all[mask].mean(axis=0)
+                inh_conductance = results._ii_conductance_all[mask].mean(axis=0)
+
+                if self.full_params['binsize']:
+                    exc_bins = int(np.ceil(((exc_conductance.max() - exc_conductance.min()) / self.full_params['binsize'])))
+                    inh_bins = int(np.ceil(((inh_conductance.max() - inh_conductance.min()) / self.full_params['binsize'])))
+                else:
+                    exc_bins = self.full_params['bins']
+                    inh_bins = self.full_params['bins']
+
                 ax.hist(exc_conductance, bins=exc_bins, alpha=0.5, label=f'Exc {label}', edgecolor=self.full_params['exc_color'], color=self.full_params['exc_color'], linestyle=ls)
-
-                inh_conductance = results.ii_conductance_all[mask].mean(axis=0)
-                inh_bins = int(np.ceil(((inh_conductance.max() - inh_conductance.min()) / self.full_params['binsize'])))
                 ax.hist(inh_conductance, bins=inh_bins, alpha=0.5, label=f'Inh {label}', edgecolor=self.full_params['inh_color'], color=self.full_params['inh_color'], linestyle=ls)
 # TODO:
 # conductance plot
@@ -749,7 +786,7 @@ class InhibitoryNeuronConductanceHistogramPlot(BaseNetworkPlot):
 
 ################################################################################
 #                         INSPECTION PLOTS                                     #
-# EXPECTED INPUT: (ax, results_list)                                           #
+# EXPECTED INPUT: (ax, inspection_results)                                     #
 ################################################################################
 
 class BaseInspectionPlot(BasePlot):
@@ -763,28 +800,52 @@ class BaseInspectionPlot(BasePlot):
     }
     # NOTE: None params are updated later in the update_params method
 
-    def update_params(self, results_list:list):
+    def update_params(self, inspection_results:BaseInspectionResults):
         """Some parameters cannot be generater until the results_list is known, so we update them here."""
-        
+        num_networks = len(inspection_results.network_names)
+
         if self.full_params['labels'] is None:
-            self.full_params['labels'] = [f'Results {i+1}' for i in range(len(results_list))]
+            self.full_params['labels'] = inspection_results.network_names
        
         if self.full_params['linestyles'] is None:
             # cycles through the predefined LINESTYLES
-            self.full_params['linestyles'] = [LINESTYLES[i % len(LINESTYLES)] for i in range(len(results_list))]
+            self.full_params['linestyles'] = [LINESTYLES[i % len(LINESTYLES)] for i in range(num_networks)]
 
         if self.full_params['markers'] is None:
-            self.full_params['markers'] = ["None" for i in range(len(results_list))]
+            self.full_params['markers'] = ['o' if name.startswith("SNN") else "None" for name in inspection_results.network_names]
 
-        if len(results_list) > 2:
-            legend_elements = [Line2D([0], [0], color='black', label=label, linestyle=ls, marker=marker) for label, ls, marker in zip(self.full_params['labels'], self.full_params['linestyles'], self.full_params['markers'])]
+        if num_networks > 2:
+            legend_elements = [
+                Line2D([0], [0], color='black', label=label, linestyle=ls, marker=marker) 
+                for label, ls, marker in zip(self.full_params['labels'], self.full_params['linestyles'], self.full_params['markers'])
+            ]
             if self.full_params['legend'] is True:
                 self.full_params['legend'] = {'handles': legend_elements}
             elif type(self.full_params['legend'] ) is dict:
                 self.full_params['legend']['handles'] = legend_elements
         
         if self.full_params['xlabel'] is None:
-            self.full_params['xlabel'] = results_list[0].inspected_param
+            self.full_params['xlabel'] = inspection_results.inspected_param
+
+
+class CustomInspectionPlot(BaseInspectionPlot):
+
+    def _draw(self, ax, inspection_results:BaseInspectionResults, variable=None):
+        if variable not in inspection_results.measured_variables:
+            return  # Skip plotting if the variable is not present in the inspection results
+
+        self.update_params(inspection_results)
+        param_values = inspection_results.param_values
+
+        for measured_values, ls, marker, label in zip(getattr(inspection_results, variable)(), self.full_params['linestyles'], self.full_params['markers'], self.full_params['labels']):
+            ax.plot(
+                param_values, 
+                measured_values, 
+                label=label,
+                linestyle=ls,
+                marker=marker,
+                color="black",
+            )
 
 
 class FiringRateInspectionPlot(BaseInspectionPlot):
@@ -796,31 +857,40 @@ class FiringRateInspectionPlot(BaseInspectionPlot):
         'ylabel': 'Firing Rate (Hz)',
     }
 
-    def _draw(self, ax, results_list:list):
+    def _draw(self, ax, inspection_results:BaseInspectionResults):
+        
+        self.update_params(inspection_results)
+        param_values = inspection_results.param_values
+        
+        has_exc_mean = "exc_rate_time_mean" in inspection_results.measured_variables
+        has_exc_std = "exc_rate_time_std" in inspection_results.measured_variables
+        has_inh_mean = "inh_rate_time_mean" in inspection_results.measured_variables
+        has_inh_std = "inh_rate_time_std" in inspection_results.measured_variables
+        
+        exc_mean_data = inspection_results.exc_rate_time_mean() if has_exc_mean else None
+        exc_std_data = inspection_results.exc_rate_time_std() if has_exc_std else None
+        inh_mean_data = inspection_results.inh_rate_time_mean() if has_inh_mean else None
+        inh_std_data = inspection_results.inh_rate_time_std() if has_inh_std else None
 
-        self.update_params(results_list)
-
-        for results,  ls, marker, label in zip(results_list, self.full_params['linestyles'], self.full_params['markers'], self.full_params['labels']):
-            if results.inspected_network_name.startswith("SNN"):
-                if hasattr(results, 'exc_rate_time_std') and hasattr(results, 'inh_rate_time_std'):
-                    ax.errorbar(results.param_values, results.exc_rate_time_mean, yerr=results.exc_rate_time_std, label=f'Exc {label}', ls=ls, marker=marker, color=self.full_params['exc_color'])
-                    ax.errorbar(results.param_values, results.inh_rate_time_mean, yerr=results.inh_rate_time_std, label=f'Inh {label}', ls=ls, marker=marker, color=self.full_params['inh_color'])
+        for i, (network_name, ls, marker, label) in enumerate(zip(inspection_results.network_names, self.full_params['linestyles'], self.full_params['markers'], self.full_params['labels'])):
+            print("WARNING: spiking network has to be named 'SNN' inside inspection_results.network_names to work properly!")
+            is_snn = network_name.startswith("SNN")
+            
+            if has_exc_mean:
+                if is_snn and has_exc_std:
+                    ax.errorbar(param_values, exc_mean_data[i], yerr=exc_std_data[i], label=f'Exc {label}', ls=ls, marker=marker, color=self.full_params['exc_color'])
                 else:
-                    ax.plot(results.param_values, results.exc_rate_time_mean, label=f'Exc {label}', ls=ls, marker=marker, color=self.full_params['exc_color'])
-                    ax.plot(results.param_values, results.inh_rate_time_mean, label=f'Inh {label}', ls=ls, marker=marker, color=self.full_params['inh_color'])
-            # elif results.inspected_network_name.startswith("MF"):
-            else:
-                ax.plot(results.param_values, results.exc_rate_time_mean, label=f'Exc {label}', ls=ls, marker=marker, color=self.full_params['exc_color'])
-                ax.plot(results.param_values, results.inh_rate_time_mean, label=f'Inh {label}', ls=ls, marker=marker, color=self.full_params['inh_color'])
-                if hasattr(results, 'exc_rate_time_std') and hasattr(results, 'inh_rate_time_std'):
-                    ax.fill_between(results.param_values, 
-                                    np.array(results.exc_rate_time_mean) - np.array(results.exc_rate_time_std),
-                                    np.array(results.exc_rate_time_mean) + np.array(results.exc_rate_time_std), 
-                                    color=self.full_params['exc_color'], alpha=0.3)
-                    ax.fill_between(results.param_values, 
-                                    np.array(results.inh_rate_time_mean) - np.array(results.inh_rate_time_std),
-                                    np.array(results.inh_rate_time_mean) + np.array(results.inh_rate_time_std), 
-                                    color=self.full_params['inh_color'], alpha=0.3)
+                    ax.plot(param_values, exc_mean_data[i], label=f'Exc {label}', ls=ls, marker=marker, color=self.full_params['exc_color'])
+                    if not is_snn and has_exc_std:
+                        ax.fill_between(param_values, exc_mean_data[i] - exc_std_data[i], exc_mean_data[i] + exc_std_data[i], color=self.full_params['exc_color'], alpha=0.3)
+            
+            if has_inh_mean:
+                if is_snn and has_inh_std:
+                    ax.errorbar(param_values, inh_mean_data[i], yerr=inh_std_data[i], label=f'Inh {label}', ls=ls, marker=marker, color=self.full_params['inh_color'])
+                else:
+                    ax.plot(param_values, inh_mean_data[i], label=f'Inh {label}', ls=ls, marker=marker, color=self.full_params['inh_color'])
+                    if not is_snn and has_inh_std:
+                        ax.fill_between(param_values, inh_mean_data[i] - inh_std_data[i], inh_mean_data[i] + inh_std_data[i], color=self.full_params['inh_color'], alpha=0.3)
 
 
 class VoltageInspectionPlot(BaseInspectionPlot):
@@ -832,20 +902,35 @@ class VoltageInspectionPlot(BaseInspectionPlot):
         'ylabel': 'Voltage (mV)',
     }
 
+    def _draw(self, ax, inspection_results:BaseInspectionResults):
+        self.update_params(inspection_results)
+        param_values = inspection_results.param_values
 
-    def _draw(self, ax, results_list:list):
+        has_exc_mean = "exc_voltage_time_mean" in inspection_results.measured_variables
+        has_exc_std = "exc_voltage_time_std" in inspection_results.measured_variables
+        has_inh_mean = "inh_voltage_time_mean" in inspection_results.measured_variables
+        has_inh_std = "inh_voltage_time_std" in inspection_results.measured_variables
 
-        self.update_params(results_list)
+        exc_mean_data = inspection_results.exc_voltage_time_mean() if has_exc_mean else None
+        exc_std_data = inspection_results.exc_voltage_time_std() if has_exc_std else None
+        inh_mean_data = inspection_results.inh_voltage_time_mean() if has_inh_mean else None
+        inh_std_data = inspection_results.inh_voltage_time_std() if has_inh_std else None
 
-        for results, ls, marker, label in zip(results_list, self.full_params['linestyles'], self.full_params['markers'], self.full_params['labels']):
-            if results.inspected_network_name.startswith("SNN") and hasattr(results, 'exc_voltage_time_std') and hasattr(results, 'inh_voltage_time_std'):
-                    ax.errorbar(results.param_values, results.exc_voltage_time_mean, yerr=results.exc_voltage_time_std, label=f'Exc {label}', ls=ls, marker=marker, color=self.full_params['exc_color'])
-                    ax.errorbar(results.param_values, results.inh_voltage_time_mean, yerr=results.inh_voltage_time_std, label=f'Inh {label}', ls=ls, marker=marker, color=self.full_params['inh_color'])
-            else:
-                ax.plot(results.param_values, results.exc_voltage_time_mean, label=f'Exc {label}', ls=ls, color=self.full_params['exc_color'], marker=marker)
-                ax.plot(results.param_values, results.inh_voltage_time_mean, label=f'Inh {label}', ls=ls, color=self.full_params['inh_color'], marker=marker)
+        for i, (network_name, ls, marker, label) in enumerate(zip(inspection_results.network_names, self.full_params['linestyles'], self.full_params['markers'], self.full_params['labels'])):
+            print("WARNING: spiking network has to be named 'SNN' inside inspection_results.network_names to work properly!")
+            is_snn = network_name.startswith("SNN")
 
-
+            if has_exc_mean:
+                if is_snn and has_exc_std:
+                    ax.errorbar(param_values, exc_mean_data[i], yerr=exc_std_data[i], label=f'Exc {label}', ls=ls, marker=marker, color=self.full_params['exc_color'])
+                else:
+                    ax.plot(param_values, exc_mean_data[i], label=f'Exc {label}', ls=ls, marker=marker, color=self.full_params['exc_color'])
+            
+            if has_inh_mean:
+                if is_snn and has_inh_std:
+                    ax.errorbar(param_values, inh_mean_data[i], yerr=inh_std_data[i], label=f'Inh {label}', ls=ls, marker=marker, color=self.full_params['inh_color'])
+                else:
+                    ax.plot(param_values, inh_mean_data[i], label=f'Inh {label}', ls=ls, marker=marker, color=self.full_params['inh_color'])
 
 class AdaptationInspectionPlot(BaseInspectionPlot):
     """Plot the firing rate of excitatory and inhibitory neurons over time."""
@@ -856,13 +941,23 @@ class AdaptationInspectionPlot(BaseInspectionPlot):
         'ylabel': 'Adaptation (pA)',
     }
 
+    def _draw(self, ax, results):
 
-    def _draw(self, ax, results_list:list):
+        self.update_params(results)
+        param_values = results.param_values
 
-        self.update_params(results_list)
+        has_exc_mean = "exc_adaptation_time_mean" in results.measured_variables
+        has_exc_std = "exc_adaptation_time_std" in results.measured_variables
 
-        for results, ls, marker, label in zip(results_list, self.full_params['linestyles'], self.full_params['markers'], self.full_params['labels']):
-            if results.inspected_network_name.startswith("SNN") and hasattr(results, 'exc_adaptation_time_std'):
-                    ax.errorbar(results.param_values, results.exc_adaptation_time_mean, yerr=results.exc_adaptation_time_std, label=f'Exc {label}', ls=ls, marker=marker, color='blue')
-            else:
-                ax.plot(results.param_values, results.exc_adaptation_time_mean, label=f'Exc {label}', ls=ls, color='blue', marker=marker)
+        exc_mean_data = results.exc_adaptation_time_mean() if has_exc_mean else None
+        exc_std_data = results.exc_adaptation_time_std() if has_exc_std else None
+
+        for i, (network_name, ls, marker, label) in enumerate(zip(results.network_names, self.full_params['linestyles'], self.full_params['markers'], self.full_params['labels'])):
+            print("WARNING: spiking network has to be named 'SNN' inside inspection_results.network_names to work properly!")
+            is_snn = network_name.startswith("SNN")
+
+            if has_exc_mean:
+                if is_snn and has_exc_std:
+                    ax.errorbar(param_values, exc_mean_data[i], yerr=exc_std_data[i], label=f'Exc {label}', ls=ls, marker=marker, color='blue')
+                else:
+                    ax.plot(param_values, exc_mean_data[i], label=f'Exc {label}', ls=ls, color='blue', marker=marker)
