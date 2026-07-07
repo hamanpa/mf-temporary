@@ -1,5 +1,5 @@
 neuron_simulation:
-  execution_mode: run       # run, load
+  execution_mode: run            # run, try_load, strict_load, skip
   simulator: pynn.nest           # pynn.nest, zerlaut2018_simulator, divolo2019_simulator
   grid:
     exc_neuron:

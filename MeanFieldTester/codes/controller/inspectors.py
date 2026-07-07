@@ -1,13 +1,12 @@
+from pathlib import Path
 from typing import Dict
 import numpy as np
 import copy
 import gc
 import pickle
 
-from ..neuron_simulation import run_neuron_simulation_workflow
-from ..transfer_function import run_tf_fitting_workflow
-from ..snn_simulation import run_snn_simulation_workflow
-from ..mf_simulation import run_mf_simulation_workflow
+from .workflows import run_basic_workflow
+from .interfaces import BasicWorkflowHook
 
 from ..data_structures.base import BaseResults, BaseMFResults, BaseSNNResults, BaseInspectionResults
 from ..data_structures.inspection import SpontInspectionResults, DynamicStimulusInspectionResults
@@ -168,64 +167,110 @@ class ParameterInspector:
     def __init__(self, 
                  base_network_params: BaseModel, 
                  base_stimulus_params: BaseModel, 
-                 base_sim_params: BaseModel): 
+                 base_sim_params: BaseModel,
+                 project_path: Path | str = None,
+                 ): 
         
         self.base_network_params = base_network_params
         self.base_stimulus_params = base_stimulus_params
         self.base_sim_params = base_sim_params
 
+        self.project_path = Path(project_path)
+
+
+    def run_single_step(
+            self,
+            inspected_param: str,
+            inspected_value: float | int,
+            sim_params,
+            network_params,
+            stimulus_config,
+            hooks: list[BasicWorkflowHook] = None,
+            extractors: dict = None,
+            ):
+
+        hooks = hooks or []
+        extractors = extractors or {}
+
+        stimulus_config = {"InspectionStimulus": stimulus_config}  # Wrap in dict for workflow
+
+        basic_results = run_basic_workflow(
+            network_params=network_params,
+            stimulus_config=stimulus_config,
+            sim_params=sim_params
+        )
+
+        neuron_results = basic_results["neuron_results"]
+        tf_results_dict = basic_results["tf_results"]
+        snn_results = basic_results["snn_results"]["InspectionStimulus"]
+        mf_results_list = basic_results["mf_results"]["InspectionStimulus"]
+
+        # logic for hooks
+        for hook in hooks:
+            hook(
+                identifier=f"{inspected_param.split('.')[-1]} {inspected_value}",
+                neuron_results=neuron_results,
+                tf_results=tf_results_dict,
+                snn_results=snn_results,
+                mf_results=mf_results_list
+            )
+
+        extracted_data = {}
+        for key, extractor in extractors.items():
+            if isinstance(extractor, SpontActivityExtractor):
+                extracted_data.get(key, []).append(extractor.extract(snn_results))
+                extracted_data.get(key, []).extend([extractor.extract(mf_results) for mf_results in mf_results_list])
+            elif isinstance(extractor, ComparisonExtractor):
+                extracted_data.get(key, []).extend([
+                    extractor.extract(
+                        ground_truth=snn_results,
+                        target=mf_results
+                    ) 
+                    for mf_results in mf_results_list
+                ])
+            else:
+                raise ValueError(f"Unknown extractor type: {type(extractor)}")
+
+        # NOTE: if memory issues arise, consider using `del` and `gc.collect()`
+        # since Python may store references to large objects in memory even after they go out of scope.
+
+        # del snn_results
+        # del mf_results 
+        # gc.collect() 
+
+        return extracted_data
+
     def run_inspection(
             self, 
             inspected_param: str, 
             inspected_values: list | np.ndarray, 
-            measured_variables: list[str], 
-            project_path: str,
-            start_time: float = 1000.0,
-            end_time: float = np.inf,
-            plot: bool = False,
+            single_step_hooks: list[BasicWorkflowHook] = None,
+            inspection_hooks: list = None,
+            extractors: dict = None,
             ) -> Dict[str, BaseInspectionResults]:
 
-        spont_vars = [v for v in measured_variables if v in SpontInspectionResults.DEFAULT_UNITS]
-        dynamic_vars = [v for v in measured_variables if v in DynamicStimulusInspectionResults.DEFAULT_UNITS]
-        
-        unknown_vars = set(measured_variables) - set(spont_vars) - set(dynamic_vars)
-        if unknown_vars:
-            raise ValueError(f"Unknown variables requested: {unknown_vars}")
+        single_step_hooks = single_step_hooks or []
+        inspection_hooks = inspection_hooks or []
+        extractors = extractors or {}
 
         mf_names = list(self.base_sim_params.mf_models.keys())
         network_names = ["SNN"] + mf_names
 
-        extractors = {}
-        results_containers = {}
+        inspection_results = {}
+        for key, extractor in extractors.items():
 
-        if spont_vars:
-            extractors["spont"] = SpontActivityExtractor(
-                measured_variables=spont_vars,
-                start_time=start_time, 
-                end_time=end_time,
-            )
-            
-            results_containers["spont"] = SpontInspectionResults(
+            if isinstance(extractor, SpontActivityExtractor):
+                results_container = SpontInspectionResults
+            elif isinstance(extractor, ComparisonExtractor):
+                results_container = DynamicStimulusInspectionResults
+            else:
+                raise ValueError(f"Unknown extractor type: {type(extractor)}")
+
+            inspection_results[key] = results_container(
                 inspected_param=inspected_param, 
                 inspected_values=inspected_values,
                 network_names=network_names, 
-                measured_variables=spont_vars,
-                network_params=self.base_network_params,
-                stimulus_params=self.base_stimulus_params,
-            )
-            
-        if dynamic_vars:
-            extractors["dynamic"] = ComparisonExtractor(
-                measured_variables=dynamic_vars,
-                start_time=start_time, 
-                end_time=end_time, 
-            )
-
-            results_containers["dynamic"] = DynamicStimulusInspectionResults(
-                inspected_param=inspected_param, 
-                inspected_values=inspected_values,
-                network_names=mf_names, 
-                measured_variables=dynamic_vars,
+                measured_variables=extractor.measured_variables,
                 network_params=self.base_network_params,
                 stimulus_params=self.base_stimulus_params,
             )
@@ -235,90 +280,6 @@ class ParameterInspector:
         if not (is_network or is_stimulus):
             raise ValueError("inspected_param must start with 'network.' or 'stimulus.'")
         inspected_param_path = inspected_param.split(".", maxsplit=1)[-1]  
-
-        update_neuron_simulation = not (is_stimulus or inspected_param in INSPECTION_PARMAS_WITHOUT_UPDATE)
-        if not update_neuron_simulation:
-            print(f"Inspected parameter '{inspected_param}' does not require neuron simulation. Loading existing results.")
-            try:
-                with open(project_path / "neuron_results.pkl", "rb") as f:
-                    neuron_results = pickle.load(f)
-                print("Neuron simulation results loaded successfully.")
-                # TODO: make check the loaded data have the same network params
-                # TODO: make check the loaded data have the same sim params
-                # TODO: make a helper function to compare pydantic models
-
-            except FileNotFoundError:
-                print("Neuron simulation results not found. Running neuron simulation...")
-                neuron_results = run_neuron_simulation_workflow(self.base_sim_params.neuron_simulation, self.base_network_params)
-                neuron_results_file = project_path / "neuron_results.pkl"
-                with open(neuron_results_file, "wb") as f:
-                    pickle.dump(neuron_results, f)
-
-            if plot:
-                fig_plots.fig_neuron_activity(
-                    neuron_results, 
-                    common_params={}, 
-                    fig_params={
-                        'tight_layout': True,
-                        'savefig': True,
-                        'savefig_path': project_path / "neuron_activity.png",
-                        'title': f"Neuron Activity"
-                    }
-                )
-
-                fig_plots.fig_tf_fits_together(
-                    neuron_results, 
-                    {"exc_neuron": [],
-                    "inh_neuron": []
-                    }, 
-                    common_params={
-                        'labels' : [],
-                        'linestyles' : [],
-                        # 'xlim' : (0,7),
-                        'ylim' : (0, 60),
-                    }, 
-                    fig_params={
-                        'fontsize': 14,
-                        'figsize': (15, 10),  # width, height
-                        'tight_layout': True,
-                        'savefig': True,
-                        'savefig_path': project_path / "neuron_activity_std.png",
-                        'title': f"Neuron Activity (STD)"
-                })    
-
-                    # 2. Transfer function
-        
-            tf_results_dict = {}
-            tf_results_legacy = {
-                "exc_neuron": [],
-                "inh_neuron": []
-            }
-
-            for mf_model_name, mf_sim_params in self.base_sim_params.mf_models.items():
-                tf_results = run_tf_fitting_workflow(mf_sim_params.transfer_function, self.base_network_params, neuron_results)
-                tf_results_dict[mf_model_name] = tf_results
-                tf_results_legacy["exc_neuron"].append(tf_results["exc_neuron"])
-                tf_results_legacy["inh_neuron"].append(tf_results["inh_neuron"])
-
-            if plot:
-                fig_plots.fig_tf_fits_together(
-                    neuron_results,
-                    tf_results_legacy,
-                    common_params={
-                        'labels' : mf_names,
-                        'linestyles' : ["--", "-.", ":"],
-                        # 'xlim' : (0,7),
-                        'ylim' : (0, 30),
-                    }, 
-                    fig_params={
-                        'fontsize': 14,
-                        'figsize': (15, 10),  # width, height
-                        'tight_layout': True,
-                        'savefig': True,
-                        'savefig_path': project_path / "neuron_activity_tf.png",
-                        'title': f"Neuron Activity (TF)"
-                })
-
 
         for value in inspected_values:
             print(f"\n--- Inspecting {inspected_param} = {value} ---")
@@ -334,142 +295,28 @@ class ParameterInspector:
                 
             current_stimulus_config = {"InspectionStimulus" : current_stimulus_params}
 
-            if update_neuron_simulation:
-                neuron_results = run_neuron_simulation_workflow(current_sim_params.neuron_simulation, current_network_params)
-                neuron_results_file = project_path / f"neuron_results-{inspected_param.split('.')[-1]}_{value}.pkl"
-                with open(neuron_results_file, "wb") as f:
-                    pickle.dump(neuron_results, f)
-
-                if plot:
-                    fig_plots.fig_neuron_activity(
-                        neuron_results, 
-                        common_params={}, 
-                        fig_params={
-                            'tight_layout': True,
-                            'savefig': True,
-                            'savefig_path': project_path / f"neuron_activity-{inspected_param.split('.')[-1]}_{value}.png",
-                            'title': f"Neuron Activity"
-                        }
-                    )
-
-                    fig_plots.fig_tf_fits_together(
-                        neuron_results, 
-                        {"exc_neuron": [],
-                        "inh_neuron": []
-                        }, 
-                        common_params={
-                            'labels' : [],
-                            'linestyles' : [],
-                            # 'xlim' : (0,7),
-                            'ylim' : (0, 60),
-                        }, 
-                        fig_params={
-                            'fontsize': 14,
-                            'figsize': (15, 10),  # width, height
-                            'tight_layout': True,
-                            'savefig': True,
-                            'savefig_path': project_path / f"neuron_activity_std-{inspected_param.split('.')[-1]}_{value}.png",
-                            'title': f"Neuron Activity (STD)"
-                    })    
-
-                    # 2. Transfer function
-        
-                tf_results_dict = {}
-                tf_results_legacy = {
-                    "exc_neuron": [],
-                    "inh_neuron": []
-                }
-
-                for mf_model_name, mf_sim_params in self.base_sim_params.mf_models.items():
-                    tf_results = run_tf_fitting_workflow(mf_sim_params.transfer_function, self.base_network_params, neuron_results)
-                    tf_results_dict[mf_model_name] = tf_results
-                    tf_results_legacy["exc_neuron"].append(tf_results["exc_neuron"])
-                    tf_results_legacy["inh_neuron"].append(tf_results["inh_neuron"])
-
-                if plot:
-                    fig_plots.fig_tf_fits_together(
-                        neuron_results,
-                        tf_results_legacy,
-                        common_params={
-                            'labels' : mf_names,
-                            'linestyles' : ["--", "-.", ":"],
-                            # 'xlim' : (0,7),
-                            'ylim' : (0, 30),
-                        }, 
-                        fig_params={
-                            'fontsize': 14,
-                            'figsize': (15, 10),  # width, height
-                            'tight_layout': True,
-                            'savefig': True,
-                            'savefig_path': project_path / f"neuron_activity_tf-{inspected_param.split('.')[-1]}_{value}.png",
-                            'title': f"Neuron Activity (TF)"
-                    })
-
-
-            print("Running SNN Simulation...")
-            snn_results = run_snn_simulation_workflow(
-                current_sim_params.snn_simulation, 
-                current_network_params, 
-                current_stimulus_config
+            extracted_data = self.run_single_step(
+                sim_params=current_sim_params,
+                network_params=current_network_params,
+                stimulus_config=current_stimulus_config,
+                hooks=single_step_hooks,
+                extractors=extractors,
             )
-            snn_data = snn_results["InspectionStimulus"]
-            
-            if spont_vars:
-                extracted_spont_data = [extractors["spont"].extract(snn_data)]
-            if dynamic_vars:
-                exctracted_dyn_data =  []
 
-            mf_results_dict = {}
-            for mf_model_name, mf_sim_params in current_sim_params.mf_models.items():
-                print(f"Running MF Simulation: {mf_model_name}...")
-                mf_results = run_mf_simulation_workflow(mf_sim_params, current_network_params, current_stimulus_config)
-                mf_data = mf_results["InspectionStimulus"]
-                mf_results_dict[mf_model_name] = mf_data
-
-                if spont_vars:
-                    extracted_spont_data.append(extractors["spont"].extract(mf_data))
-                if dynamic_vars:
-                    exctracted_dyn_data.append(extractors["dynamic"].extract(ground_truth=snn_data, target=mf_data))
-
-            if spont_vars:
-                results_containers["spont"].add_inspection_data(extracted_spont_data)
-            if dynamic_vars:
-                results_containers["dynamic"].add_inspection_data(exctracted_dyn_data)
-
-
-            if plot:
-                fig_plots.fig_full_network_overview_together(
-                    snn_data, 
-                    list(mf_results_dict.values()),
-                    common_params={
-                        'xmargin': 0.0,
-                        'ymargin': 0.0,
-                        'labels': network_names,
-                        'legend': {'loc': 'upper left'},
-                        'xlim' : (0, snn_data.times()[-1])
-                    },
-                    fig_params={
-                        'figsize': (20, 10),  # width, height
-                        'tight_layout': True,
-                        'savefig': True,
-                        'savefig_path': project_path / f"{inspected_param}_{value}_Full_network_overview_together.png",
-                        'title' : f"Network overview for: '{inspected_param}={value}'",
-                    }
-                )
-
-            # NOTE: if memory issues arise, consider using `del` and `gc.collect()`
-            # since Python may store references to large objects in memory even after they go out of scope.
-
-            # del snn_results
-            # del mf_results 
-            # gc.collect() 
-
+            for key, data in extracted_data.items():
+                inspection_results[key].add_inspection_data(data)
+        
+        for hook in inspection_hooks:
+            hook(
+                identifier=f"{inspected_param.split('.')[-1]} inspection",
+                inspection_results=inspection_results
+            )
+        
         print("\nInspection Complete. Freezing results...")
-        for container in results_containers.values():
-            container.freeze()
-            
-        return results_containers
 
+        for container in inspection_results.values():
+            container.freeze()
+        return inspection_results
 
 
 def inject_pydantic_param(base_model: BaseModel, param_path: str, value: str|float|int) -> BaseModel:

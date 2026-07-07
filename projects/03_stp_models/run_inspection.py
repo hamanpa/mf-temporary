@@ -17,10 +17,14 @@ from codes.controller.config import load_workflow_config
 from codes.stimuli.loader import load_stimuli_config
 from codes.network_params.loader import load_network_parameters
 
-from codes.controller.inspectors import ParameterInspector
+from codes.controller.inspectors import ParameterInspector, SpontActivityExtractor, DynamicActivityExtractor
 
-from codes.plotting import fig_plots
 import codes.plotting as ax_plt
+
+from plotting.hooks import NeuronActivityPlottingHook, TransferFunctionPlottingHook, NetworkOverviewPlottingHook
+
+
+
 
 
 
@@ -36,7 +40,7 @@ def main():
     project_path = repo_path / "projects" / "03_stp_models"
     os.chdir(project_path)
 
-    dir_name = f"inspection_{args.param}_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}"
+    dir_name = f"{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}_inspection_{args.param}"
     results_path = project_path / "results" / dir_name
     results_path.mkdir(parents=True, exist_ok=True)
 
@@ -44,10 +48,6 @@ def main():
     sim_params = load_workflow_config(project_path / "params" / "workflow_params.yaml")
     stimuli_config = load_stimuli_config(project_path / "params" / "default_stimuli.yaml")
 
-
-
-    
-    
     inspected_param = args.param
     inspected_values = np.array(json.loads(args.values))
     inspected_stimulus = stimuli_config[args.stim]
@@ -56,37 +56,100 @@ def main():
         base_network_params=network_params,
         base_stimulus_params=inspected_stimulus,
         base_sim_params=sim_params,
+        project_path=results_path,
     )
+
+    mf_names = list(sim_params.mf_models.keys())
+    network_names = ["SNN"] + mf_names
+
+    single_step_hooks = [
+        NeuronActivityPlottingHook(
+            savefig_dir=results_path,
+            fig_params={
+                'tight_layout': True,
+                'savefig': True,
+            },
+            common_params={},
+        ),
+        TransferFunctionPlottingHook(
+            savefig_dir=results_path,
+            fig_params={
+                'fontsize': 14,
+                'figsize': (15, 10),  # width, height
+                'tight_layout': True,
+                'savefig': True,
+            },
+            common_params={
+                'labels' : mf_names,
+                'linestyles' : ["--", "-.", ":"],
+                'ylim' : (0, 30),
+            }, 
+        ),
+        NetworkOverviewPlottingHook(
+            savefig_dir=results_path,
+            fig_params={
+                'figsize': (20, 10),  # width, height
+                'tight_layout': True,
+                'savefig': True,
+            },
+            common_params={
+                'xmargin': 0.0,
+                'ymargin': 0.0,
+                'labels': network_names,
+                'legend': {'loc': 'upper left'},
+                'xlim' : (0, 4000),
+            },
+        ),
+    ]
+
+    extractors = {
+        "spont": SpontActivityExtractor(
+            measured_variables = [
+                "exc_rate_time_mean",
+                "exc_rate_time_std",
+                "inh_rate_time_mean",
+                "inh_rate_time_std",
+                "exc_adaptation_time_mean",
+                "exc_adaptation_time_std",
+            ],
+            start_time = 2000.0, 
+            end_time = 4000.0
+        ),
+        "dynamic": DynamicActivityExtractor(
+            measured_variables = [
+                "exc_rate_rmse",
+                "exc_rate_error_mean",
+                "exc_rate_error_std",
+                "exc_rate_pearson",
+                "inh_rate_rmse",
+                "inh_rate_error_mean",
+                "inh_rate_error_std",
+                "inh_rate_pearson",
+                "exc_adaptation_rmse",
+                "exc_adaptation_error_mean",
+                "exc_adaptation_error_std",
+                "exc_adaptation_pearson",
+            ],
+            start_time = 2000.0, 
+            end_time = 4000.0
+            
+        ),
+    }
+
+    inspection_hooks = [
+    
+    ]
 
 
     inspection_results = inspector.run_inspection(
         inspected_param=inspected_param,
         inspected_values=inspected_values,
-        measured_variables=[
-            "exc_rate_time_mean",
-            "exc_rate_time_std",
-            "inh_rate_time_mean",
-            "inh_rate_time_std",
-            "exc_adaptation_time_mean",
-            "exc_adaptation_time_std",
-            "exc_rate_rmse",
-            "exc_rate_error_mean",
-            "exc_rate_error_std",
-            "exc_rate_pearson",
-            "inh_rate_rmse",
-            "inh_rate_error_mean",
-            "inh_rate_error_std",
-            "inh_rate_pearson",
-            "exc_adaptation_rmse",
-            "exc_adaptation_error_mean",
-            "exc_adaptation_error_std",
-            "exc_adaptation_pearson",
-        ],
-        start_time=2000.0,
-        end_time=4000.0,
-        plot=True,
-        project_path=results_path
+        single_step_hooks=single_step_hooks,
+        inspection_hooks=inspection_hooks,
+        extractors=extractors,
     )
+
+
     
     spont_results = inspection_results["spont"]
 
