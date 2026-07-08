@@ -42,10 +42,10 @@ class BasePlot(ABC):
     }
 
     def __init__(self, params=None):
-        self.params = params or {}
+        self.params = copy.deepcopy(params) or {}
         self.full_params = copy.deepcopy(self.DEFAULT_PARAMS)
-        if params:
-            self.full_params.update(params) # Instance params override defaults    
+        if self.params:
+            self.full_params.update(self.params) # Instance params override defaults    
 
     def draw(self, ax, **data):
         self.apply_preplot_params(ax, self.full_params)

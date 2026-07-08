@@ -11,8 +11,6 @@ from .interfaces import BasicWorkflowHook
 from ..data_structures.base import BaseResults, BaseMFResults, BaseSNNResults, BaseInspectionResults
 from ..data_structures.inspection import SpontInspectionResults, DynamicStimulusInspectionResults
 
-from ..plotting import fig_plots
-
 from pydantic import BaseModel
 
 INSPECTION_PARMAS_WITHOUT_UPDATE = {
@@ -293,12 +291,12 @@ class ParameterInspector:
             else:
                 current_stimulus_params = inject_pydantic_param(current_stimulus_params, inspected_param_path, value)
                 
-            current_stimulus_config = {"InspectionStimulus" : current_stimulus_params}
-
             extracted_data = self.run_single_step(
+                inspected_param=inspected_param,
+                inspected_value=value,
                 sim_params=current_sim_params,
                 network_params=current_network_params,
-                stimulus_config=current_stimulus_config,
+                stimulus_config=current_stimulus_params,
                 hooks=single_step_hooks,
                 extractors=extractors,
             )

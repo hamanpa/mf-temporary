@@ -104,10 +104,11 @@ class LoadSimulationConfig(BaseModel):
 
     @field_validator('exc_neuron_data_path', 'inh_neuron_data_path')  # Pydantic will run this function twice, for each input
     @classmethod
-    def check_path_exists(cls, value: Any):
+    def check_path_exists(cls, value: Any) -> Path:
         file_path = Path(value)
         if not file_path.exists():
             raise FileNotFoundError(f"Neuron simulation data file not found: {file_path}")
+        return file_path
 
 class RunSimulationConfig(BaseModel):
     execution_mode: Literal["run"]  

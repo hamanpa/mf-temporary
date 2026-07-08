@@ -1,5 +1,7 @@
 neuron_simulation:
-  execution_mode: run            # run, try_load, strict_load, skip
+  execution_mode: load            # run, try_load, strict_load, skip
+  exc_neuron_data_path: /home/haman/mf-temporary/projects/03_stp_models/results/exc_neuron.pkl
+  inh_neuron_data_path: /home/haman/mf-temporary/projects/03_stp_models/results/inh_neuron.pkl
   simulator: pynn.nest           # pynn.nest, zerlaut2018_simulator, divolo2019_simulator
   grid:
     exc_neuron:

@@ -1,12 +1,9 @@
 
 import numpy as np
-
+from typing import List
 
 from ..analysis.spike_metrics import calc_per_cell_rates
-
-
 from ..data_structures.base import BaseMFResults, BaseSNNResults
-
 from .base import BaseNetworkPlot, BaseNetworkHistogramPlot
 
 
@@ -19,11 +16,15 @@ class FiringRatePlot(BaseNetworkPlot):
         'ylabel': 'Firing Rate (Hz)',
     }
 
-    def _draw(self, ax, results_list:list):
+    def _draw(
+            self, 
+            ax, 
+            network_results_list: List[BaseSNNResults | BaseMFResults],
+            ) -> None:
 
-        self.update_params(results_list)
+        self.update_params(network_results_list)
 
-        for results, ls, label in zip(results_list, self.full_params['linestyles'], self.full_params['labels']):
+        for results, ls, label in zip(network_results_list, self.full_params['linestyles'], self.full_params['labels']):
             alpha = 0.5 if isinstance(results, BaseSNNResults) else 1.0
             ax.plot(results.times(), results.exc_rate_mean(), label=f'Exc {label}', ls=ls, color=self.full_params['exc_color'], alpha=alpha)
             ax.plot(results.times(), results.inh_rate_mean(), label=f'Inh {label}', ls=ls, color=self.full_params['inh_color'], alpha=alpha)
@@ -57,8 +58,12 @@ class FiringRateAndStimulusPlot(BaseNetworkPlot):
         'yticks': [], 
     }
 
-    def _draw(self, ax, results_list:list):
-        self.update_params(results_list)
+    def _draw(
+            self, 
+            ax, 
+            network_results_list: List[BaseSNNResults | BaseMFResults],
+            ) -> None:
+        self.update_params(network_results_list)
  
         # Spliting the axis into two nested subplots
         gs_nested_fr_stim = ax.get_subplotspec().subgridspec(
@@ -72,13 +77,13 @@ class FiringRateAndStimulusPlot(BaseNetworkPlot):
         ax_upper = ax.figure.add_subplot(gs_nested_fr_stim[0, 0])
         ax_lower = ax.figure.add_subplot(gs_nested_fr_stim[1, 0], sharex=ax_upper)
 
-        FiringRatePlot(self.full_params).draw(ax_upper, results_list)
+        FiringRatePlot(self.full_params).draw(ax_upper, network_results_list)
         ax_upper.tick_params(axis='x', which='both', bottom=False, labelbottom=False)
 
 
         self.apply_preplot_params(ax_lower, self.full_params | self.LOWER_PLOT_PARAMS)
 
-        for results, ls, label in zip(results_list, self.full_params['linestyles'], self.full_params['labels']):
+        for results, ls, label in zip(network_results_list, self.full_params['linestyles'], self.full_params['labels']):
             ax_lower.plot(results.times(), results.drive_rate_mean() + results.stim_rate_mean(), label=label, ls=ls, color='black')
             # NOTE: for some reason the loop take ridiculous amount of time,
             # so we plot only the first one
@@ -86,6 +91,49 @@ class FiringRateAndStimulusPlot(BaseNetworkPlot):
 
         self.apply_postplot_params(ax_lower, self.full_params | self.LOWER_PLOT_PARAMS)
 
+class StimulusPlot(BaseNetworkPlot):
+    """Plot the stimulus over time."""
+    DEFAULT_PARAMS = {
+        **BaseNetworkPlot.DEFAULT_PARAMS,
+        'title': 'Stimulus',
+        'xlabel': 'Time (ms)',
+        'ylabel': 'Rate (Hz)',
+        'stim_linestyle': '--',
+        'drive_linestyle': ':',
+    }
+
+    def _draw(
+            self, 
+            ax, 
+            network_results_list: List[BaseSNNResults | BaseMFResults],
+            ) -> None:
+
+        times = network_results_list[0].times()
+        stimulus_rate = network_results_list[0].stim_rate_mean("Hz")
+        drive_rate = network_results_list[0].drive_rate_mean("Hz")
+
+        ax.plot(times, stimulus_rate, self.full_params['stim_linestyle'], color='black', label='Stimulus rate')
+        ax.plot(times, drive_rate, self.full_params['drive_linestyle'], color='black', label='Drive rate')
+
+
+class AdaptationPlot(BaseNetworkPlot):
+    """Plot the adaptation current over time."""
+    DEFAULT_PARAMS = {
+        **BaseNetworkPlot.DEFAULT_PARAMS,
+        'title': 'Exc Adaptation',
+        'xlabel': 'Time (ms)',
+        'ylabel': 'Adaptation (nA)',
+    }
+
+    def _draw(
+            self, 
+            ax, 
+            network_results_list: List[BaseSNNResults | BaseMFResults],
+            ) -> None:
+        self.update_params(network_results_list)
+
+        for results, ls, label in zip(network_results_list, self.full_params['linestyles'], self.full_params['labels']):
+            ax.plot(results.times(), results.exc_adaptation_mean(), label=label, ls=ls, color='blue')
 
 class StimulusWithAdaptationPlot(BaseNetworkPlot):
     """Plot the stimulus with adaptation over time."""
@@ -96,17 +144,21 @@ class StimulusWithAdaptationPlot(BaseNetworkPlot):
         'ylabel': 'Rate (Hz)',
     }
 
-    def _draw(self, ax, results_list:list):
-        self.update_params(results_list)
+    def _draw(
+            self, 
+            ax, 
+            network_results_list: List[BaseSNNResults | BaseMFResults],
+            ) -> None:
+        self.update_params(network_results_list)
 
         axtwin = ax.twinx()  
 
-        ax.plot(results_list[0].times(), results_list[0].drive_rate_mean(), "--", color='black', label='Drive rate')
-        ax.plot(results_list[0].times(), results_list[0].stim_rate_mean(), "-.", color='black', label='Stimulus rate')
-        for results, ls, label in zip(results_list, self.full_params['linestyles'], self.full_params['labels']):
+        ax.plot(network_results_list[0].times(), network_results_list[0].drive_rate_mean(), "--", color='black', label='Drive rate')
+        ax.plot(network_results_list[0].times(), network_results_list[0].stim_rate_mean(), "-.", color='black', label='Stimulus rate')
+        for results, ls, label in zip(network_results_list, self.full_params['linestyles'], self.full_params['labels']):
             axtwin.plot(results.times(), results.exc_adaptation_mean(), ls=ls, color='blue', label=label)
 
-        axtwin.set_ylabel("Adaptation current (pA)", color="blue")
+        axtwin.set_ylabel("Adaptation current (nA)", color="blue")
         axtwin.tick_params(axis ='y', labelcolor = "blue")
         if self.full_params['legend'] is True:
             axtwin.legend()
@@ -121,10 +173,14 @@ class VoltagePlot(BaseNetworkPlot):
         'ylabel': 'Membrane potential (mV)',
     }
 
-    def _draw(self, ax, results_list:list):
-        self.update_params(results_list)
+    def _draw(
+            self, 
+            ax, 
+            network_results_list: List[BaseSNNResults | BaseMFResults],
+            ) -> None:
+        self.update_params(network_results_list)
 
-        for results, ls, label in zip(results_list, self.full_params['linestyles'], self.full_params['labels']):
+        for results, ls, label in zip(network_results_list, self.full_params['linestyles'], self.full_params['labels']):
             if isinstance(results, BaseSNNResults):
                 ax.plot(results.times(), results.exc_voltage_mean(), label=f'Exc {label}', ls=ls, color=self.full_params['exc_color'])
                 ax.plot(results.times(), results.inh_voltage_mean(), label=f'Inh {label}', ls=ls, color=self.full_params['inh_color'])
@@ -138,10 +194,14 @@ class FiringRateHistogramPlot(BaseNetworkHistogramPlot):
         'xlabel': 'Firing Rate (Hz)',
     }
 
-    def _draw(self, ax, results_list:list[BaseSNNResults | BaseMFResults]):
-        self.update_params(results_list)
+    def _draw(
+            self, 
+            ax, 
+            network_results_list: List[BaseSNNResults | BaseMFResults],
+            ) -> None:
+        self.update_params(network_results_list)
 
-        for results, ls, label in zip(results_list, self.full_params['linestyles'], self.full_params['labels']):
+        for results, ls, label in zip(network_results_list, self.full_params['linestyles'], self.full_params['labels']):
             if results.stim_params.pattern != 'NoStimulus':
                 raise ValueError("FiringRateHistogramPlot only works for no stimulus simulations.")
             
@@ -194,10 +254,14 @@ class VoltageHistogramPlot(BaseNetworkHistogramPlot):
         'xlabel': 'Membrane potential (mV)',
     }
 
-    def _draw(self, ax, results_list:list[BaseSNNResults | BaseMFResults]):
-        self.update_params(results_list)
+    def _draw(
+            self, 
+            ax, 
+            network_results_list: List[BaseSNNResults | BaseMFResults],
+            ) -> None:
+        self.update_params(network_results_list)
 
-        for results, ls, label in zip(results_list, self.full_params['linestyles'], self.full_params['labels']):
+        for results, ls, label in zip(network_results_list, self.full_params['linestyles'], self.full_params['labels']):
             if results.stim_params.pattern != 'NoStimulus':
                 raise ValueError("VoltageHistogramPlot only works for no stimulus simulations.")
             if isinstance(results, BaseSNNResults):
@@ -225,10 +289,14 @@ class AdaptationHistogramPlot(BaseNetworkHistogramPlot):
         'xlabel': 'Adaptation current (nA)',
     }
 
-    def _draw(self, ax, results_list:list[BaseSNNResults | BaseMFResults]):
-        self.update_params(results_list)
+    def _draw(
+            self, 
+            ax, 
+            network_results_list: List[BaseSNNResults | BaseMFResults],
+            ) -> None:
+        self.update_params(network_results_list)
 
-        for results, ls, label in zip(results_list, self.full_params['linestyles'], self.full_params['labels']):
+        for results, ls, label in zip(network_results_list, self.full_params['linestyles'], self.full_params['labels']):
             if results.stim_params.pattern != 'NoStimulus':
                 raise ValueError("AdaptationHistogramPlot only works for no stimulus simulations.")
             if isinstance(results, BaseSNNResults):
@@ -252,10 +320,14 @@ class ExcitatoryNeuronConductanceHistogramPlot(BaseNetworkHistogramPlot):
         'xlabel': 'Conductance (nS)',
     }
 
-    def _draw(self, ax, results_list:list[BaseSNNResults | BaseMFResults]):
-        self.update_params(results_list)
+    def _draw(
+            self, 
+            ax, 
+            network_results_list: List[BaseSNNResults | BaseMFResults],
+            ) -> None:
+        self.update_params(network_results_list)
 
-        for results, ls, label in zip(results_list, self.full_params['linestyles'], self.full_params['labels']):
+        for results, ls, label in zip(network_results_list, self.full_params['linestyles'], self.full_params['labels']):
             if results.stim_params.pattern != 'NoStimulus':
                 raise ValueError("ExcitatoryNeuronConductanceHistogramPlot only works for no stimulus simulations.")
             if isinstance(results, BaseSNNResults):
@@ -282,10 +354,14 @@ class InhibitoryNeuronConductanceHistogramPlot(BaseNetworkHistogramPlot):
         'xlabel': 'Conductance (nS)',
     }
 
-    def _draw(self, ax, results_list:list[BaseSNNResults | BaseMFResults]):
-        self.update_params(results_list)
+    def _draw(
+            self, 
+            ax, 
+            network_results_list: List[BaseSNNResults | BaseMFResults],
+            ) -> None:
+        self.update_params(network_results_list)
 
-        for results, ls, label in zip(results_list, self.full_params['linestyles'], self.full_params['labels']):
+        for results, ls, label in zip(network_results_list, self.full_params['linestyles'], self.full_params['labels']):
             if results.stim_params.pattern != 'NoStimulus':
                 raise ValueError("InhibitoryNeuronConductanceHistogramPlot only works for no stimulus simulations.")
             if isinstance(results, BaseSNNResults):

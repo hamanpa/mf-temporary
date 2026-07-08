@@ -264,7 +264,9 @@ class NetworkOverviewPlottingHook(BasicWorkflowPlottingHook):
                     'xlabel' : None,
                     'title' : None,
                     'legend' : False,
-                }),
+                })
+            ],
+            [
                 network_plots.FiringRatePlot({
                     'ylim': (0, 15),
                     **common_params,
@@ -272,14 +274,29 @@ class NetworkOverviewPlottingHook(BasicWorkflowPlottingHook):
                     'xticks' : [],
                     'xlabel' : None,
                     'title' : None,
-                }),
-                network_plots.StimulusWithAdaptationPlot({
+                })
+            ],
+            [
+                network_plots.StimulusPlot({
+                    **common_params,
+                    'ylim': (0, 4),
+                    'labels': None,
+                    'xticks_labels' : None,
+                    'xticks' : [],
+                    'xlabel' : None,
+                    'title' : None,
+                })
+            ],
+            [
+                network_plots.AdaptationPlot({
                     **common_params,
                     'xticks_labels' : None,
                     'xticks' : [],
                     'xlabel' : None,
                     'title' : None,
-                }),
+                })
+            ],
+            [
                 network_plots.VoltagePlot({
                     **common_params,
                     'title' : None,
@@ -297,7 +314,49 @@ class NetworkOverviewPlottingHook(BasicWorkflowPlottingHook):
         )
 
 class NetworkHistogramPlottingHook(BasicWorkflowPlottingHook):
-    pass
+    def __init__(
+            self, 
+            savefig_dir: Path,
+            fig_file_prefix: str,
+            fig_params: dict = None,
+            common_params: dict = None,
+            ):
+
+
+
+        plot_grid = [
+            [
+                network_plots.FiringRateHistogramPlot({
+                    **common_params,
+                    'binsize': 0.5,
+                }),
+                network_plots.VoltageHistogramPlot({
+                    **common_params,
+                    'binsize': 0.4,
+                }),
+                network_plots.AdaptationHistogramPlot({
+                    **common_params,
+                    'binsize': 0.002,
+                }),
+                network_plots.ExcitatoryNeuronConductanceHistogramPlot({
+                    **common_params,
+                    'binsize': 0.0001,
+                }),
+                network_plots.InhibitoryNeuronConductanceHistogramPlot({
+                    **common_params,
+                    'binsize': 0.0001,
+                    
+                }),
+            ]
+        ]
+
+        super().__init__(
+            plot_grid=plot_grid, 
+            savefig_dir=savefig_dir, 
+            fig_file_prefix=fig_file_prefix, 
+            fig_params=fig_params
+        )
+
 
 
 class SpontActivityInspectionHook(BasicWorkflowPlottingHook):
