@@ -3,6 +3,7 @@ from matplotlib.lines import Line2D
 import copy
 
 from typing import List, Dict
+import numpy as np
 
 from ..data_structures.base import BaseMFResults, BaseSNNResults, BaseSingleNeuronResults, BaseInspectionResults
 from ..transfer_function.base import BaseTransferFunction
@@ -15,7 +16,8 @@ RASTER_EXC_CELLS = 400
 RASTER_INH_CELLS = 100
 
 
-BIN_SIZE = 5  # [ms], size for making histograms
+BINS = 10  # [ms], size for making histograms
+BIN_SIZE = 5  # [ms], size for averiging activity in histograms
 
 NEURON_NAMES = ["exc_neuron", "inh_neuron"]
 
@@ -61,7 +63,7 @@ class BasePlot(ABC):
             tf_funcs_results: Dict[str, List[BaseTransferFunction]],
             snn_results: BaseSNNResults,
             network_results_list: List[BaseSNNResults | BaseMFResults],
-            inspection_results: BaseInspectionResults,
+            inspection_results: List[BaseInspectionResults],
             ) -> None:
         pass
 
@@ -212,10 +214,34 @@ class BaseNetworkHistogramPlot(BaseNetworkPlot, ABC):
             self.full_params['end_time'] = min([results.times()[-1] for results in results_list])
 
         if self.full_params['bins'] is None and self.full_params['binsize'] is None:
-            print(f"Warning: Neither 'bins' nor 'binsize' specified for histogram plots. Using default binsize of {BIN_SIZE} ms.")
-            self.full_params['binsize'] = BIN_SIZE
+            print(f"Warning: Neither 'bins' nor 'binsize' specified for histogram plots. Using default number of bins {BINS}.")
+            self.full_params['bins'] = BINS
         elif self.full_params['bins'] is not None and self.full_params['binsize'] is not None:
             raise ValueError("Only one of 'bins' or 'binsize' should be specified for histogram plots.")
+
+    def get_bin_edges(self, data: List[np.ndarray]) -> np.ndarray:
+        """Calculate bin edges based on the data and the specified bins or binsize."""
+
+        x_min, x_max = self.full_params['xlim']
+
+        if x_min is not None:
+            data_min = x_min
+        else:
+            data_min = min(np.min(d) for d in data)
+
+        if x_max is not None:
+            data_max = x_max
+        else:
+            data_max = max(np.max(d) for d in data)
+        
+        if self.full_params['binsize'] is not None:
+            num_bins = int(np.ceil((data_max - data_min) / self.full_params['binsize']))
+        else:
+            num_bins = self.full_params['bins']
+
+        bin_edges = np.linspace(data_min, data_max, num_bins + 1)
+
+        return bin_edges
 
     @abstractmethod
     def _draw(
@@ -232,9 +258,20 @@ class BaseInspectionPlot(BasePlot, ABC):
     **BasePlot.DEFAULT_PARAMS,
     'labels' : None,
     'markers' : None,
-    'linestyles' : None
+    'linestyles' : None,
+    'normalization' : False,
+    'density' : False,
     }
     # NOTE: None params are updated later in the update_params method
+
+    inspection_results_type = BaseInspectionResults  # Default type, can be overridden in subclasses
+
+    def filter_results(self, inspection_results_list: List[BaseInspectionResults]) -> List[BaseInspectionResults]:
+        """Filter the inspection results to only include those that are instances of BaseInspectionResults."""
+        filtered_results = [result for result in inspection_results_list if isinstance(result, self.inspection_results_type)]
+        if len(filtered_results) != 1:
+            raise ValueError(f"Expected exactly one {self.inspection_results_type.__name__}, but found {len(filtered_results)}.")
+        return filtered_results
 
     def update_params(self, inspection_results:BaseInspectionResults):
         """Some parameters cannot be generater until the results_list is known, so we update them here."""
@@ -267,6 +304,6 @@ class BaseInspectionPlot(BasePlot, ABC):
     def _draw(
             self, 
             ax, 
-            inspection_results: BaseInspectionResults,
+            inspection_results_list: List[BaseInspectionResults],
             ) -> None:
         pass

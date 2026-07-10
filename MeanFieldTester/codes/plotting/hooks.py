@@ -3,7 +3,7 @@ from pathlib import Path
 from typing import Dict, List
 
 from ..data_structures.base import BaseSingleNeuronResults, BaseMFResults, BaseSNNResults, BaseInspectionResults
-from ..data_structures.inspection import SpontInspectionResults, DynamicStimulusInspectionResults
+from ..data_structures.inspection import ComparisonInspectionResults
 from ..transfer_function.base import BaseTransferFunction
 
 from ..controller.interfaces import BasicWorkflowHook, InspectionWorkflowHook
@@ -62,8 +62,6 @@ class GridFigureHook:
         self.fig_file_prefix = fig_file_prefix
         self.fig_params = {**self.DEFAULT_FIG_PARAMS, **(fig_params or {})}
         
-        self.rows = len(plot_grid)
-        self.cols = len(plot_grid[0])
 
     def __call__(
             self,
@@ -72,9 +70,12 @@ class GridFigureHook:
             tf_funcs_results: Dict[str, List[BaseTransferFunction]],
             snn_results: BaseSNNResults,
             network_results_list: List[BaseSNNResults | BaseMFResults],
-            inspection_results: BaseInspectionResults,
+            inspection_results_list: List[BaseInspectionResults],
             ) -> None:
         
+        self.rows = len(self.plot_grid)
+        self.cols = len(self.plot_grid[0])
+
         plt.rcParams['font.size'] = self.fig_params['fontsize']
         
         col_size, row_size= self.fig_params['axsize']
@@ -105,7 +106,7 @@ class GridFigureHook:
                 elif isinstance(plot, (BaseNetworkPlot, BaseNetworkHistogramPlot)):
                     plot.draw(ax, network_results_list=network_results_list)
                 elif isinstance(plot, BaseInspectionPlot):
-                    plot.draw(ax, inspection_results=inspection_results)
+                    plot.draw(ax, inspection_results=inspection_results_list)
                 else:
                     raise TypeError(f"Unknown plot type in grid: {type(plot)}")
 
@@ -141,7 +142,7 @@ class BasicWorkflowPlottingHook(GridFigureHook):
             tf_funcs_results=tf_funcs_results,
             snn_results=snn_results,
             network_results_list=network_results_list,
-            inspection_results=None  # Not used in basic workflow
+            inspection_results_list=None  # Not used in basic workflow
         )
 
 class InspectionWorkflowPlottingHook(GridFigureHook):
@@ -149,7 +150,7 @@ class InspectionWorkflowPlottingHook(GridFigureHook):
     def __call__(
             self,
             identifier: str,
-            inspection_results: Dict[str, BaseInspectionResults],
+            inspection_results: List[BaseInspectionResults],
             ) -> None:
         super().__call__(
             identifier=identifier,
@@ -157,7 +158,7 @@ class InspectionWorkflowPlottingHook(GridFigureHook):
             tf_funcs_results=None,
             snn_results=None,
             network_results_list=None,
-            inspection_results=inspection_results
+            inspection_results_list=inspection_results
         )
 
 
@@ -328,23 +329,23 @@ class NetworkHistogramPlottingHook(BasicWorkflowPlottingHook):
             [
                 network_plots.FiringRateHistogramPlot({
                     **common_params,
-                    'binsize': 0.5,
+                    # 'binsize': 0.5,
                 }),
                 network_plots.VoltageHistogramPlot({
                     **common_params,
-                    'binsize': 0.4,
+                    # 'binsize': 0.4,
                 }),
                 network_plots.AdaptationHistogramPlot({
                     **common_params,
-                    'binsize': 0.002,
+                    # 'binsize': 0.002,
                 }),
                 network_plots.ExcitatoryNeuronConductanceHistogramPlot({
                     **common_params,
-                    'binsize': 0.0001,
+                    # 'binsize': 0.0001,
                 }),
                 network_plots.InhibitoryNeuronConductanceHistogramPlot({
                     **common_params,
-                    'binsize': 0.0001,
+                    # 'binsize': 0.0001,
                     
                 }),
             ]
@@ -359,80 +360,138 @@ class NetworkHistogramPlottingHook(BasicWorkflowPlottingHook):
 
 
 
-class SpontActivityInspectionHook(BasicWorkflowPlottingHook):
-    pass
+class SteadyStateInspectionPlottingHook(InspectionWorkflowPlottingHook):
 
-    # def __init__(
-    #         self, 
-    #         savefig_dir: Path,
-    #         fig_file_prefix: str,
-    #         fig_params: dict,
-    #         common_params: dict,
-    #         ):
+    def __init__(
+            self, 
+            savefig_dir: Path,
+            fig_file_prefix: str,
+            fig_params: dict,
+            common_params: dict,
+            ):
 
-    #     self.savefig_dir = savefig_dir
-        
-    #     self.fig_params = fig_params
-    #     self.common_params = common_params
+        plot_grid=[
+            [
+                inspection_plots.FiringRateInspectionPlot({
+                    **common_params,
+                }),
+                inspection_plots.VoltageInspectionPlot({
+                    **common_params,
+                }),
+                inspection_plots.AdaptationInspectionPlot({
+                    **common_params,
+                }),
+            ]
+        ]
 
+        super().__init__(
+            plot_grid=plot_grid, 
+            savefig_dir=savefig_dir, 
+            fig_file_prefix=fig_file_prefix, 
+            fig_params=fig_params
+        )
 
-    #     inspection_results = inspection_results["spont"]
-    #     fig, axes = plt.subplots(ncols=3, figsize=(16, 8))
+class ComparisonInspectionPlottingHook(InspectionWorkflowPlottingHook):
+    MEASURE_SUFFIXES = ('rmse', 'error_mean', 'error_std', 'pearson')
+    MEASURE_TITLES = {
+        'rmse': r'RMSE : $\sqrt{1/T\int (SNN-MF)^2}$',
+        'error_mean': r'Error mean : $1/T\int (SNN-MF))$',
+        'error_std': 'Error std',
+        'pearson': 'Pearson',
+    }
 
+    @classmethod
+    def _split_metric_name(cls, metric_name: str) -> tuple[str, str]:
+        for measure in cls.MEASURE_SUFFIXES:
+            suffix = f'_{measure}'
+            if metric_name.endswith(suffix):
+                return metric_name[:-len(suffix)], measure
+        raise ValueError(
+            f"Could not parse measured variable '{metric_name}'. Expected a suffix in {cls.MEASURE_SUFFIXES}."
+        )
 
-    #     plot_grid = [
-    #         [
+    @staticmethod
+    def _format_variable_label(variable_name: str) -> str:
+        return variable_name.replace('_', ' ').title()
 
-    #             inspection_plots.FiringRateInspectionPlot({
-    #                 "linestyles": [""] + [ ':', '-.', '--'],
-    #                 "legend": True,
-    #                 "xlabel": "Drive Rate (Hz)",
-    #                 **common_params,
-    #             }),
-    #         ],
-    #         [
-    #             inspection_plots.VoltageInspectionPlot({
-    #                 "linestyles": [""] + [ ':', '-.', '--'],
-    #                 "legend": True,
-    #                 "xlabel": "Drive Rate (Hz)",
-    #                 **common_params,
-    #             })
+    @classmethod
+    def _format_measure_label(cls, measure_name: str) -> str:
+        return cls.MEASURE_TITLES.get(measure_name, measure_name.replace('_', ' ').title())
 
-    #         ],
-    #         [
-    #             inspection_plots.AdaptationInspectionPlot({
-    #                 "linestyles": [""] + [ ':', '-.', '--'],
-    #                 "legend": True,
-    #                 "xlabel": "Drive Rate (Hz)",
-    #                 **common_params,
-    #             })
-    #         ]
-    #     ]
+    def __init__(
+            self, 
+            savefig_dir: Path,
+            fig_file_prefix: str,
+            fig_params: dict,
+            common_params: dict,
+            ):
 
-    #     super().__init__(
-    #         plot_grid=plot_grid, 
-    #         savefig_dir=savefig_dir, 
-    #         fig_file_prefix=fig_file_prefix, 
-    #         fig_params=fig_params
-    #     )
+        self.common_params = common_params or {}
 
+        super().__init__(
+            plot_grid=[[]], 
+            savefig_dir=savefig_dir, 
+            fig_file_prefix=fig_file_prefix, 
+            fig_params=fig_params
+        )
 
-class DynamicActivityInspectionHook(GridFigureHook):
-    pass
+    def prepare_plot_grid(self, inspection_results: BaseInspectionResults):
 
-    # def __init__(
-    #         self, 
-    #         savefig_dir: Path,
-    #         fig_file_prefix: str,
-    #         fig_params: dict,
-    #         common_params: dict,
-    #         ):
+        row_variables: list[str] = []
+        column_measures: list[str] = []
+        row_measures: list[str] = []
+        column_variables: list[str] = []
 
+        for metric_name in inspection_results.measured_variables:
+            variable_name, measure_name = self._split_metric_name(metric_name)
+            if variable_name not in column_variables:
+                column_variables.append(variable_name)
+            if measure_name not in row_measures:
+                row_measures.append(measure_name)
 
-    #     pass
+        row_measures = [measure for measure in self.MEASURE_SUFFIXES if measure in row_measures]
 
-    #     self.savefig_dir = savefig_dir
-        
-    #     self.fig_params = fig_params
-    #     self.common_params = common_params
+        plot_grid = [
+            [
+                inspection_plots.MetricCustomInspectionPlot(
+                    f'{variable_name}_{measure_name}',
+                    {
+                        'title': self._format_measure_label(variable_name) if row_idx == 0 else None,
+                        'ylabel': self._format_variable_label(measure_name) if col_idx == 0 else None,
+                        # 'xlabel': inspection_results.inspected_param if row_idx == len(row_variables) - 1 else None,
+                        **self.common_params,
+                        
+                    },
+                )
+                for col_idx, variable_name in enumerate(column_variables)
+            ]
+            for row_idx, measure_name in enumerate(row_measures)
+        ]
+
+        self.plot_grid = plot_grid
+
+    def __call__(
+            self,
+            identifier: str,
+            inspection_results_list: List[BaseInspectionResults],
+            ) -> None:
+
+        inspection_results_list = [result for result in inspection_results_list if isinstance(result, ComparisonInspectionResults)]
+
+        if len(inspection_results_list) != 1:
+            raise ValueError(f"Expected exactly one ComparisonInspectionResults, but found {len(inspection_results_list)}.")
+
+        inspection_results = inspection_results_list[0]
+
+        self.prepare_plot_grid(inspection_results)
+            
+        GridFigureHook.__call__(
+            self,
+            identifier=identifier,
+            neuron_results=None,
+            tf_funcs_results=None,
+            snn_results=None,
+            network_results_list=None,
+            inspection_results_list=[inspection_results],
+        )
 

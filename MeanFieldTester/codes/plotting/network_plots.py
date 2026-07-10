@@ -181,9 +181,8 @@ class VoltagePlot(BaseNetworkPlot):
         self.update_params(network_results_list)
 
         for results, ls, label in zip(network_results_list, self.full_params['linestyles'], self.full_params['labels']):
-            if isinstance(results, BaseSNNResults):
-                ax.plot(results.times(), results.exc_voltage_mean(), label=f'Exc {label}', ls=ls, color=self.full_params['exc_color'])
-                ax.plot(results.times(), results.inh_voltage_mean(), label=f'Inh {label}', ls=ls, color=self.full_params['inh_color'])
+            ax.plot(results.times(), results.exc_voltage_mean(), label=f'Exc {label}', ls=ls, color=self.full_params['exc_color'])
+            ax.plot(results.times(), results.inh_voltage_mean(), label=f'Inh {label}', ls=ls, color=self.full_params['inh_color'])
 
 
 class FiringRateHistogramPlot(BaseNetworkHistogramPlot):
@@ -208,43 +207,60 @@ class FiringRateHistogramPlot(BaseNetworkHistogramPlot):
             if isinstance(results, BaseSNNResults):
                 exc_rates = calc_per_cell_rates(results.exc_spikes_all(), start_time=self.full_params['start_time'], end_time=self.full_params['end_time'])
                 inh_rates = calc_per_cell_rates(results.inh_spikes_all(), start_time=self.full_params['start_time'], end_time=self.full_params['end_time'])
+                exc_neuron_count = len(results.exc_spikes_all())
+                inh_neuron_count = len(results.inh_spikes_all())
 
-                if self.full_params['binsize']:
-                    exc_bins = int(np.ceil(((exc_rates.max() - exc_rates.min()) / self.full_params['binsize'])))
-                    inh_bins = int(np.ceil(((inh_rates.max() - inh_rates.min()) / self.full_params['binsize'])))
-                else:
-                    exc_bins = self.full_params['bins']
-                    inh_bins = self.full_params['bins']
 
-                ax.hist(exc_rates, bins=exc_bins, alpha=0.5, label=f'Exc {label}', edgecolor=self.full_params['exc_color'], color=self.full_params['exc_color'], linestyle=ls)
-                ax.hist(inh_rates, bins=inh_bins, alpha=0.5, label=f'Inh {label}', edgecolor=self.full_params['inh_color'], color=self.full_params['inh_color'], linestyle=ls)
+                bin_edges = self.get_bin_edges([exc_rates, inh_rates])
+
+                ax.hist(exc_rates, bins=bin_edges, alpha=0.5, label=f'Exc {label}', edgecolor=self.full_params['exc_color'], color=self.full_params['exc_color'], linestyle=ls, 
+                        density=self.full_params['density'] ,
+                        weights=np.ones(exc_neuron_count) / exc_neuron_count  if self.full_params['normalization'] else None  # Normalize by number of excitatory neurons
+                )
+                ax.hist(inh_rates, bins=bin_edges, alpha=0.5, label=f'Inh {label}', edgecolor=self.full_params['inh_color'], color=self.full_params['inh_color'], linestyle=ls, 
+                        density=self.full_params['density'] ,
+                        weights=np.ones(inh_neuron_count) / inh_neuron_count  if self.full_params['normalization'] else None  # Normalize by number of inhibitory neurons
+                )
 
             elif isinstance(results, BaseMFResults):
-                # plots gaussian distributioon based on mean and std
-                mask = results.times >= self.full_params['start_time']
-                exc_mean = np.mean(results.exc_rate_mean[mask])
-                inh_mean = np.mean(results.inh_rate_mean[mask])
-                if ((results.exc_rate_std is not None) 
-                            and (results.exc_rate_std.size > 0)
-                            and (results.inh_rate_std is not None) 
-                            and (results.inh_rate_std.size > 0)):
-                    exc_std = np.mean(results.exc_rate_std[mask])
-                    inh_std = np.mean(results.inh_rate_std[mask])
+                mask = results.times() >= self.full_params['start_time']
+                exc_mean = np.mean(results.exc_rate_mean()[mask])
+                inh_mean = np.mean(results.inh_rate_mean()[mask])
+                if ((results.exc_rate_std() is not None) 
+                            and (results.exc_rate_std().size > 0)
+                            and (results.inh_rate_std() is not None) 
+                            and (results.inh_rate_std().size > 0)):
+                    exc_std = np.mean(results.exc_rate_std()[mask])
+                    inh_std = np.mean(results.inh_rate_std()[mask])
                     
                     x = np.linspace(0, max(exc_mean + 4*exc_std, inh_mean + 4*inh_std), 100)
-                    # exc_gauss = (1/(exc_std * np.sqrt(2 * np.pi))) * np.exp( -0.5 * ((x - exc_mean)/exc_std)**2)
+                    dx = x[1] - x[0]
+
                     exc_gauss = np.exp( -0.5 * ((x - exc_mean)/exc_std)**2)
-                    exc_gauss /= exc_gauss.sum()  # normalize  
-                    # inh_gauss = (1/(inh_std * np.sqrt(2 * np.pi))) * np.exp( -0.5 * ((x - inh_mean)/inh_std)**2)
+                    if self.full_params['normalization']:
+                        exc_gauss /= exc_gauss.max()
+                    if self.full_params['density']:
+                        exc_gauss /= exc_gauss.sum()*dx
+
                     inh_gauss = np.exp( -0.5 * ((x - inh_mean)/inh_std)**2)
-                    inh_gauss /= inh_gauss.sum()  # normalize
+                    if self.full_params['normalization']:
+                        inh_gauss /= inh_gauss.max()
+                    if self.full_params['density']:
+                        inh_gauss /= inh_gauss.sum()*dx
                     
-                    ax.plot(x, 500*exc_gauss, label=f'Exc {label}', color=self.full_params['exc_color'], linestyle=ls)
-                    ax.plot(x, 500*inh_gauss, label=f'Inh {label}', color=self.full_params['inh_color'], linestyle=ls)
+                    ax.plot(x, exc_gauss, label=f'Exc {label}', color=self.full_params['exc_color'], linestyle=ls)
+                    ax.plot(x, inh_gauss, label=f'Inh {label}', color=self.full_params['inh_color'], linestyle=ls)
                 else:
                     ax.axvline(exc_mean, label=f'Exc {label}', color=self.full_params['exc_color'], linestyle=ls)
                     ax.axvline(inh_mean, label=f'Inh {label}', color=self.full_params['inh_color'], linestyle=ls)
 
+    def plot_bell_curve(self, ax, mean, std, color, linestyle):
+        x = np.linspace(mean - 4*std, mean + 4*std, 100)
+        y = np.exp( -0.5 * ((x - mean)/std)**2)
+        ax.plot(x, y, color=color, linestyle=linestyle)
+
+    def plot_mf_hist(self, ax):
+        pass
 
 class VoltageHistogramPlot(BaseNetworkHistogramPlot):
     """Plot the voltage histogram of excitatory and inhibitory neurons."""
@@ -270,15 +286,10 @@ class VoltageHistogramPlot(BaseNetworkHistogramPlot):
                 exc_voltage = results._exc_voltage_all[mask].mean(axis=0)
                 inh_voltage = results._inh_voltage_all[mask].mean(axis=0)
                 
-                if self.full_params['binsize']:
-                    exc_bins = int(np.ceil(((exc_voltage.max() - exc_voltage.min()) / self.full_params['binsize'])))
-                    inh_bins = int(np.ceil(((inh_voltage.max() - inh_voltage.min()) / self.full_params['binsize'])))
-                else:
-                    exc_bins = self.full_params['bins']
-                    inh_bins = self.full_params['bins']
+                bin_edges = self.get_bin_edges([exc_voltage, inh_voltage])
 
-                ax.hist(exc_voltage, bins=exc_bins, alpha=0.5, label=f'Exc {label}', edgecolor=self.full_params['exc_color'], color=self.full_params['exc_color'], linestyle=ls)
-                ax.hist(inh_voltage, bins=inh_bins, alpha=0.5, label=f'Inh {label}', edgecolor=self.full_params['inh_color'], color=self.full_params['inh_color'], linestyle=ls)
+                ax.hist(exc_voltage, bins=bin_edges, alpha=0.5, label=f'Exc {label}', edgecolor=self.full_params['exc_color'], color=self.full_params['exc_color'], linestyle=ls)
+                ax.hist(inh_voltage, bins=bin_edges, alpha=0.5, label=f'Inh {label}', edgecolor=self.full_params['inh_color'], color=self.full_params['inh_color'], linestyle=ls)
 
 
 class AdaptationHistogramPlot(BaseNetworkHistogramPlot):
@@ -304,12 +315,9 @@ class AdaptationHistogramPlot(BaseNetworkHistogramPlot):
 
                 exc_adaptation = results._exc_adaptation_all[mask].mean(axis=0)
 
-                if self.full_params['binsize']:
-                    exc_bins = int(np.ceil(((exc_adaptation.max() - exc_adaptation.min()) / self.full_params['binsize'])))
-                else:
-                    exc_bins = self.full_params['bins']
+                bin_edges = self.get_bin_edges([exc_adaptation])
 
-                ax.hist(exc_adaptation, bins=exc_bins, alpha=0.5, label=f'Exc {label}', edgecolor='blue', color='blue', linestyle=ls)
+                ax.hist(exc_adaptation, bins=bin_edges, alpha=0.5, label=f'Exc {label}', edgecolor='blue', color='blue', linestyle=ls)
 
 
 class ExcitatoryNeuronConductanceHistogramPlot(BaseNetworkHistogramPlot):
@@ -336,15 +344,10 @@ class ExcitatoryNeuronConductanceHistogramPlot(BaseNetworkHistogramPlot):
                 exc_conductance = results._ee_conductance_all[mask].mean(axis=0)
                 inh_conductance = results._ie_conductance_all[mask].mean(axis=0)
 
-                if self.full_params['binsize']:
-                    exc_bins = int(np.ceil(((exc_conductance.max() - exc_conductance.min()) / self.full_params['binsize'])))
-                    inh_bins = int(np.ceil(((inh_conductance.max() - inh_conductance.min()) / self.full_params['binsize'])))
-                else:
-                    exc_bins = self.full_params['bins']
-                    inh_bins = self.full_params['bins']
+                bin_edges = self.get_bin_edges([exc_conductance, inh_conductance])
 
-                ax.hist(exc_conductance, bins=exc_bins, alpha=0.5, label=f'Exc {label}', edgecolor=self.full_params['exc_color'], color=self.full_params['exc_color'], linestyle=ls)
-                ax.hist(inh_conductance, bins=inh_bins, alpha=0.5, label=f'Inh {label}', edgecolor=self.full_params['inh_color'], color=self.full_params['inh_color'], linestyle=ls)
+                ax.hist(exc_conductance, bins=bin_edges, alpha=0.5, label=f'Exc {label}', edgecolor=self.full_params['exc_color'], color=self.full_params['exc_color'], linestyle=ls)
+                ax.hist(inh_conductance, bins=bin_edges, alpha=0.5, label=f'Inh {label}', edgecolor=self.full_params['inh_color'], color=self.full_params['inh_color'], linestyle=ls)
 
 class InhibitoryNeuronConductanceHistogramPlot(BaseNetworkHistogramPlot):
     """Plot the conductance histogram of inhibitory neurons."""
@@ -370,15 +373,10 @@ class InhibitoryNeuronConductanceHistogramPlot(BaseNetworkHistogramPlot):
                 exc_conductance = results._ei_conductance_all[mask].mean(axis=0)
                 inh_conductance = results._ii_conductance_all[mask].mean(axis=0)
 
-                if self.full_params['binsize']:
-                    exc_bins = int(np.ceil(((exc_conductance.max() - exc_conductance.min()) / self.full_params['binsize'])))
-                    inh_bins = int(np.ceil(((inh_conductance.max() - inh_conductance.min()) / self.full_params['binsize'])))
-                else:
-                    exc_bins = self.full_params['bins']
-                    inh_bins = self.full_params['bins']
+                bin_edges = self.get_bin_edges([exc_conductance, inh_conductance])
 
-                ax.hist(exc_conductance, bins=exc_bins, alpha=0.5, label=f'Exc {label}', edgecolor=self.full_params['exc_color'], color=self.full_params['exc_color'], linestyle=ls)
-                ax.hist(inh_conductance, bins=inh_bins, alpha=0.5, label=f'Inh {label}', edgecolor=self.full_params['inh_color'], color=self.full_params['inh_color'], linestyle=ls)
+                ax.hist(exc_conductance, bins=bin_edges, alpha=0.5, label=f'Exc {label}', edgecolor=self.full_params['exc_color'], color=self.full_params['exc_color'], linestyle=ls)
+                ax.hist(inh_conductance, bins=bin_edges, alpha=0.5, label=f'Inh {label}', edgecolor=self.full_params['inh_color'], color=self.full_params['inh_color'], linestyle=ls)
 
 
 

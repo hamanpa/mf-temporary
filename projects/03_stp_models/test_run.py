@@ -1,3 +1,9 @@
+"""
+This is a testing script to check the workflow works
+
+"""
+
+
 import sys
 import os
 from pathlib import Path
@@ -19,42 +25,45 @@ from codes.network_params.loader import load_network_parameters
 
 from codes.controller.inspectors import ParameterInspector, ComparisonExtractor, SteadyStateExtractor
 
-import codes.plotting as ax_plt
-
 import codes.plotting.hooks as plt_hooks
+from codes.stimuli.config import NoStimulusConfig
 
 
+TEST_STIMULUS = NoStimulusConfig({
+    "pattern" : "NoStimulus",
+    "stim_params" : {},
+    "drive_rate" : 1.5,
+    "initial_increase_duration" : 400,
+    "simulation_duration" : 1500,
+    "stim_target_ratio" : 1.0,
+    "target_nodes" : 0,
+    "direct_stimulation" : False
+})
 
+TEST_CONFIG = {"test_stimulus" : TEST_STIMULUS}
+
+INSPECTED_PARAM = "stimulus.drive_rate"
+INSPECTED_VALUES = np.array([1.0, 1.5])
 
 
 
 def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--param", type=str, required=True)
-    parser.add_argument("--values", type=str, required=True)
-    parser.add_argument("--stim", type=str, required=True)
-    
-    args = parser.parse_args()
-
 
     project_path = repo_path / "projects" / "03_stp_models"
     os.chdir(project_path)
 
-    dir_name = f"{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}_inspection_{args.param}"
+    dir_name = f"{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}_testing"
     results_path = project_path / "results" / dir_name
     results_path.mkdir(parents=True, exist_ok=True)
 
     network_params = load_network_parameters(project_path / "params" / "network_params.yaml")
     sim_params = load_workflow_config(project_path / "params" / "workflow_params.yaml")
-    stimuli_config = load_stimuli_config(project_path / "params" / "default_stimuli.yaml")
+    stimuli_config = TEST_CONFIG
 
-    inspected_param = args.param
-    inspected_values = np.array(json.loads(args.values))
-    inspected_stimulus = stimuli_config[args.stim]
 
     inspector = ParameterInspector(
         base_network_params=network_params,
-        base_stimulus_params=inspected_stimulus,
+        base_stimulus_params=TEST_STIMULUS,
         base_sim_params=sim_params,
         project_path=results_path,
     )
@@ -95,7 +104,7 @@ def main():
                 'ymargin': 0.0,
                 'labels': ['SNN'] + list(sim_params.mf_models.keys()),
                 'legend': {'loc': 'upper left'},
-                'xlim' : (0, 4000.0),
+                'xlim' : (0, TEST_STIMULUS.simulation_duration),
 
             },
         ),
@@ -107,7 +116,7 @@ def main():
                 'title': f"Network Histogram"
             },
             common_params={
-                'start_time': 2000.0,
+                'start_time': 1000.0,
                 'bins' : 10,
                 'labels': ['SNN'],
                 'legend': False,
@@ -126,8 +135,8 @@ def main():
                 "exc_adaptation_time_mean",
                 "exc_adaptation_time_std",
             ],
-            start_time = 2000.0, 
-            end_time = 4000.0
+            start_time = 1000.0, 
+            end_time = TEST_STIMULUS.simulation_duration
         ),
         ComparisonExtractor(
             measured_variables = [
@@ -144,8 +153,8 @@ def main():
                 "exc_adaptation_error_std",
                 "exc_adaptation_pearson",
             ],
-            start_time = 2000.0, 
-            end_time = 4000.0
+            start_time = 1000.0, 
+            end_time = TEST_STIMULUS.simulation_duration
         ),
     ]
 
@@ -176,16 +185,15 @@ def main():
         ),
     ]
 
-
     inspection_results = inspector.run_inspection(
-        inspected_param=inspected_param,
-        inspected_values=inspected_values,
+        inspected_param=INSPECTED_PARAM,
+        inspected_values=INSPECTED_VALUES,
         single_step_hooks=single_step_hooks,
         inspection_hooks=inspection_hooks,
         extractors=extractors,
     )
 
-    with open(results_path / f"inspection_results_{inspected_param}.pkl", "wb") as f:
+    with open(results_path / f"testing_inspection_results.pkl", "wb") as f:
         pickle.dump(inspection_results, f)
 
 if __name__ == "__main__":

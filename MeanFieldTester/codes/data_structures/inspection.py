@@ -128,7 +128,7 @@ class CoreInspectionResults(BaseInspectionResults):
 
 
 
-class SpontInspectionResults(CoreInspectionResults):
+class SteadyStateInspectionResults(CoreInspectionResults):
     """
     Data structure for spontaneous activity inspections.
     Incrementally collects data and freezes it into NumPy arrays.
@@ -151,7 +151,7 @@ class SpontInspectionResults(CoreInspectionResults):
     ALLOWED_MEASURED_VARS = list(DEFAULT_UNITS.keys())
 
 
-class DynamicStimulusInspectionResults(CoreInspectionResults):
+class ComparisonInspectionResults(CoreInspectionResults):
     """Data structure for dynamic stimulus comparisons (SNN vs MF)."""
 
     DEFAULT_UNITS = {

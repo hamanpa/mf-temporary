@@ -1,10 +1,16 @@
 
 from ..data_structures.base import BaseInspectionResults
+from ..data_structures.inspection import ComparisonInspectionResults, SteadyStateInspectionResults
 from .base import BaseInspectionPlot
+from typing import List
+
 
 class CustomInspectionPlot(BaseInspectionPlot):
 
-    def _draw(self, ax, inspection_results:BaseInspectionResults, variable=None):
+    def _draw(self, ax, inspection_results_list:List[BaseInspectionResults], variable=None):
+
+        inspection_results = self.filter_results(inspection_results_list)[0]
+
         if variable not in inspection_results.measured_variables:
             return  # Skip plotting if the variable is not present in the inspection results
 
@@ -21,6 +27,18 @@ class CustomInspectionPlot(BaseInspectionPlot):
                 color="black",
             )
 
+class MetricCustomInspectionPlot(CustomInspectionPlot):
+
+    def __init__(self, metric_name: str, plot_params: dict):
+        self.metric_name = metric_name
+        super().__init__(plot_params)
+
+
+    def _draw(self, ax, inspection_results: BaseInspectionResults):
+        super()._draw(ax, inspection_results, variable=self.metric_name)
+
+
+
 
 class FiringRateInspectionPlot(BaseInspectionPlot):
     """Plot the firing rate of excitatory and inhibitory neurons over time."""
@@ -31,8 +49,11 @@ class FiringRateInspectionPlot(BaseInspectionPlot):
         'ylabel': 'Firing Rate (Hz)',
     }
 
-    def _draw(self, ax, inspection_results:BaseInspectionResults):
-        
+    inspection_results_type = SteadyStateInspectionResults 
+
+    def _draw(self, ax, inspection_results_list:List[BaseInspectionResults]):
+        inspection_results = self.filter_results(inspection_results_list)[0]
+
         self.update_params(inspection_results)
         param_values = inspection_results.param_values
         
@@ -76,7 +97,11 @@ class VoltageInspectionPlot(BaseInspectionPlot):
         'ylabel': 'Voltage (mV)',
     }
 
-    def _draw(self, ax, inspection_results:BaseInspectionResults):
+    inspection_results_type = SteadyStateInspectionResults
+
+    def _draw(self, ax, inspection_results_list:List[BaseInspectionResults]):
+        inspection_results = self.filter_results(inspection_results_list)[0]
+
         self.update_params(inspection_results)
         param_values = inspection_results.param_values
 
@@ -115,18 +140,21 @@ class AdaptationInspectionPlot(BaseInspectionPlot):
         'ylabel': 'Adaptation (pA)',
     }
 
-    def _draw(self, ax, results):
+    inspection_results_type = SteadyStateInspectionResults 
 
-        self.update_params(results)
-        param_values = results.param_values
+    def _draw(self, ax, inspection_results_list:List[BaseInspectionResults]):
+        inspection_results = self.filter_results(inspection_results_list)[0]
 
-        has_exc_mean = "exc_adaptation_time_mean" in results.measured_variables
-        has_exc_std = "exc_adaptation_time_std" in results.measured_variables
+        self.update_params(inspection_results)
+        param_values = inspection_results.param_values
 
-        exc_mean_data = results.exc_adaptation_time_mean() if has_exc_mean else None
-        exc_std_data = results.exc_adaptation_time_std() if has_exc_std else None
+        has_exc_mean = "exc_adaptation_time_mean" in inspection_results.measured_variables
+        has_exc_std = "exc_adaptation_time_std" in inspection_results.measured_variables
 
-        for i, (network_name, ls, marker, label) in enumerate(zip(results.network_names, self.full_params['linestyles'], self.full_params['markers'], self.full_params['labels'])):
+        exc_mean_data = inspection_results.exc_adaptation_time_mean() if has_exc_mean else None
+        exc_std_data = inspection_results.exc_adaptation_time_std() if has_exc_std else None
+
+        for i, (network_name, ls, marker, label) in enumerate(zip(inspection_results.network_names, self.full_params['linestyles'], self.full_params['markers'], self.full_params['labels'])):
             print("WARNING: spiking network has to be named 'SNN' inside inspection_results.network_names to work properly!")
             is_snn = network_name.startswith("SNN")
 

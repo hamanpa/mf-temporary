@@ -28,6 +28,8 @@ from pathlib import Path
 import numpy as np
 from scipy.special import erfc, erfcinv
 from scipy.optimize import minimize
+import copy
+from typing import Dict
 
 # NOTE: old imports, to be removed after the refactor
 # NOTE: only issue is the removing of nans, not sure where they come from but they break the optimization, so we need to keep an eye on that and maybe add some checks in the data loading phase
@@ -65,8 +67,10 @@ class NeuroPSICustomTF(BaseTransferFunction):
 
         # 1. Compute theoretical subthreshold fluctuations
         mu_V, sigma_V, tau_V, tau_VN, mu_G = self.mpf.evaluate(
-            exc_rate=exc_rate, 
-            inh_rate=inh_rate, 
+            rates={
+                "exc_neuron": exc_rate,
+                "inh_neuron": inh_rate
+            },
             adaptation=adaptation
         )
 
@@ -154,13 +158,17 @@ class NeuroPSICustomTF(BaseTransferFunction):
         exc_rates = single_neuron_results.exc_rate_grid("Hz").flatten()
         inh_rates = single_neuron_results.inh_rate_grid("Hz").flatten()
         out_rates = single_neuron_results.out_rate_mean("Hz").flatten()
+        rates = {
+            "exc_neuron" : exc_rates,
+            "inh_neuron" : inh_rates
+        }
 
         if tf_model_params.adaptation:
             adaptation = single_neuron_results.adaptation_mean("nA").flatten()
         else:
             adaptation = None
 
-        voltage_mean, voltage_std, voltage_tau, voltage_tau_n, conductance_mean = self.mpf.evaluate(exc_rates, inh_rates, adaptation=adaptation)
+        voltage_mean, voltage_std, voltage_tau, voltage_tau_n, conductance_mean = self.mpf.evaluate(rates, adaptation=adaptation)
 
         keys = ["P_0", "P_mean", "P_std", "P_tau"]
         if tf_model_params.log_term:
@@ -259,12 +267,6 @@ class MembranePotentialFluctuations:
         self.neuron_name = neuron_name
         self.ignore_stp = ignore_stp
 
-        self.exc_syn_tau = network_params.neurons[neuron_name].neuron_params.tau_syn_E
-        self.exc_syn_v = network_params.neurons[neuron_name].neuron_params.e_rev_E
-
-        self.inh_syn_tau = network_params.neurons[neuron_name].neuron_params.tau_syn_I
-        self.inh_syn_v = network_params.neurons[neuron_name].neuron_params.e_rev_I
-
         self.tau_m = network_params.neurons[neuron_name].neuron_params.tau_m
         self.cm = network_params.neurons[neuron_name].neuron_params.cm
         self.g_L = network_params.neurons[neuron_name].neuron_params.g_L
@@ -275,175 +277,193 @@ class MembranePotentialFluctuations:
         self.b = network_params.neurons[neuron_name].neuron_params.b
         self.tau_w = network_params.neurons[neuron_name].neuron_params.tau_w
 
+        self.synapse_params = {}
+        for source_neuron_name in network_params.synapses:
 
-        self.exc_syn_num = int(network_params.network.size[network_params.exc_neuron_name] * network_params.network.connectivity[neuron_name][network_params.exc_neuron_name])
-        self.inh_syn_num = int(network_params.network.size[network_params.inh_neuron_name] * network_params.network.connectivity[neuron_name][network_params.inh_neuron_name])
+            syn_weight = network_params.synapses[source_neuron_name].syn_params.weight
+            if not self.ignore_stp and network_params.synapses[source_neuron_name].syn_type == 'tsodyks_synapse':
+                u = network_params.synapses[source_neuron_name].syn_params.U
+                tau_rec = network_params.synapses[source_neuron_name].syn_params.tau_rec
+                tau_fac = network_params.synapses[source_neuron_name].syn_params.tau_fac
+            else:
+                u = 1.0
+                tau_rec = 0.0
+                tau_fac = 0.0
 
-        self.exc_syn_type = network_params.synapses[network_params.exc_neuron_name].syn_type
-        self.inh_syn_type = network_params.synapses[network_params.inh_neuron_name].syn_type
+            if network_params.neurons[source_neuron_name].neuron_type == "excitatory":
+                e_rev = network_params.neurons[neuron_name].neuron_params.e_rev_E
+                syn_tau = network_params.neurons[neuron_name].neuron_params.tau_syn_E
+            elif network_params.neurons[source_neuron_name].neuron_type == "inhibitory":
+                e_rev = network_params.neurons[neuron_name].neuron_params.e_rev_I
+                syn_tau = network_params.neurons[neuron_name].neuron_params.tau_syn_I
+            else:
+                raise ValueError(f"Unknown neuron type: {network_params.neurons[source_neuron_name].neuron_type}")
 
-        self.exc_syn_weight = network_params.synapses[network_params.exc_neuron_name].syn_params.weight
-        self.inh_syn_weight = network_params.synapses[network_params.inh_neuron_name].syn_params.weight
+            syn_num = int(network_params.network.size[source_neuron_name] * network_params.network.connectivity[neuron_name][source_neuron_name])
+
+            self.synapse_params[source_neuron_name] = {
+                'syn_weight': syn_weight,
+                'u': u,
+                'tau_rec': tau_rec,
+                'tau_fac': tau_fac,
+                'E_rev': e_rev,
+                'syn_tau': syn_tau,
+                'syn_num': syn_num
+            }
 
 
-        if not self.ignore_stp and self.exc_syn_type == 'tsodyks_synapse':
-            self.u_e = network_params.synapses[network_params.exc_neuron_name].syn_params.U
-            self.tau_rec_e = network_params.synapses[network_params.exc_neuron_name].syn_params.tau_rec
-            self.tau_fac_e = network_params.synapses[network_params.exc_neuron_name].syn_params.tau_fac
-        else:
-            self.u_e = 1.0
-            self.tau_rec_e = 0.0
-            self.tau_fac_e = 0.0
-
-        if not self.ignore_stp and self.inh_syn_type == 'tsodyks_synapse':
-            self.u_i = network_params.synapses[network_params.inh_neuron_name].syn_params.U
-            self.tau_rec_i = network_params.synapses[network_params.inh_neuron_name].syn_params.tau_rec
-            self.tau_fac_i = network_params.synapses[network_params.inh_neuron_name].syn_params.tau_fac
-        else:
-            self.u_i = 1.0
-            self.tau_rec_i = 0.0
-            self.tau_fac_i = 0.0
-
-    def _weight_effective(self, rate, syn_type, syn_weight, u, tau_rec, tau_fac):
+    def _weight_effective(self, rate, syn_weight, u, tau_rec, tau_fac, **kwargs):
         """Calculates the effective synaptic weight considering STP."""
-        if self.ignore_stp or syn_type != 'tsodyks_synapse':
-            return syn_weight
+
+        # synaptic facilitation
+        if tau_fac > 0:
+            exp = np.zeros_like(rate)
+            mask = rate > 0.
+            exp[mask] = np.exp(-1 / (rate[mask]*1e-3 * tau_fac))
+            u_steady = u / (1 - (1-u)*exp)
         else:
-            # synaptic facilitation
-            if tau_fac > 0:
-                exp = np.zeros_like(rate)
-                mask = rate > 0.
-                exp[mask] = np.exp(-1 / (rate[mask]*1e-3 * tau_fac))
-                u_steady = u / (1 - (1-u)*exp)
-            else:
-                u_steady = u * np.ones_like(rate)
+            u_steady = u * np.ones_like(rate)
 
-            # synaptic depression
-            if tau_rec > 0:
-                exp = np.zeros_like(rate)
-                mask = rate > 0.
-                exp[mask] = np.exp(-1 / (rate[mask]*1e-3 * tau_rec))
-                x_steady = (1-exp) / (1 -(1-u_steady)*exp)
-            else:
-                x_steady = np.ones_like(rate)
-            
-            # steady-state effective synaptic weight 
-            return syn_weight * u_steady * x_steady
+        # synaptic depression
+        if tau_rec > 0:
+            exp = np.zeros_like(rate)
+            mask = rate > 0.
+            exp[mask] = np.exp(-1 / (rate[mask]*1e-3 * tau_rec))
+            x_steady = (1-exp) / (1 -(1-u_steady)*exp)
+        else:
+            x_steady = np.ones_like(rate)
+        
+        # steady-state effective synaptic weight 
+        return syn_weight * u_steady * x_steady
 
-    def exc_syn_weight_effective(self, exc_rate):
-        """Calculates the effective excitatory synaptic weight considering STP."""
-        return self._weight_effective(exc_rate, self.exc_syn_type, self.exc_syn_weight, self.u_e, self.tau_rec_e, self.tau_fac_e)
+    def _conductance_mean(self, rate, effective_weight, syn_num, syn_tau, **kwargs):
+        return rate * syn_num * (syn_tau * 1e-3) * effective_weight
 
-    def inh_syn_weight_effective(self, inh_rate):
-        """Calculates the effective inhibitory synaptic weight considering STP."""
-        return self._weight_effective(inh_rate, self.inh_syn_type, self.inh_syn_weight, self.u_i, self.tau_rec_i, self.tau_fac_i)
+    def _conductance_std(self, rate, effective_weight, syn_num, syn_tau, **kwargs):
+        return np.sqrt(rate * syn_num * (syn_tau * 1e-3))* effective_weight
 
-    def exc_conductance_mean(self, exc_rate):
-        """Calculates the mean excitatory conductance in [nS]."""
-        # [Hz * number * ms * nS] = [pS], thus factor 1e-3 to convert to [nS]
-        return exc_rate * self.exc_syn_num * (self.exc_syn_tau * 1e-3) * self.exc_syn_weight_effective(exc_rate)
+    def conductance_mean(self, rates, effective_weights):
+        pop_conductances = []
+        for neuron_name in rates:
+            pop_conductances.append(self._conductance_mean(
+                rate=rates[neuron_name],
+                effective_weight=effective_weights[neuron_name],
+                **self.synapse_params[neuron_name],
+            ))
+        return sum(pop_conductances) + self.g_L
 
-    def exc_conductance_std(self, exc_rate):
-        """Calculates the standard deviation of the excitatory conductance in [nS]."""
-        # factor 1e-3 to have the term inside square root unitless, thus the result is in [nS]
-        return np.sqrt(exc_rate * self.exc_syn_num * (self.exc_syn_tau * 1e-3) / 2) * self.exc_syn_weight_effective(exc_rate)
-
-    def inh_conductance_mean(self, inh_rate):
-        """Calculates the mean inhibitory conductance in [nS]."""
-        # [Hz * number * ms * nS] = [pS], thus factor 1e-3 to convert to [nS]
-        return inh_rate * self.inh_syn_num * (self.inh_syn_tau * 1e-3) * self.inh_syn_weight_effective(inh_rate)
-
-    def inh_conductance_std(self, inh_rate):
-        """Calculates the standard deviation of the inhibitory conductance in [nS]."""
-        # factor 1e-3 to have the term inside square root unitless, thus the result is in [nS]
-        return np.sqrt(inh_rate * self.inh_syn_num * (self.inh_syn_tau * 1e-3) / 2) * self.inh_syn_weight_effective(inh_rate)
-
-    def conductance_mean(self, exc_rate, inh_rate):
-        """Calculates the mean total conductance in [nS]."""
-        return self.exc_conductance_mean(exc_rate) + self.inh_conductance_mean(inh_rate) + self.g_L
-
-    def tau_eff(self, exc_rate, inh_rate):
+    def tau_eff(self, rates, effective_weights):
         """Calculates the effective time constant of the neuron in [ms]."""
         # [nF / nS] = [s], thus factor 1e3 to convert to [ms]
-        return self.cm / self.conductance_mean(exc_rate, inh_rate) * 1e3
+        return self.cm / self.conductance_mean(rates, effective_weights) * 1e3
 
-    def voltage_mean(self, exc_rate, inh_rate, out_rate=None, adaptation=None):
+    def voltage_mean(self, rates, effective_weights, out_rate=None, adaptation=None):
         """Calculates the mean voltage of the neuron in [mV]."""
         if out_rate is None and adaptation is None:
-            return self._voltage_mean_without_adaptation(exc_rate, inh_rate)
+            return self._voltage_mean_without_adaptation(rates, effective_weights)
         elif out_rate is None and adaptation is not None:
-            return self._voltage_mean_with_adaptation(exc_rate, inh_rate, adaptation)
+            return self._voltage_mean_with_adaptation(rates, effective_weights, adaptation)
         elif out_rate is not None and adaptation is None:
-            return self._voltage_mean_with_out_rate(exc_rate, inh_rate, out_rate)
+            return self._voltage_mean_with_out_rate(rates, effective_weights, out_rate)
         else:
             raise ValueError("out_rate and adaptation cannot be both not None")
-    
-    def _voltage_mean_without_adaptation(self, exc_rate, inh_rate):
+
+    def _voltage_mean_without_adaptation(self, rates, effective_weights):
         """Calculates the mean voltage of the neuron without adaptation in [mV]."""
-        exc_voltage = self.exc_conductance_mean(exc_rate) * self.exc_syn_v
-        inh_voltage = self.inh_conductance_mean(inh_rate) * self.inh_syn_v
-        return (exc_voltage + inh_voltage + self.g_L * self.v_rest) / self.conductance_mean(exc_rate, inh_rate)
+        pop_voltages = []
+        for neuron_name in rates:
+            pop_voltages.append(self._conductance_mean(
+                rate=rates[neuron_name],
+                effective_weight=effective_weights[neuron_name],
+                **self.synapse_params[neuron_name],
+            ) * self.synapse_params[neuron_name]['E_rev'])
+        return (sum(pop_voltages) + self.g_L * self.v_rest) / self.conductance_mean(rates, effective_weights)
 
-
-    def _voltage_mean_with_adaptation(self, exc_rate, inh_rate, adaptation):
+    def _voltage_mean_with_adaptation(self, rates, effective_weights, adaptation):
         """Calculates the mean voltage of the neuron with adaptation in [mV]."""
-        exc_voltage = self.exc_conductance_mean(exc_rate) * self.exc_syn_v
-        inh_voltage = self.inh_conductance_mean(inh_rate) * self.inh_syn_v
-        return (exc_voltage + inh_voltage + self.g_L * self.v_rest - adaptation*1e3) / self.conductance_mean(exc_rate, inh_rate)
+        pop_voltages = []
+        for neuron_name in rates:
+            pop_voltages.append(self._conductance_mean(
+                rate=rates[neuron_name],
+                effective_weight=effective_weights[neuron_name],
+                **self.synapse_params[neuron_name],
+            ) * self.synapse_params[neuron_name]['E_rev'])
+        return (sum(pop_voltages) + self.g_L * self.v_rest - adaptation*1e3) / self.conductance_mean(rates, effective_weights)
 
-    def _voltage_mean_with_out_rate(self, exc_rate, inh_rate, out_rate):
+    def _voltage_mean_with_out_rate(self, rates, effective_weights, out_rate):
         """Calculates the mean voltage of the neuron with nu_out in [mV]."""
-        exc_voltage = self.exc_conductance_mean(exc_rate) * self.exc_syn_v
-        inh_voltage = self.inh_conductance_mean(inh_rate) * self.inh_syn_v
-        
-        numerator = exc_voltage + inh_voltage + self.g_L * self.v_rest - out_rate * self.b * self.tau_w + self.a * self.v_rest
-        denominator = self.conductance_mean(exc_rate, inh_rate)+ self.a
+        pop_voltages = []
+        for neuron_name in rates:
+            pop_voltages.append(self._conductance_mean(
+                rate=rates[neuron_name],
+                effective_weight=effective_weights[neuron_name],
+                **self.synapse_params[neuron_name],
+            ) * self.synapse_params[neuron_name]['E_rev'])
+
+        numerator = sum(pop_voltages) + self.g_L * self.v_rest - out_rate * self.b * self.tau_w + self.a * self.v_rest
+        denominator = self.conductance_mean(rates, effective_weights)+ self.a
         return numerator / denominator
 
-    def voltage_std(self, exc_rate, inh_rate, out_rate=None, adaptation=None):
+    def voltage_std(self, rates, effective_weights, out_rate=None, adaptation=None):
         """Calculates the standard deviation of the voltage of the neuron in [mV]."""
-        voltage_mean = self.voltage_mean(exc_rate, inh_rate, out_rate=out_rate, adaptation=adaptation)
-        conductance_mean = self.conductance_mean(exc_rate, inh_rate)
-        tau_eff = self.tau_eff(exc_rate, inh_rate)
+        voltage_mean = self.voltage_mean(rates, effective_weights, out_rate=out_rate, adaptation=adaptation)
+        conductance_mean = self.conductance_mean(rates, effective_weights)
+        tau_eff = self.tau_eff(rates, effective_weights)
 
-        exc_syn_u = self.exc_syn_weight_effective(exc_rate) * (self.exc_syn_v - voltage_mean) / conductance_mean  # [mV]
-        inh_syn_u = self.inh_syn_weight_effective(inh_rate) * (self.inh_syn_v - voltage_mean) / conductance_mean  # [mV]
+        terms = []
+        for neuron_name in rates:
+            syn_u = effective_weights[neuron_name] * (self.synapse_params[neuron_name]['E_rev'] - voltage_mean) / conductance_mean
+            syn_tau = self.synapse_params[neuron_name]['syn_tau']
+            syn_num = self.synapse_params[neuron_name]['syn_num']
 
-        exc_term = self.exc_syn_num * (exc_rate * 1e-3) * (exc_syn_u * self.exc_syn_tau)**2 / (2 * (tau_eff + self.exc_syn_tau))
-        inh_term = self.inh_syn_num * (inh_rate * 1e-3) * (inh_syn_u * self.inh_syn_tau)**2 / (2 * (tau_eff + self.inh_syn_tau))
-        voltage_std = np.sqrt(exc_term + inh_term)
-        return voltage_std
+            terms.append(syn_num * (rates[neuron_name] * 1e-3) * (syn_u * syn_tau)**2 / (2 * (tau_eff + syn_tau)))
 
-    def voltage_tau(self, exc_rate, inh_rate, out_rate=None, adaptation=None):
+        return np.sqrt(sum(terms))
+
+    def voltage_tau(self, rates, effective_weights, out_rate=None, adaptation=None):
         """Calculates the effective time constant of the voltage fluctuations of the neuron in [ms].
         """
-        voltage_mean = self.voltage_mean(exc_rate, inh_rate, out_rate=out_rate, adaptation=adaptation)
-        conductance_mean = self.conductance_mean(exc_rate, inh_rate)
-        tau_eff = self.tau_eff(exc_rate, inh_rate)
+        voltage_mean = self.voltage_mean(rates, effective_weights, out_rate=out_rate, adaptation=adaptation)
+        conductance_mean = self.conductance_mean(rates, effective_weights)
+        tau_eff = self.tau_eff(rates, effective_weights)
 
-        exc_syn_u = self.exc_syn_weight_effective(exc_rate) * (self.exc_syn_v - voltage_mean) / conductance_mean  # [mV]
-        inh_syn_u = self.inh_syn_weight_effective(inh_rate) * (self.inh_syn_v - voltage_mean) / conductance_mean  # [mV]
+        numerator_terms = []
+        denominator_terms = []
+        for neuron_name in rates:
+            syn_u = effective_weights[neuron_name] * (self.synapse_params[neuron_name]['E_rev'] - voltage_mean) / conductance_mean
+            syn_tau = self.synapse_params[neuron_name]['syn_tau']
+            syn_num = self.synapse_params[neuron_name]['syn_num']
 
-        exc_term = (self.exc_syn_num * exc_rate + 1e-9) * 1e-3 * (exc_syn_u * self.exc_syn_tau)**2
-        inh_term = (self.inh_syn_num * inh_rate + 1e-9) * 1e-3 * (inh_syn_u * self.inh_syn_tau)**2
+            mask = rates[neuron_name] > 0
+            rates[neuron_name][~mask] = 1e-9  # Avoid division by zero for zero rates
+            term = syn_num * (rates[neuron_name] * 1e-3) * (syn_u * syn_tau)**2
 
-        # exc_term = self.exc_syn_num * (exc_rate * 1e-3) * (exc_syn_u * self.exc_syn_tau)**2
-        # inh_term = self.inh_syn_num * (inh_rate * 1e-3) * (inh_syn_u * self.inh_syn_tau)**2
-        # # NOTE: following is equivallent to:
-        # # exc_term[exc_term<1e-9]=1e-9  
-        # # inh_term[inh_term<1e-9]=1e-9
-        # # but allows a float as input, goal is to avoid division by zero
-        # exc_term = np.clip(exc_term, 1e-9, None)
-        # inh_term = np.clip(inh_term, 1e-9, None)
+            # term = syn_num * (rates[neuron_name] * 1e-3 + 1e-9) * (syn_u * syn_tau)**2
 
-        voltage_tau = (exc_term + inh_term) / (exc_term / (tau_eff + self.exc_syn_tau) + inh_term / (tau_eff + self.inh_syn_tau))
-        return voltage_tau
+            numerator_terms.append(term)
+            denominator_terms.append(term / (tau_eff + syn_tau))
 
-    def evaluate(self, exc_rate, inh_rate, out_rate=None, adaptation=None) -> tuple:
-        voltage_mean = self.voltage_mean(exc_rate, inh_rate, out_rate=out_rate, adaptation=adaptation)
-        voltage_std = self.voltage_std(exc_rate, inh_rate, out_rate=out_rate, adaptation=adaptation)
-        voltage_tau = self.voltage_tau(exc_rate, inh_rate, out_rate=out_rate, adaptation=adaptation)
+
+        return sum(numerator_terms) / sum(denominator_terms)
+
+    def evaluate(
+            self, 
+            rates: Dict[str, np.ndarray|float], 
+            effective_weights: Dict[str, np.ndarray|float]=None,
+            out_rate: np.ndarray|float=None, 
+            adaptation: np.ndarray|float=None,
+            ) -> tuple:
+
+        # 1. update effective weights
+        effective_weights = effective_weights or {}
+        for neuron_name in rates:
+            if neuron_name not in effective_weights:
+                effective_weights[neuron_name] = self._weight_effective(rates[neuron_name], **self.synapse_params[neuron_name])
+
+        voltage_mean = self.voltage_mean(rates, effective_weights, out_rate=out_rate, adaptation=adaptation)
+        voltage_std = self.voltage_std(rates, effective_weights, out_rate=out_rate, adaptation=adaptation)
+        voltage_tau = self.voltage_tau(rates, effective_weights, out_rate=out_rate, adaptation=adaptation)
         voltage_tau_n = voltage_tau / self.tau_m
-        conductance_mean = self.conductance_mean(exc_rate, inh_rate)
+        conductance_mean = self.conductance_mean(rates, effective_weights)
         return voltage_mean, voltage_std+1e-9, voltage_tau, voltage_tau_n, conductance_mean
 

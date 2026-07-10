@@ -9,7 +9,7 @@ from .workflows import run_basic_workflow
 from .interfaces import BasicWorkflowHook
 
 from ..data_structures.base import BaseResults, BaseMFResults, BaseSNNResults, BaseInspectionResults
-from ..data_structures.inspection import SpontInspectionResults, DynamicStimulusInspectionResults
+from ..data_structures.inspection import SteadyStateInspectionResults, ComparisonInspectionResults
 
 from pydantic import BaseModel
 
@@ -19,9 +19,13 @@ INSPECTION_PARMAS_WITHOUT_UPDATE = {
 }
 
 
-class SpontActivityExtractor:
+class SteadyStateExtractor:
     """
     Strategy class to extract steady-state metrics from raw simulation results.
+
+    Steady state means that the system has reached a point where its properties do not change over time.
+    This extractor computes time-averaged values and standard deviations for specified measured variables.
+
     """
 
     DEFAULT_UNITS = {
@@ -208,18 +212,19 @@ class ParameterInspector:
             hook(
                 identifier=f"{inspected_param.split('.')[-1]} {inspected_value}",
                 neuron_results=neuron_results,
-                tf_results=tf_results_dict,
+                tf_funcs_results=tf_results_dict,
                 snn_results=snn_results,
-                mf_results=mf_results_list
+                network_results_list=[snn_results] + mf_results_list
             )
 
-        extracted_data = {}
-        for key, extractor in extractors.items():
-            if isinstance(extractor, SpontActivityExtractor):
-                extracted_data.get(key, []).append(extractor.extract(snn_results))
-                extracted_data.get(key, []).extend([extractor.extract(mf_results) for mf_results in mf_results_list])
+        extracted_data = []
+        for i, extractor in enumerate(extractors):
+            extracted_data.append([])
+            if isinstance(extractor, SteadyStateExtractor):
+                extracted_data[i].append(extractor.extract(snn_results))
+                extracted_data[i].extend([extractor.extract(mf_results) for mf_results in mf_results_list])
             elif isinstance(extractor, ComparisonExtractor):
-                extracted_data.get(key, []).extend([
+                extracted_data[i].extend([
                     extractor.extract(
                         ground_truth=snn_results,
                         target=mf_results
@@ -249,29 +254,30 @@ class ParameterInspector:
 
         single_step_hooks = single_step_hooks or []
         inspection_hooks = inspection_hooks or []
-        extractors = extractors or {}
+        extractors = extractors or []
 
         mf_names = list(self.base_sim_params.mf_models.keys())
-        network_names = ["SNN"] + mf_names
 
-        inspection_results = {}
-        for key, extractor in extractors.items():
+        inspection_results = []
+        for extractor in extractors:
 
-            if isinstance(extractor, SpontActivityExtractor):
-                results_container = SpontInspectionResults
+            if isinstance(extractor, SteadyStateExtractor):
+                results_container = SteadyStateInspectionResults
+                network_names = ["SNN"] + mf_names
             elif isinstance(extractor, ComparisonExtractor):
-                results_container = DynamicStimulusInspectionResults
+                results_container = ComparisonInspectionResults
+                network_names = mf_names
             else:
                 raise ValueError(f"Unknown extractor type: {type(extractor)}")
 
-            inspection_results[key] = results_container(
+            inspection_results.append(results_container(
                 inspected_param=inspected_param, 
                 inspected_values=inspected_values,
                 network_names=network_names, 
                 measured_variables=extractor.measured_variables,
                 network_params=self.base_network_params,
                 stimulus_params=self.base_stimulus_params,
-            )
+            ))
 
         is_network = inspected_param.startswith("network.")
         is_stimulus = inspected_param.startswith("stimulus.")
@@ -301,18 +307,18 @@ class ParameterInspector:
                 extractors=extractors,
             )
 
-            for key, data in extracted_data.items():
-                inspection_results[key].add_inspection_data(data)
+            for i, data in enumerate(extracted_data):
+                inspection_results[i].add_inspection_data(data)
         
         for hook in inspection_hooks:
             hook(
                 identifier=f"{inspected_param.split('.')[-1]} inspection",
-                inspection_results=inspection_results
+                inspection_results_list=inspection_results
             )
         
         print("\nInspection Complete. Freezing results...")
 
-        for container in inspection_results.values():
+        for container in inspection_results:
             container.freeze()
         return inspection_results
 

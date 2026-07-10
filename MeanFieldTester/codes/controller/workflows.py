@@ -41,7 +41,7 @@ def run_basic_workflow(
         sim_params.snn_simulation, network_params, stimulus_config
     )
 
-    mf_results_dict = {stim_name: [] for stim_name in stimulus_config.stimuli.keys()}
+    mf_results_dict = {stim_name: [] for stim_name in stimulus_config}
     for mf_model_name, mf_sim_params in sim_params.mf_models.items():
         mf_results_full = run_mf_simulation_workflow(
             mf_sim_params, network_params, stimulus_config
