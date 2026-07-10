@@ -246,3 +246,50 @@ class SNNResults(BaseSNNResults):
         default_unit = self.DEFAULT_UNITS["ii_conductance_all"]
         target_unit = default_unit if unit is None else unit
         return self._get_scaled(self._ii_conductance_all.std(axis=1), default_unit, target_unit)
+
+    def _compute_stp_variables(self, neuron_name):
+        """Internal method to lazily evaluate and cache STP variables."""
+        U = self.network_params.synapses[neuron_name].syn_params.U
+        tau_rec = self.network_params.synapses[neuron_name].syn_params.tau_rec
+        tau_fac = self.network_params.synapses[neuron_name].syn_params.tau_fac
+        
+        if neuron_name == "exc_neuron":
+            u,x = snn_helpers.reconstruct_stp_dynamics(
+                self._exc_spikes_all, 
+                U, 
+                tau_rec, 
+                tau_fac, 
+                self.times()
+            )
+            self._exc_u_all = u
+            self._exc_x_all = x
+        elif neuron_name == "inh_neuron":
+            u,x = snn_helpers.reconstruct_stp_dynamics(
+                self._inh_spikes_all, 
+                U, 
+                tau_rec, 
+                tau_fac, 
+                self.times()
+            )
+            self._inh_u_all = u
+            self._inh_x_all = x
+            
+    def exc_u_mean(self):
+        if not hasattr(self, '_exc_u_all'):
+            self._compute_stp_variables("exc_neuron")
+        return self._exc_u_all.mean(axis=1)
+
+    def exc_x_mean(self):
+        if not hasattr(self, '_exc_x_all'):
+            self._compute_stp_variables("exc_neuron")
+        return self._exc_x_all.mean(axis=1)
+
+    def inh_u_mean(self):
+        if not hasattr(self, '_inh_u_all'):
+            self._compute_stp_variables("inh_neuron")
+        return self._inh_u_all.mean(axis=1)
+
+    def inh_x_mean(self):
+        if not hasattr(self, '_inh_x_all'):
+            self._compute_stp_variables("inh_neuron")
+        return self._inh_x_all.mean(axis=1)

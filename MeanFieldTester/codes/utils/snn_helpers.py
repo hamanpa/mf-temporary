@@ -145,3 +145,56 @@ def spike_counts(spikes, start_time=0, end_time=None):
     spike_counts = np.array([((spike_train >= start_time) & (spike_train <= end_time)).sum() for spike_train in spikes])
     return spike_counts
 
+def reconstruct_stp_dynamics(spike_times:list[list], U, tau_rec, tau_fac, times: np.ndarray):
+    """
+    Reconstructs the Tsodyks-Markram variables u and x offline.
+    """
+    
+    neurons_num=len(spike_times)
+
+    u_all = np.zeros((times.size, neurons_num))
+    x_all = np.ones((times.size, neurons_num))
+
+    
+    for neuron_idx, neuron_spike_times in enumerate(spike_times):
+        n_spikes = len(neuron_spike_times)
+        if n_spikes == 0:
+            u_all[:, neuron_idx] = U
+            x_all[:, neuron_idx] = 1.0
+            continue
+
+        t_spikes = np.insert(neuron_spike_times, 0, 0.0)
+        u_spikes = np.zeros(n_spikes + 1)
+        x_spikes = np.ones(n_spikes + 1)
+        u_spikes[0] = U
+        x_spikes[0] = 1.0
+        
+
+        # First computes the values of u and x at each spike time, 
+        # then maps them to the continuous time grid
+        for k in range(1, n_spikes + 1):
+            dt_spike = t_spikes[k] - t_spikes[k-1]
+            
+            u_pre = U - (U - u_spikes[k-1]) * np.exp(-dt_spike / tau_fac) if tau_fac > 0 else U
+            x_pre = 1.0 - (1.0 - x_spikes[k-1]) * np.exp(-dt_spike / tau_rec) if tau_rec > 0 else 1.0
+            
+            u_post = u_pre + U * (1.0 - u_pre)
+            x_post = x_pre - u_post * x_pre
+            
+            u_spikes[k] = u_post
+            x_spikes[k] = x_post
+            
+        idx = np.searchsorted(t_spikes, times, side='right') - 1
+        delta_t = times - t_spikes[idx]
+        
+        if tau_fac > 0:
+            u_all[:, neuron_idx] = U - (U - u_spikes[idx]) * np.exp(-delta_t / tau_fac)
+        else:
+            u_all[:, neuron_idx] = U
+            
+        if tau_rec > 0:
+            x_all[:, neuron_idx] = 1.0 - (1.0 - x_spikes[idx]) * np.exp(-delta_t / tau_rec)
+        else:
+            x_all[:, neuron_idx] = 1.0
+
+    return u_all, x_all
