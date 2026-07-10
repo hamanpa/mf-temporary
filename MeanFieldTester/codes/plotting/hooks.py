@@ -300,10 +300,30 @@ class NetworkOverviewPlottingHook(BasicWorkflowPlottingHook):
             [
                 network_plots.VoltagePlot({
                     **common_params,
+                    'xticks_labels' : None,
+                    'xticks' : [],
+                    'xlabel' : None,
                     'title' : None,
                     'ylim' : (-60, -54)
                     
                 }),                
+            ],
+            [
+                network_plots.STPVariableXPlot({
+                    **common_params,
+                    'xticks_labels' : None,
+                    'xticks' : [],
+                    'xlabel' : None,
+                    'title' : None,
+                    'ylim' : (0, 1)
+                })
+            ],
+            [
+                network_plots.STPVariableUPlot({
+                    **common_params,
+                    'title' : None,
+                    'ylim' : (0, 1)
+                })
             ]
         ]
 
@@ -347,6 +367,12 @@ class NetworkHistogramPlottingHook(BasicWorkflowPlottingHook):
                     **common_params,
                     # 'binsize': 0.0001,
                     
+                }),
+                network_plots.STPVariableXHistogramPlot({
+                    **common_params,
+                }),
+                network_plots.STPVariableUHistogramPlot({
+                    **common_params,
                 }),
             ]
         ]
