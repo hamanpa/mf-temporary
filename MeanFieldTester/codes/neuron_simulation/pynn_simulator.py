@@ -335,6 +335,12 @@ def simulate_adex_neuron_full_grid_multiprocess(neuron_name: str, neuron_params:
         exc_conductance_std=exc_conductance_std.mean(axis=2),
         inh_conductance_mean=inh_conductance_mean.mean(axis=2),
         inh_conductance_std=inh_conductance_std.mean(axis=2),
+        input_units = {
+            "exc_conductance_mean" : "uS",
+            "exc_conductance_std" : "uS",
+            "inh_conductance_mean" : "uS",
+            "inh_conductance_std" : "uS",
+        },
     )
 
 # Dealing with the grid

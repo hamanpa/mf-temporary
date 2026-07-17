@@ -26,10 +26,12 @@ class GridFigureHook:
         'axsize': (8, 5),  # Default size for each subplot
         'figsize': None,  # If not specified, it will be calculated from 'axsize'
         'title': None,  # Default title is None
-        'tight_layout': True,  # Use tight layout by default
         'savefig': True,  # Save figure by default
         'savefig_path': None,  # Path to save the figure
         'gridspec_kw': {},
+        # 'tight_layout': True,  # Deprecated in favor of constrained_layout
+        'constrained_layout': True,  # Use constrained layout by default
+        'bbox_inches': None,  # Save figure with tight bounding box
     }
 
     def __init__(
@@ -38,6 +40,8 @@ class GridFigureHook:
             savefig_dir: Path,
             fig_file_prefix: str,
             fig_params: dict = None,
+            common_params: dict = None,
+            subplot_params: dict = None,
             ):
         """
         Parameters
@@ -52,6 +56,8 @@ class GridFigureHook:
             Overrides for figure-level parameters.
         common_params : dict
             Common parameters for all plots in the grid.
+        subplot_params : dict
+            Parameters for each subplot.
         """
         
         # Validate the grid structure
@@ -61,6 +67,12 @@ class GridFigureHook:
         self.savefig_dir = Path(savefig_dir)
         self.fig_file_prefix = fig_file_prefix
         self.fig_params = {**self.DEFAULT_FIG_PARAMS, **(fig_params or {})}
+        self.common_params = common_params or {}
+        self.subplot_params = subplot_params or {}
+
+
+        if 'tight_layout' in self.fig_params:
+            print("Warning: 'tight_layout' is deprecated. 'constrained_layout' is used instead.")
         
 
     def __call__(
@@ -85,6 +97,7 @@ class GridFigureHook:
             self.rows, self.cols, 
             figsize=figsize, 
             squeeze=False, 
+            constrained_layout=self.fig_params['constrained_layout'],
             gridspec_kw=self.fig_params.get('gridspec_kw', {})
         )
 
@@ -94,7 +107,15 @@ class GridFigureHook:
             for col in range(self.cols):
                 plot = self.plot_grid[row][col]
                 ax = axes[row, col]
-                
+
+                # Apply subplot-specific overrides
+                class_name = plot.__class__.__name__
+                if class_name in self.subplot_params:
+                    plot.full_params.update(self.subplot_params[class_name])
+                coord = (row, col)
+                if coord in self.subplot_params:
+                    plot.full_params.update(self.subplot_params[coord])
+
                 if isinstance(plot, BaseSingleNeuronPlot):
                     im = plot.draw(ax, neuron_results=neuron_results)
                     if im is not None:
@@ -114,13 +135,10 @@ class GridFigureHook:
         if self.fig_params['title']:
             fig.suptitle(self.fig_params['title'] + f" - {identifier}")
 
-        if self.fig_params['tight_layout']:
-            fig.tight_layout()
-            
         if self.fig_params['savefig']:
             safe_identifier = identifier.replace(" ", "_")
             filepath = self.savefig_dir / f"{self.fig_file_prefix}_{safe_identifier}.png"
-            fig.savefig(filepath, dpi=self.fig_params['dpi'])
+            fig.savefig(filepath, dpi=self.fig_params['dpi'], bbox_inches=self.fig_params['bbox_inches'])
             
         plt.close(fig)
 
@@ -171,6 +189,7 @@ class NeuronActivityHook(BasicWorkflowPlottingHook):
             neuron_names: List[str],
             fig_params: dict = None,
             common_params: dict = None,
+            subplot_params: dict = None,
             ):
 
         plot_grid = [
@@ -200,7 +219,9 @@ class NeuronActivityHook(BasicWorkflowPlottingHook):
             plot_grid=plot_grid, 
             savefig_dir=savefig_dir, 
             fig_file_prefix=fig_file_prefix, 
-            fig_params=fig_params
+            fig_params=fig_params,
+            common_params=common_params,
+            subplot_params=subplot_params
         )
 
 class TransferFunctionPlottingHook(BasicWorkflowPlottingHook):
@@ -211,6 +232,7 @@ class TransferFunctionPlottingHook(BasicWorkflowPlottingHook):
             neuron_names: List[str],
             fig_params: dict = None,
             common_params: dict = None,
+            subplot_params: dict = None,
             ):
 
         plot_grid = [
@@ -236,7 +258,9 @@ class TransferFunctionPlottingHook(BasicWorkflowPlottingHook):
             plot_grid=plot_grid, 
             savefig_dir=savefig_dir, 
             fig_file_prefix=fig_file_prefix, 
-            fig_params=fig_params
+            fig_params=fig_params,
+            common_params=common_params,
+            subplot_params=subplot_params
         )
 
 
@@ -251,6 +275,7 @@ class NetworkOverviewPlottingHook(BasicWorkflowPlottingHook):
             fig_file_prefix: str,
             fig_params: dict = None,
             common_params: dict = None,
+            subplot_params: dict = None,
             ):
 
 
@@ -331,7 +356,9 @@ class NetworkOverviewPlottingHook(BasicWorkflowPlottingHook):
             plot_grid=plot_grid, 
             savefig_dir=savefig_dir, 
             fig_file_prefix=fig_file_prefix, 
-            fig_params=fig_params
+            fig_params=fig_params,
+            common_params=common_params,
+            subplot_params=subplot_params
         )
 
 class NetworkHistogramPlottingHook(BasicWorkflowPlottingHook):
@@ -341,6 +368,7 @@ class NetworkHistogramPlottingHook(BasicWorkflowPlottingHook):
             fig_file_prefix: str,
             fig_params: dict = None,
             common_params: dict = None,
+            subplot_params: dict = None,
             ):
 
 
@@ -381,7 +409,9 @@ class NetworkHistogramPlottingHook(BasicWorkflowPlottingHook):
             plot_grid=plot_grid, 
             savefig_dir=savefig_dir, 
             fig_file_prefix=fig_file_prefix, 
-            fig_params=fig_params
+            fig_params=fig_params,
+            common_params=common_params,
+            subplot_params=subplot_params
         )
 
 
@@ -394,6 +424,7 @@ class SteadyStateInspectionPlottingHook(InspectionWorkflowPlottingHook):
             fig_file_prefix: str,
             fig_params: dict,
             common_params: dict,
+            subplot_params: dict = None,
             ):
 
         plot_grid=[
@@ -414,7 +445,9 @@ class SteadyStateInspectionPlottingHook(InspectionWorkflowPlottingHook):
             plot_grid=plot_grid, 
             savefig_dir=savefig_dir, 
             fig_file_prefix=fig_file_prefix, 
-            fig_params=fig_params
+            fig_params=fig_params,
+            common_params=common_params,
+            subplot_params=subplot_params
         )
 
 class ComparisonInspectionPlottingHook(InspectionWorkflowPlottingHook):
@@ -450,15 +483,16 @@ class ComparisonInspectionPlottingHook(InspectionWorkflowPlottingHook):
             fig_file_prefix: str,
             fig_params: dict,
             common_params: dict,
+            subplot_params: dict = None,
             ):
-
-        self.common_params = common_params or {}
 
         super().__init__(
             plot_grid=[[]], 
             savefig_dir=savefig_dir, 
             fig_file_prefix=fig_file_prefix, 
-            fig_params=fig_params
+            fig_params=fig_params,
+            common_params=common_params,
+            subplot_params=subplot_params
         )
 
     def prepare_plot_grid(self, inspection_results: BaseInspectionResults):

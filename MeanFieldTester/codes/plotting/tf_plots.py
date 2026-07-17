@@ -7,6 +7,7 @@ from ..utils.list_helpers import indexed_linear_sample
 
 from ..data_structures.base import BaseSingleNeuronResults
 from ..transfer_function.base import BaseTransferFunction
+from ..network_params.translators import get_unit_multiplier
 
 from .base import BaseTransferFunctionPlot, LINESTYLES
 
@@ -16,8 +17,10 @@ class TransferFunctionFitPlot(BaseTransferFunctionPlot):
     DEFAULT_PARAMS = {
         **BaseTransferFunctionPlot.DEFAULT_PARAMS,
         'title': 'Single Neuron Activity',
-        'xlabel': r'$\nu_e$ [Hz]',
-        'ylabel': r'$\nu_{{out}}$ [Hz]',
+        'x_unit': 'Hz',
+        'y_unit': 'Hz',
+        'xlabel': r'$\nu_e$',
+        'ylabel': r'$\nu_{{out}}$',
         'curves_num': 5,  # Number of curves to plot for each neuron
         'linestyle': 'None',
         'linestyles': LINESTYLES,
@@ -41,6 +44,9 @@ class TransferFunctionFitPlot(BaseTransferFunctionPlot):
         neuron_results = neuron_results[self.full_params['neuron_name']]
         tf_funcs_list = tf_funcs_results[self.full_params['neuron_name']]
 
+        x_unit = self.full_params.get('x_unit', None)
+        y_unit = self.full_params.get('y_unit', None)
+
         if self.full_params['colors'] is None:
             prop_cycle = plt.rcParams['axes.prop_cycle']
             colors = prop_cycle.by_key()['color']            
@@ -52,17 +58,17 @@ class TransferFunctionFitPlot(BaseTransferFunctionPlot):
 
         self.full_params['linestyles'] = self.full_params['linestyles'][:len(tf_funcs_list)]
 
-        for j, (nu_i_idx, nu_i) in enumerate(indexed_linear_sample(neuron_results.inh_rate_grid()[0], self.full_params['curves_num'])):
+        for j, (nu_i_idx, nu_i) in enumerate(indexed_linear_sample(neuron_results.inh_rate_grid(x_unit)[0], self.full_params['curves_num'])):
 
             if self.full_params['yerrorbar']:
-                yerr = neuron_results.out_rate_std()[:, nu_i_idx]
+                yerr = neuron_results.out_rate_std(y_unit)[:, nu_i_idx]
             else:
                 yerr = None
 
             color = colors[j % len(colors)]
 
-            ax.errorbar(neuron_results.exc_rate_grid()[:,nu_i_idx],
-                        neuron_results.out_rate_mean()[:,nu_i_idx],
+            ax.errorbar(neuron_results.exc_rate_grid(x_unit)[:,nu_i_idx],
+                        neuron_results.out_rate_mean(y_unit)[:,nu_i_idx],
                         yerr= yerr,
                         marker=self.full_params['marker'],
                         linestyle=self.full_params['linestyle'],
@@ -71,18 +77,21 @@ class TransferFunctionFitPlot(BaseTransferFunctionPlot):
                         color=color,
                         )
 
+            # NOTE: Here a bit of hack, since transfer_function module does not 
+            # unit handling and expects Hz for rates and nA for adaptation,
+            # thus hardcoded unit conversion here. This should be fixed in the future.
             for tf_funcs, ls in zip(tf_funcs_list, self.full_params['linestyles'], strict=True):
                 if "adaptation"  in tf_funcs.required_inputs():
-                    adaptation = neuron_results.adaptation_mean()[:, nu_i_idx]
+                    adaptation = neuron_results.adaptation_mean("nA")[:, nu_i_idx]
                 else:
                     adaptation = None
 
                 nu_out_fit = tf_funcs(
-                    exc_rate = neuron_results.exc_rate_grid()[:,nu_i_idx], 
-                    inh_rate = neuron_results.inh_rate_grid()[:,nu_i_idx], 
-                    adaptation = adaptation)
+                    exc_rate = neuron_results.exc_rate_grid("Hz")[:,nu_i_idx], 
+                    inh_rate = neuron_results.inh_rate_grid("Hz")[:,nu_i_idx], 
+                    adaptation = adaptation)*get_unit_multiplier("Hz", y_unit)
 
-                ax.plot(neuron_results.exc_rate_grid()[:,nu_i_idx], 
+                ax.plot(neuron_results.exc_rate_grid(x_unit)[:,nu_i_idx], 
                         nu_out_fit, 
                         color=color, 
                         linestyle=ls,

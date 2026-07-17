@@ -40,15 +40,17 @@ class BaseResults:
         provided_unit = input_units.get(var_name, default_unit)
         
         if provided_unit != default_unit:
-            factor = get_unit_multiplier(provided_unit, default_unit)
-            return var_value * factor
+            return self._get_scaled(var_value, provided_unit, default_unit)
         return var_value
 
     def _get_scaled(self, data, source_unit, target_unit):
         """Internal helper to serve data in requested units."""
         if data is None or target_unit == source_unit:
             return data
-        return data * get_unit_multiplier(source_unit, target_unit)
+        factor = get_unit_multiplier(source_unit, target_unit)
+        if isinstance(data, list):
+            return [x * factor for x in data]
+        return data *factor
 
     def save(self, filepath):
         """

@@ -41,6 +41,8 @@ class BasePlot(ABC):
         'exc_color': EXC_COLOR,  # Default color for excitatory neurons
         'inh_color': INH_COLOR,  # Default color for inhibitory neurons
         'linewidth': 2.0,
+        'x_unit': None,  # Default x-axis unit
+        'y_unit': None,  # Default y-axis unit
     }
 
     def __init__(self, params=None):
@@ -78,8 +80,11 @@ class BasePlot(ABC):
         """Apply parameters after drawing the plot."""
 
         ax.set_title(params['title'])
-        ax.set_xlabel(params['xlabel'])
-        ax.set_ylabel(params['ylabel'])
+
+        xlabel = BasePlot.format_label_with_unit(params['xlabel'], params['x_unit'])
+        ylabel = BasePlot.format_label_with_unit(params['ylabel'], params['y_unit'])
+        ax.set_xlabel(xlabel)
+        ax.set_ylabel(ylabel)
 
         legend_config = params['legend']
         if legend_config is True:
@@ -103,9 +108,23 @@ class BasePlot(ABC):
     def add_colorbar(self, fig, ax, im):
         cbar = fig.colorbar(im, ax=ax)
 
-        label = self.full_params.get('colorbar_label', None)
+        zlabel = self.full_params.get('colorbar_label', None)
+        zunit = self.full_params.get('z_unit', None)
+        label = BasePlot.format_label_with_unit(zlabel, zunit)
+
         if label:
             cbar.set_label(label)
+
+@staticmethod
+def format_label_with_unit(label: str, unit: str) -> str:
+    if not label or not unit:
+        return label
+    import re
+    # Matches suffixes like "(Hz)", "[ms]", " (nA)" at the end of the string
+    pattern = r'\s*[\(\[][a-zA-Z\^\d/_-]+[\)\]]$'
+    if re.search(pattern, label):
+        return re.sub(pattern, f" [{unit}]", label)
+    return f"{label} [{unit}]"
 
 class BaseSingleNeuronPlot(BasePlot, ABC):
     """This is a meta class for single neuron plots, can be used to plot single neuron results."""
@@ -183,6 +202,60 @@ class BaseNetworkPlot(BasePlot, ABC):
             elif type(self.full_params['legend'] ) is dict:
                 self.full_params['legend']['handles'] = legend_elements
 
+    def iter_results(self, results_list: list):
+        """Update dynamic params and yield each result with its style metadata."""
+        self.update_params(results_list)
+        return zip(results_list, self.full_params['linestyles'], self.full_params['labels'])
+
+    def plot_single_series(self, ax, results, linestyle, label, getter, *, color, prefix=None, alpha=1.0):
+        values = getter(results)
+        if values is None:
+            return
+
+        series_label = f"{prefix} {label}" if prefix is not None else label
+        ax.plot(results.times(self.full_params['x_unit']), values, label=series_label, ls=linestyle, color=color, alpha=alpha)
+
+    def plot_pair_series(
+            self,
+            ax,
+            results,
+            linestyle,
+            label,
+            exc_getter,
+            inh_getter,
+            *,
+            exc_color,
+            inh_color,
+            exc_prefix='Exc',
+            inh_prefix='Inh',
+            alpha=1.0,
+            exc_std_getter=None,
+            inh_std_getter=None,
+            band_alpha=0.3,
+        ):
+        times = results.times(self.full_params['x_unit'])
+        exc_values = exc_getter(results)
+        if exc_values is not None:
+            ax.plot(times, exc_values, label=f'{exc_prefix} {label}', ls=linestyle, color=exc_color, alpha=alpha)
+
+        inh_values = inh_getter(results)
+        if inh_values is not None:
+            ax.plot(times, inh_values, label=f'{inh_prefix} {label}', ls=linestyle, color=inh_color, alpha=alpha)
+
+        if (
+            exc_std_getter is not None
+            and inh_std_getter is not None
+            and isinstance(results, BaseMFResults)
+            and linestyle != 'None'
+        ):
+            exc_std = exc_std_getter(results)
+            inh_std = inh_std_getter(results)
+
+            if exc_values is not None and exc_std is not None:
+                ax.fill_between(times, exc_values - exc_std, exc_values + exc_std, color=exc_color, alpha=band_alpha)
+            if inh_values is not None and inh_std is not None:
+                ax.fill_between(times, inh_values - inh_std, inh_values + inh_std, color=inh_color, alpha=band_alpha)
+
 
     @abstractmethod
     def _draw(
@@ -202,16 +275,17 @@ class BaseNetworkHistogramPlot(BaseNetworkPlot, ABC):
         'binsize': None,  # Size of the bins for the histogram
         'start_time': None,  # Start time for the histogram
         'end_time': None,  # End time for the histogram
+        'time_unit': 'ms',  # Time unit for the histogram
     }
 
     def update_params(self, results_list:list):
         super().update_params(results_list)
 
         if self.full_params['start_time'] is None:
-            self.full_params['start_time'] = max([results.times()[0] for results in results_list])
+            self.full_params['start_time'] = max([results.times(self.full_params['time_unit'])[0] for results in results_list])
 
         if self.full_params['end_time'] is None:
-            self.full_params['end_time'] = min([results.times()[-1] for results in results_list])
+            self.full_params['end_time'] = min([results.times(self.full_params['time_unit'])[-1] for results in results_list])
 
         if self.full_params['bins'] is None and self.full_params['binsize'] is None:
             print(f"Warning: Neither 'bins' nor 'binsize' specified for histogram plots. Using default number of bins {BINS}.")
@@ -242,6 +316,82 @@ class BaseNetworkHistogramPlot(BaseNetworkPlot, ABC):
         bin_edges = np.linspace(data_min, data_max, num_bins + 1)
 
         return bin_edges
+
+    def plot_hist_pair(
+            self,
+            ax,
+            exc_values,
+            inh_values,
+            label,
+            linestyle,
+            *,
+            exc_color,
+            inh_color,
+            exc_weights=None,
+            inh_weights=None,
+            density=False,
+        ):
+        bin_edges = self.get_bin_edges([exc_values, inh_values])
+
+        ax.hist(
+            exc_values,
+            bins=bin_edges,
+            alpha=0.5,
+            label=f'Exc {label}',
+            edgecolor=exc_color,
+            color=exc_color,
+            linestyle=linestyle,
+            density=density,
+            weights=exc_weights,
+        )
+        ax.hist(
+            inh_values,
+            bins=bin_edges,
+            alpha=0.5,
+            label=f'Inh {label}',
+            edgecolor=inh_color,
+            color=inh_color,
+            linestyle=linestyle,
+            density=density,
+            weights=inh_weights,
+        )
+
+    def plot_hist_lines(self, ax, exc_mean, inh_mean, label, linestyle, *, exc_color, inh_color):
+        ax.axvline(exc_mean, label=f'Exc {label}', color=exc_color, linestyle=linestyle)
+        ax.axvline(inh_mean, label=f'Inh {label}', color=inh_color, linestyle=linestyle)
+
+    def plot_mf_hist_pair(
+            self,
+            ax,
+            exc_mean,
+            inh_mean,
+            exc_std,
+            inh_std,
+            label,
+            linestyle,
+            *,
+            exc_color,
+            inh_color,
+            normalization=False,
+            density=False,
+        ):
+        x = np.linspace(0, max(exc_mean + 4 * exc_std, inh_mean + 4 * inh_std), 100)
+        dx = x[1] - x[0]
+
+        exc_gauss = np.exp(-0.5 * ((x - exc_mean) / exc_std) ** 2)
+        if normalization:
+            exc_gauss /= exc_gauss.max()
+        if density:
+            exc_gauss /= exc_gauss.sum() * dx
+
+        inh_gauss = np.exp(-0.5 * ((x - inh_mean) / inh_std) ** 2)
+        if normalization:
+            inh_gauss /= inh_gauss.max()
+        if density:
+            inh_gauss /= inh_gauss.sum() * dx
+
+        ax.plot(x, exc_gauss, label=f'Exc {label}', color=exc_color, linestyle=linestyle)
+        ax.plot(x, inh_gauss, label=f'Inh {label}', color=inh_color, linestyle=linestyle)
 
     @abstractmethod
     def _draw(

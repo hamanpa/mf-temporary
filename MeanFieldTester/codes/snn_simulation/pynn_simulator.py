@@ -140,7 +140,12 @@ class PyNNSNNSimulator(BaseSNNSimulator):
             ei_conductance_all = exc_data.filter(name='gsyn_inh')[0].magnitude,
             ie_conductance_all = inh_data.filter(name='gsyn_exc')[0].magnitude,
             ii_conductance_all = inh_data.filter(name='gsyn_inh')[0].magnitude,
-            input_units = None,
+            input_units = {
+                "ee_conductance_all" : "uS",
+                "ei_conductance_all" : "uS",
+                "ie_conductance_all" : "uS",
+                "ii_conductance_all" : "uS",
+            },
         )
 
         return results

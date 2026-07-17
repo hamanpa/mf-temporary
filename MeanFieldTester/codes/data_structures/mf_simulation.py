@@ -2,7 +2,7 @@ from .base import BaseMFResults
 from ..transfer_function.neuropsi_tf import MembranePotentialFluctuations
 from pydantic import BaseModel
 import numpy as np
-
+from ..utils.stp_helpers import calculate_steady_state_stp_variables
 
 
 class MFResults(BaseMFResults):
@@ -63,8 +63,10 @@ class MFResults(BaseMFResults):
         self.network_params = network_params
         self.stim_params = stim_params
 
+        self.ignore_stp = mf_sim_params.transfer_function.tf_model.static_synapses
+        
         input_units = input_units or {}
-
+        
         # --- Protected Physical Data (Stored in Default Units) ---
         self._times = self._ingest(times, "times", input_units)
         self._exc_rate_mean = self._ingest(exc_rate_mean, "exc_rate_mean", input_units)
@@ -86,12 +88,17 @@ class MFResults(BaseMFResults):
         self._exc_neuron_mpf = MembranePotentialFluctuations(
             neuron_name = network_params.exc_neuron_name,
             network_params = network_params,
+            ignore_stp = self.ignore_stp,
         )
 
         self._inh_neuron_mpf = MembranePotentialFluctuations(
             neuron_name = network_params.inh_neuron_name,
             network_params = network_params,
+            ignore_stp = self.ignore_stp,
         )
+
+        self._update_exc_stp_variables()
+        self._update_inh_stp_variables()
 
         # Freeze the object to prevent accidental attribute creation or modification
         self._finalized = True
@@ -145,6 +152,57 @@ class MFResults(BaseMFResults):
         default_unit = self.DEFAULT_UNITS["rate_cov"]
         target_unit = default_unit if unit is None else unit
         return self._get_scaled(self._rate_cov, default_unit, target_unit)
+
+    def _update_exc_stp_variables(self):
+        if self._exc_x_mean is not None and self._exc_y_mean is not None and self._exc_u_mean is not None:
+            return  # Already updated
+
+        synapse_params = self.network_params.synapses[self.network_params.exc_neuron_name].syn_params
+        if self.ignore_stp:
+            self._exc_x_mean = np.ones_like(self.exc_rate_mean("Hz"))
+            self._exc_y_mean = np.zeros_like(self.exc_rate_mean("Hz"))
+            self._exc_u_mean = np.ones_like(self.exc_rate_mean("Hz"))
+        else:
+            u = getattr(synapse_params, "U", 1.0)
+            tau_rec = getattr(synapse_params, "tau_rec", 0.0)
+            tau_fac = getattr(synapse_params, "tau_fac", 0.0)
+
+            x_steady, u_steady = calculate_steady_state_stp_variables(
+                rate=self.exc_rate_mean("Hz"),
+                u=u,
+                tau_rec=tau_rec,
+                tau_fac=tau_fac
+            )
+
+            self._exc_x_mean = x_steady
+            self._exc_y_mean = 1 - x_steady
+            self._exc_u_mean = u_steady
+
+
+    def _update_inh_stp_variables(self):
+        if self._inh_x_mean is not None and self._inh_y_mean is not None and self._inh_u_mean is not None:
+            return  # Already updated
+
+        synapse_params = self.network_params.synapses[self.network_params.inh_neuron_name].syn_params
+        if self.ignore_stp:
+            self._inh_x_mean = np.ones_like(self.inh_rate_mean("Hz"))
+            self._inh_y_mean = np.zeros_like(self.inh_rate_mean("Hz"))
+            self._inh_u_mean = np.ones_like(self.inh_rate_mean("Hz"))
+        else:
+            u = getattr(synapse_params, "U", 1.0)
+            tau_rec = getattr(synapse_params, "tau_rec", 0.0)
+            tau_fac = getattr(synapse_params, "tau_fac", 0.0)
+
+            x_steady, u_steady = calculate_steady_state_stp_variables(
+                rate=self.inh_rate_mean("Hz"),
+                u=u,
+                tau_rec=tau_rec,
+                tau_fac=tau_fac
+            )
+
+            self._inh_x_mean = x_steady
+            self._inh_y_mean = 1 - x_steady
+            self._inh_u_mean = u_steady
 
     def exc_x_mean(self, unit=None):
         default_unit = self.DEFAULT_UNITS["exc_x_mean"]
@@ -233,7 +291,7 @@ class MFResults(BaseMFResults):
         else:
             raise ValueError(f"Unknown target neuron name: {target_neuron_name}")
 
-        synapse_params = mpf.synapse_params(source_neuron_name)
+        synapse_params = mpf.synapse_params[source_neuron_name]
 
         if source_neuron_name == self.network_params.exc_neuron_name:
             rate = self.exc_rate_mean("Hz")

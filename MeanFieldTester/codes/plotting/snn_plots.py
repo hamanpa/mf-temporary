@@ -13,7 +13,9 @@ class SpikeRasterPlot(BaseSNNPlot):
     DEFAULT_PARAMS = {
         **BaseSNNPlot.DEFAULT_PARAMS,
         'title': 'Spike Raster Plot',
-        'xlabel': 'Time (ms)',
+        'x_unit': 'ms',
+        'y_unit': None,
+        'xlabel': 'Time',
         'ylabel': 'Neuron Index',
         'marker': 'o',
         'markersize': 7,
@@ -24,28 +26,12 @@ class SpikeRasterPlot(BaseSNNPlot):
     def _draw(self, ax, snn_results:BaseSNNResults):
         exc_cells = self.full_params['exc_cells']
         inh_cells = self.full_params['inh_cells']
-        for i, spiketrain in enumerate(snn_results.exc_spikes_all()[:exc_cells], start=1):
+
+        x_unit = self.full_params['x_unit']
+
+        for i, spiketrain in enumerate(snn_results.exc_spikes_all(x_unit)[:exc_cells], start=1):
             ax.scatter(spiketrain, i * np.ones_like(spiketrain), color=self.full_params['exc_color'], 
                        marker=self.full_params['marker'], s=self.full_params['markersize'], lw=0)
-        for i, spiketrain in enumerate(snn_results.inh_spikes_all()[:inh_cells], start=exc_cells + 1):
+        for i, spiketrain in enumerate(snn_results.inh_spikes_all(x_unit)[:inh_cells], start=exc_cells + 1):
             ax.scatter(spiketrain, i * np.ones_like(spiketrain), color=self.full_params['inh_color'],
                        marker=self.full_params['marker'], s=self.full_params['markersize'], lw=0)
-
-
-class ActivityHistogramPlot(BaseSNNPlot):
-    """Plot the activity histogram of excitatory and inhibitory neurons."""
-    DEFAULT_PARAMS = {
-        **BaseSNNPlot.DEFAULT_PARAMS,
-        'title': 'Activity Histogram',
-        'xlabel': 'Time (ms)',
-        'ylabel': 'Firing Rate (Hz)',
-        'binsize': BIN_SIZE,  # Size of the bins for the histogram
-    }
-
-    def _draw(self, ax, snn_results:BaseSNNResults):
-        exc_activity = activity_from_spikes_histogram(snn_results.exc_spikes_all(), snn_results.times(), self.full_params['binsize'])
-        inh_activity = activity_from_spikes_histogram(snn_results.inh_spikes_all(), snn_results.times(), self.full_params['binsize'])
-        
-        ax.plot(snn_results.times(), exc_activity, label='Excitatory', color=self.full_params['exc_color'])
-        ax.plot(snn_results.times(), inh_activity, label='Inhibitory', color=self.full_params['inh_color'])
-

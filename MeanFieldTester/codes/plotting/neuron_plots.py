@@ -10,8 +10,10 @@ class SingleNeuronActivityPlot(BaseSingleNeuronPlot):
     DEFAULT_PARAMS = {
         **BaseSingleNeuronPlot.DEFAULT_PARAMS,
         'title': 'Single Neuron Activity',
-        'xlabel': r'$\nu_e$ [Hz]',
-        'ylabel': r'$\nu_{{out}}$ [Hz]',
+        'x_unit': 'Hz',
+        'y_unit': 'Hz',
+        'xlabel': r'$\nu_e$',
+        'ylabel': r'$\nu_{{out}}$',
         'curves_num': 5,  # Number of curves to plot for each neuron
         'linestyle': 'None',
         'marker': 'o',
@@ -28,18 +30,22 @@ class SingleNeuronActivityPlot(BaseSingleNeuronPlot):
             ) -> None:
         single_neuron_result = neuron_results[self.full_params['neuron_name']]
         plt.gca().set_prop_cycle(None)
-            
-        for j, (nu_i_idx, nu_i) in enumerate(indexed_linear_sample(single_neuron_result.inh_rate_grid()[0], self.full_params['curves_num'])):
+
+        x_unit = self.full_params.get('x_unit', None)
+        y_unit = self.full_params.get('y_unit', None)
+
+
+        for j, (nu_i_idx, nu_i) in enumerate(indexed_linear_sample(single_neuron_result.inh_rate_grid(x_unit)[0], self.full_params['curves_num'])):
             if self.full_params['labels'] is None:
-                label = fr'$\nu_i$={nu_i:.0f} Hz'
+                label = fr'$\nu_i$={nu_i:.0f} [{x_unit}]'
             else:
                 label = self.full_params['labels'][j]
             if self.full_params['yerrorbar']:
-                yerr = single_neuron_result.out_rate_std()[:, nu_i_idx]
+                yerr = single_neuron_result.out_rate_std(y_unit)[:, nu_i_idx]
             else:
                 yerr = None
-            ax.errorbar(single_neuron_result.exc_rate_grid()[:,nu_i_idx],
-                        single_neuron_result.out_rate_mean()[:,nu_i_idx],
+            ax.errorbar(single_neuron_result.exc_rate_grid(x_unit)[:,nu_i_idx],
+                        single_neuron_result.out_rate_mean(y_unit)[:,nu_i_idx],
                         yerr= yerr,
                         marker=self.full_params['marker'],
                         linestyle=self.full_params['linestyle'],
@@ -54,8 +60,10 @@ class SingleNeuronAdaptationPlot(BaseSingleNeuronPlot):
     DEFAULT_PARAMS = {
         **BaseSingleNeuronPlot.DEFAULT_PARAMS,
         'title': 'Single Neuron Adaptation',
-        'xlabel': r'$\nu_e$ [Hz]',
-        'ylabel': r'$w$ [pA]',
+        'x_unit': 'Hz',
+        'y_unit': 'pA',
+        'xlabel': r'$\nu_e$',
+        'ylabel': r'$w$',
         'curves_num': 5,  # Number of curves to plot for each neuron
         'linestyle': 'None',
         'marker': 'o',
@@ -70,20 +78,23 @@ class SingleNeuronAdaptationPlot(BaseSingleNeuronPlot):
             ax, 
             neuron_results: Dict[str, BaseSingleNeuronResults], 
             ) -> None:
-        single_neuron_result = neuron_results[self.DEFAULT_PARAMS['neuron_name']]
+        single_neuron_result = neuron_results[self.full_params['neuron_name']]
         plt.gca().set_prop_cycle(None)
-            
-        for j, (nu_i_idx, nu_i) in enumerate(indexed_linear_sample(single_neuron_result.inh_rate_grid()[0], self.full_params['curves_num'])):
+
+        x_unit = self.full_params.get('x_unit', None)
+        y_unit = self.full_params.get('y_unit', None)
+
+        for j, (nu_i_idx, nu_i) in enumerate(indexed_linear_sample(single_neuron_result.inh_rate_grid(x_unit)[0], self.full_params['curves_num'])):
             if self.full_params['labels'] is None:
-                label = fr'$\nu_i$={nu_i:.0f} Hz'
+                label = fr'$\nu_i$={nu_i:.0f} [{x_unit}]'
             else:
                 label = self.full_params['labels'][j]
             if self.full_params['yerrorbar']:
-                yerr = single_neuron_result.adaptation_std()[:, nu_i_idx]
+                yerr = single_neuron_result.adaptation_std(y_unit)[:, nu_i_idx]
             else:
                 yerr = None
-            ax.errorbar(single_neuron_result.exc_rate_grid()[:,nu_i_idx],
-                        single_neuron_result.adaptation_mean()[:,nu_i_idx],
+            ax.errorbar(single_neuron_result.exc_rate_grid(x_unit)[:,nu_i_idx],
+                        single_neuron_result.adaptation_mean(y_unit)[:,nu_i_idx],
                         yerr= yerr,
                         marker=self.full_params['marker'],
                         linestyle=self.full_params['linestyle'],
@@ -98,14 +109,17 @@ class SingleNeuronAdaptationHeatmapPlot(BaseSingleNeuronPlot):
     DEFAULT_PARAMS = {
         **BaseSingleNeuronPlot.DEFAULT_PARAMS,
         'title': 'Single Neuron Adaptation Heatmap',
-        'xlabel': r'$\nu_e$ [Hz]',
-        'ylabel': r'$\nu_i$ [Hz]',
+        'xlabel': r'$\nu_e$',
+        'ylabel': r'$\nu_i$',
+        'x_unit': 'Hz',
+        'y_unit': 'Hz',
+        'z_unit': 'pA',
         'vmin': None,  # Minimum value for the heatmap
         'vmax': None,  # Maximum value for the heatmap
         'levels': 10,  # Number of levels in the heatmap
         'cmap': 'viridis',  # Colormap for the heatmap
         'extend': 'neither',  # Extend the colorbar to the maximum value
-        'colorbar_label': 'adaptation [nA]',  # Label for the colorbar
+        'colorbar_label': 'adaptation',  # Label for the colorbar
     }
 
     def _draw(
@@ -113,10 +127,15 @@ class SingleNeuronAdaptationHeatmapPlot(BaseSingleNeuronPlot):
             ax, 
             neuron_results: Dict[str, BaseSingleNeuronResults], 
             ) -> None:
-        single_neuron_result = neuron_results[self.DEFAULT_PARAMS['neuron_name']]
-        im = ax.contourf(single_neuron_result.exc_rate_grid(),
-                         single_neuron_result.inh_rate_grid(),
-                         single_neuron_result.adaptation_mean(),
+        single_neuron_result = neuron_results[self.full_params['neuron_name']]
+
+        x_unit = self.full_params.get('x_unit', None)
+        y_unit = self.full_params.get('y_unit', None)
+        z_unit = self.full_params.get('z_unit', None)
+
+        im = ax.contourf(single_neuron_result.exc_rate_grid(x_unit),
+                         single_neuron_result.inh_rate_grid(y_unit),
+                         single_neuron_result.adaptation_mean(z_unit),
                          levels=self.full_params['levels'],
                          extend=self.full_params['extend'],
                          vmin=self.full_params['vmin'],
@@ -131,14 +150,17 @@ class SingleNeuronActivityHeatmapPlot(BaseSingleNeuronPlot):
     DEFAULT_PARAMS = {
         **BaseSingleNeuronPlot.DEFAULT_PARAMS,
         'title': 'Single Neuron Activity Heatmap',
-        'xlabel': r'$\nu_e$ [Hz]',
-        'ylabel': r'$\nu_i$ [Hz]',
+        'x_unit': 'Hz',
+        'y_unit': 'Hz',
+        'z_unit': 'Hz',
+        'xlabel': r'$\nu_e$',
+        'ylabel': r'$\nu_i$',
         'vmin': None,  # Minimum value for the heatmap
         'vmax': None,  # Maximum value for the heatmap
         'levels': 10,  # Number of levels in the heatmap
         'cmap': 'viridis',  # Colormap for the heatmap
         'extend': 'max',  # Extend the colorbar to the maximum value
-        'colorbar_label': r'$\nu_{{out}}$ [Hz]',  # Label for the colorbar
+        'colorbar_label': r'$\nu_{{out}}$',  # Label for the colorbar
     }
 
     def _draw(
@@ -147,9 +169,14 @@ class SingleNeuronActivityHeatmapPlot(BaseSingleNeuronPlot):
             neuron_results: Dict[str, BaseSingleNeuronResults], 
             ) -> None:
         single_neuron_result = neuron_results[self.full_params['neuron_name']]
-        im = ax.contourf(single_neuron_result.exc_rate_grid(),
-                         single_neuron_result.inh_rate_grid(),
-                         single_neuron_result.out_rate_mean(),
+
+        x_unit = self.full_params.get('x_unit', None)
+        y_unit = self.full_params.get('y_unit', None)
+        z_unit = self.full_params.get('z_unit', None)
+
+        im = ax.contourf(single_neuron_result.exc_rate_grid(x_unit),
+                         single_neuron_result.inh_rate_grid(y_unit),
+                         single_neuron_result.out_rate_mean(z_unit),
                          levels=self.full_params['levels'],
                          extend=self.full_params['extend'],
                          vmin=self.full_params['vmin'],

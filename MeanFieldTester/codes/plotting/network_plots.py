@@ -12,8 +12,10 @@ class FiringRatePlot(BaseNetworkPlot):
     DEFAULT_PARAMS = {
         **BaseNetworkPlot.DEFAULT_PARAMS,
         'title': 'Firing Rate over Time',
-        'xlabel': 'Time (ms)',
-        'ylabel': 'Firing Rate (Hz)',
+        'x_unit': 'ms',
+        'y_unit': 'Hz',
+        'xlabel': 'Time',
+        'ylabel': 'Firing Rate',
     }
 
     def _draw(
@@ -21,23 +23,23 @@ class FiringRatePlot(BaseNetworkPlot):
             ax, 
             network_results_list: List[BaseSNNResults | BaseMFResults],
             ) -> None:
+        x_unit = self.full_params['x_unit']
+        y_unit = self.full_params['y_unit']
 
-        self.update_params(network_results_list)
-
-        for results, ls, label in zip(network_results_list, self.full_params['linestyles'], self.full_params['labels']):
-            alpha = 0.5 if isinstance(results, BaseSNNResults) else 1.0
-            ax.plot(results.times(), results.exc_rate_mean(), label=f'Exc {label}', ls=ls, color=self.full_params['exc_color'], alpha=alpha)
-            ax.plot(results.times(), results.inh_rate_mean(), label=f'Inh {label}', ls=ls, color=self.full_params['inh_color'], alpha=alpha)
-            if isinstance(results, BaseMFResults) and ls != 'None':
-                ax.fill_between(results.times(), 
-                                results.exc_rate_mean() - results.exc_rate_std(),
-                                results.exc_rate_mean() + results.exc_rate_std(), 
-                                color=self.full_params['exc_color'], alpha=0.3)
-                ax.fill_between(results.times(), 
-                                results.inh_rate_mean() - results.inh_rate_std(),
-                                results.inh_rate_mean() + results.inh_rate_std(), 
-                                color=self.full_params['inh_color'], alpha=0.3)
-
+        for results, ls, label in self.iter_results(network_results_list):
+            self.plot_pair_series(
+                ax,
+                results,
+                ls,
+                label,
+                exc_getter=lambda result: result.exc_rate_mean(y_unit),
+                inh_getter=lambda result: result.inh_rate_mean(y_unit),
+                exc_color=self.full_params['exc_color'],
+                inh_color=self.full_params['inh_color'],
+                alpha=0.5 if isinstance(results, BaseSNNResults) else 1.0,
+                exc_std_getter=lambda result: result.exc_rate_std(y_unit),
+                inh_std_getter=lambda result: result.inh_rate_std(y_unit),
+            )
 
 class FiringRateAndStimulusPlot(BaseNetworkPlot):
     """Plot the firing rate of excitatory and inhibitory neurons over time with stimulus."""
@@ -63,8 +65,7 @@ class FiringRateAndStimulusPlot(BaseNetworkPlot):
             ax, 
             network_results_list: List[BaseSNNResults | BaseMFResults],
             ) -> None:
-        self.update_params(network_results_list)
- 
+        print("WARNING: FiringRateAndStimulusPlot does not have implemented unit handling, thus it is assumed that the rates are in Hz and time in ms.")
         # Spliting the axis into two nested subplots
         gs_nested_fr_stim = ax.get_subplotspec().subgridspec(
                 nrows=2, ncols=1,
@@ -83,8 +84,15 @@ class FiringRateAndStimulusPlot(BaseNetworkPlot):
 
         self.apply_preplot_params(ax_lower, self.full_params | self.LOWER_PLOT_PARAMS)
 
-        for results, ls, label in zip(network_results_list, self.full_params['linestyles'], self.full_params['labels']):
-            ax_lower.plot(results.times(), results.drive_rate_mean() + results.stim_rate_mean(), label=label, ls=ls, color='black')
+        for results, ls, label in self.iter_results(network_results_list):
+            self.plot_single_series(
+                ax_lower,
+                results,
+                ls,
+                label,
+                getter=lambda result: result.drive_rate_mean() + result.stim_rate_mean(),
+                color='black',
+            )
             # NOTE: for some reason the loop take ridiculous amount of time,
             # so we plot only the first one
             break
@@ -96,8 +104,10 @@ class StimulusPlot(BaseNetworkPlot):
     DEFAULT_PARAMS = {
         **BaseNetworkPlot.DEFAULT_PARAMS,
         'title': 'Stimulus',
-        'xlabel': 'Time (ms)',
-        'ylabel': 'Rate (Hz)',
+        'x_unit': 'ms',
+        'y_unit': 'Hz',
+        'xlabel': 'Time',
+        'ylabel': 'Rate',
         'stim_linestyle': '--',
         'drive_linestyle': ':',
     }
@@ -108,9 +118,13 @@ class StimulusPlot(BaseNetworkPlot):
             network_results_list: List[BaseSNNResults | BaseMFResults],
             ) -> None:
 
-        times = network_results_list[0].times()
-        stimulus_rate = network_results_list[0].stim_rate_mean("Hz")
-        drive_rate = network_results_list[0].drive_rate_mean("Hz")
+        x_unit = self.full_params['x_unit']
+        y_unit = self.full_params['y_unit']
+
+        results = network_results_list[0]
+        times = results.times(x_unit)
+        stimulus_rate = results.stim_rate_mean(y_unit)
+        drive_rate = results.drive_rate_mean(y_unit)
 
         ax.plot(times, stimulus_rate, self.full_params['stim_linestyle'], color='black', label='Stimulus rate')
         ax.plot(times, drive_rate, self.full_params['drive_linestyle'], color='black', label='Drive rate')
@@ -121,8 +135,10 @@ class AdaptationPlot(BaseNetworkPlot):
     DEFAULT_PARAMS = {
         **BaseNetworkPlot.DEFAULT_PARAMS,
         'title': 'Exc Adaptation',
-        'xlabel': 'Time (ms)',
-        'ylabel': 'Adaptation (nA)',
+        'x_unit': 'ms',
+        'y_unit': 'nA',
+        'xlabel': 'Time',
+        'ylabel': 'Adaptation',
     }
 
     def _draw(
@@ -132,8 +148,11 @@ class AdaptationPlot(BaseNetworkPlot):
             ) -> None:
         self.update_params(network_results_list)
 
+        x_unit = self.full_params['x_unit']
+        y_unit = self.full_params['y_unit']
+
         for results, ls, label in zip(network_results_list, self.full_params['linestyles'], self.full_params['labels']):
-            ax.plot(results.times(), results.exc_adaptation_mean(), label=label, ls=ls, color='blue')
+            ax.plot(results.times(x_unit), results.exc_adaptation_mean(y_unit), label=label, ls=ls, color='blue')
 
 class StimulusWithAdaptationPlot(BaseNetworkPlot):
     """Plot the stimulus with adaptation over time."""
@@ -149,14 +168,36 @@ class StimulusWithAdaptationPlot(BaseNetworkPlot):
             ax, 
             network_results_list: List[BaseSNNResults | BaseMFResults],
             ) -> None:
-        self.update_params(network_results_list)
+
+        print("WARNING: StimulusWithAdaptationPlot does not have implemented unit handling! Unit may be wrong in the plot.")
 
         axtwin = ax.twinx()  
 
-        ax.plot(network_results_list[0].times(), network_results_list[0].drive_rate_mean(), "--", color='black', label='Drive rate')
-        ax.plot(network_results_list[0].times(), network_results_list[0].stim_rate_mean(), "-.", color='black', label='Stimulus rate')
-        for results, ls, label in zip(network_results_list, self.full_params['linestyles'], self.full_params['labels']):
-            axtwin.plot(results.times(), results.exc_adaptation_mean(), ls=ls, color='blue', label=label)
+        self.plot_single_series(
+            ax,
+            network_results_list[0],
+            '--',
+            'Drive rate',
+            getter=lambda result: result.drive_rate_mean(),
+            color='black',
+        )
+        self.plot_single_series(
+            ax,
+            network_results_list[0],
+            '-.',
+            'Stimulus rate',
+            getter=lambda result: result.stim_rate_mean(),
+            color='black',
+        )
+        for results, ls, label in self.iter_results(network_results_list):
+            self.plot_single_series(
+                axtwin,
+                results,
+                ls,
+                label,
+                getter=lambda result: result.exc_adaptation_mean(),
+                color='blue',
+            )
 
         axtwin.set_ylabel("Adaptation current (nA)", color="blue")
         axtwin.tick_params(axis ='y', labelcolor = "blue")
@@ -169,8 +210,10 @@ class VoltagePlot(BaseNetworkPlot):
     DEFAULT_PARAMS = {
         **BaseNetworkPlot.DEFAULT_PARAMS,
         'title': 'Mean Membrane Potential',
-        'xlabel': 'Time (ms)',
-        'ylabel': 'Membrane potential (mV)',
+        'x_unit': 'ms',
+        'y_unit': 'mV',
+        'xlabel': 'Time',
+        'ylabel': 'Membrane potential',
     }
 
     def _draw(
@@ -178,18 +221,29 @@ class VoltagePlot(BaseNetworkPlot):
             ax, 
             network_results_list: List[BaseSNNResults | BaseMFResults],
             ) -> None:
-        self.update_params(network_results_list)
 
-        for results, ls, label in zip(network_results_list, self.full_params['linestyles'], self.full_params['labels']):
-            ax.plot(results.times(), results.exc_voltage_mean(), label=f'Exc {label}', ls=ls, color=self.full_params['exc_color'])
-            ax.plot(results.times(), results.inh_voltage_mean(), label=f'Inh {label}', ls=ls, color=self.full_params['inh_color'])
+        y_unit = self.full_params['y_unit']
+            
+        for results, ls, label in self.iter_results(network_results_list):
+            self.plot_pair_series(
+                ax,
+                results,
+                ls,
+                label,
+                exc_getter=lambda result: result.exc_voltage_mean(y_unit),
+                inh_getter=lambda result: result.inh_voltage_mean(y_unit),
+                exc_color=self.full_params['exc_color'],
+                inh_color=self.full_params['inh_color'],
+            )
 
 class STPVariableXPlot(BaseNetworkPlot):
     """Plot the STP variable x of excitatory and inhibitory neurons over time."""
     DEFAULT_PARAMS = {
         **BaseNetworkPlot.DEFAULT_PARAMS,
         'title': 'Mean STP Variable x',
-        'xlabel': 'Time (ms)',
+        'x_unit': 'ms',
+        'y_unit': None,
+        'xlabel': 'Time',
         'ylabel': 'STP variable x',
     }
 
@@ -198,20 +252,29 @@ class STPVariableXPlot(BaseNetworkPlot):
             ax, 
             network_results_list: List[BaseSNNResults | BaseMFResults],
             ) -> None:
-        self.update_params(network_results_list)
 
-        for results, ls, label in zip(network_results_list, self.full_params['linestyles'], self.full_params['labels']):
-            if results.exc_x_mean() is not None:
-                ax.plot(results.times(), results.exc_x_mean(), label=f'Exc {label}', ls=ls, color=self.full_params['exc_color'])
-            if results.inh_x_mean() is not None:
-                ax.plot(results.times(), results.inh_x_mean(), label=f'Inh {label}', ls=ls, color=self.full_params['inh_color'])
+        y_unit = self.full_params['y_unit']
+
+        for results, ls, label in self.iter_results(network_results_list):
+            self.plot_pair_series(
+                ax,
+                results,
+                ls,
+                label,
+                exc_getter=lambda result: result.exc_x_mean(y_unit),
+                inh_getter=lambda result: result.inh_x_mean(y_unit),
+                exc_color=self.full_params['exc_color'],
+                inh_color=self.full_params['inh_color'],
+            )
 
 class STPVariableUPlot(BaseNetworkPlot):
     """Plot the STP variable u of excitatory and inhibitory neurons over time."""
     DEFAULT_PARAMS = {
         **BaseNetworkPlot.DEFAULT_PARAMS,
         'title': 'Mean STP Variable u',
-        'xlabel': 'Time (ms)',
+        'x_unit': 'ms',
+        'y_unit': None,
+        'xlabel': 'Time',
         'ylabel': 'STP variable u',
     }
 
@@ -220,14 +283,20 @@ class STPVariableUPlot(BaseNetworkPlot):
             ax, 
             network_results_list: List[BaseSNNResults | BaseMFResults],
             ) -> None:
-        self.update_params(network_results_list)
 
+        y_unit = self.full_params['y_unit']
 
-        for results, ls, label in zip(network_results_list, self.full_params['linestyles'], self.full_params['labels']):
-            if results.exc_u_mean() is not None:
-                ax.plot(results.times(), results.exc_u_mean(), label=f'Exc {label}', ls=ls, color=self.full_params['exc_color'])
-            if results.inh_u_mean() is not None:
-                ax.plot(results.times(), results.inh_u_mean(), label=f'Inh {label}', ls=ls, color=self.full_params['inh_color'])
+        for results, ls, label in self.iter_results(network_results_list):
+            self.plot_pair_series(
+                ax,
+                results,
+                ls,
+                label,
+                exc_getter=lambda result: result.exc_u_mean(y_unit),
+                inh_getter=lambda result: result.inh_u_mean(y_unit),
+                exc_color=self.full_params['exc_color'],
+                inh_color=self.full_params['inh_color'],
+            )
 
 
 
@@ -236,7 +305,8 @@ class FiringRateHistogramPlot(BaseNetworkHistogramPlot):
     DEFAULT_PARAMS = {
         **BaseNetworkHistogramPlot.DEFAULT_PARAMS,
         'title': 'Firing Rate Histogram',
-        'xlabel': 'Firing Rate (Hz)',
+        'xlabel': 'Firing Rate',
+        'x_unit': 'Hz',
     }
 
     def _draw(
@@ -244,76 +314,83 @@ class FiringRateHistogramPlot(BaseNetworkHistogramPlot):
             ax, 
             network_results_list: List[BaseSNNResults | BaseMFResults],
             ) -> None:
-        self.update_params(network_results_list)
 
-        for results, ls, label in zip(network_results_list, self.full_params['linestyles'], self.full_params['labels']):
+        x_unit = self.full_params['x_unit']
+        time_unit = self.full_params['time_unit']
+
+        for results, ls, label in self.iter_results(network_results_list):
             if results.stim_params.pattern != 'NoStimulus':
                 raise ValueError("FiringRateHistogramPlot only works for no stimulus simulations.")
             
             if isinstance(results, BaseSNNResults):
-                exc_rates = calc_per_cell_rates(results.exc_spikes_all(), start_time=self.full_params['start_time'], end_time=self.full_params['end_time'])
-                inh_rates = calc_per_cell_rates(results.inh_spikes_all(), start_time=self.full_params['start_time'], end_time=self.full_params['end_time'])
-                exc_neuron_count = len(results.exc_spikes_all())
-                inh_neuron_count = len(results.inh_spikes_all())
-
-
-                bin_edges = self.get_bin_edges([exc_rates, inh_rates])
-
-                ax.hist(exc_rates, bins=bin_edges, alpha=0.5, label=f'Exc {label}', edgecolor=self.full_params['exc_color'], color=self.full_params['exc_color'], linestyle=ls, 
-                        density=self.full_params['density'] ,
-                        weights=np.ones(exc_neuron_count) / exc_neuron_count  if self.full_params['normalization'] else None  # Normalize by number of excitatory neurons
+                exc_rates = calc_per_cell_rates(
+                    results.exc_spikes_all("ms"), 
+                    start_time=results._get_scaled(self.full_params['start_time'], time_unit, "ms"), 
+                    end_time=results._get_scaled(self.full_params['end_time'],time_unit, "ms")
                 )
-                ax.hist(inh_rates, bins=bin_edges, alpha=0.5, label=f'Inh {label}', edgecolor=self.full_params['inh_color'], color=self.full_params['inh_color'], linestyle=ls, 
-                        density=self.full_params['density'] ,
-                        weights=np.ones(inh_neuron_count) / inh_neuron_count  if self.full_params['normalization'] else None  # Normalize by number of inhibitory neurons
+                inh_rates = calc_per_cell_rates(
+                    results.inh_spikes_all("ms"), 
+                    start_time=results._get_scaled(self.full_params['start_time'], time_unit, "ms"), 
+                    end_time=results._get_scaled(self.full_params['end_time'], time_unit, "ms")
+                )
+                exc_neuron_count = len(results.exc_spikes_all("ms"))
+                inh_neuron_count = len(results.inh_spikes_all("ms"))
+
+                exc_rates = results._get_scaled(exc_rates, "Hz", x_unit)
+                inh_rates = results._get_scaled(inh_rates, "Hz", x_unit)
+
+                self.plot_hist_pair(
+                    ax,
+                    exc_rates,
+                    inh_rates,
+                    label,
+                    ls,
+                    exc_color=self.full_params['exc_color'],
+                    inh_color=self.full_params['inh_color'],
+                    exc_weights=np.ones(exc_neuron_count) / exc_neuron_count if self.full_params['normalization'] else None,
+                    inh_weights=np.ones(inh_neuron_count) / inh_neuron_count if self.full_params['normalization'] else None,
+                    density=self.full_params['density'],
                 )
 
             elif isinstance(results, BaseMFResults):
-                mask = results.times() >= self.full_params['start_time']
-                exc_mean = np.mean(results.exc_rate_mean()[mask])
-                inh_mean = np.mean(results.inh_rate_mean()[mask])
+                mask = (results.times(time_unit) >= self.full_params['start_time']) & (results.times(time_unit) <= self.full_params['end_time'])
+                exc_mean = np.mean(results.exc_rate_mean(x_unit)[mask])
+                inh_mean = np.mean(results.inh_rate_mean(x_unit)[mask])
                 if ((results.exc_rate_std() is not None) 
                             and (results.exc_rate_std().size > 0)
                             and (results.inh_rate_std() is not None) 
                             and (results.inh_rate_std().size > 0)):
-                    exc_std = np.mean(results.exc_rate_std()[mask])
-                    inh_std = np.mean(results.inh_rate_std()[mask])
-                    
-                    x = np.linspace(0, max(exc_mean + 4*exc_std, inh_mean + 4*inh_std), 100)
-                    dx = x[1] - x[0]
-
-                    exc_gauss = np.exp( -0.5 * ((x - exc_mean)/exc_std)**2)
-                    if self.full_params['normalization']:
-                        exc_gauss /= exc_gauss.max()
-                    if self.full_params['density']:
-                        exc_gauss /= exc_gauss.sum()*dx
-
-                    inh_gauss = np.exp( -0.5 * ((x - inh_mean)/inh_std)**2)
-                    if self.full_params['normalization']:
-                        inh_gauss /= inh_gauss.max()
-                    if self.full_params['density']:
-                        inh_gauss /= inh_gauss.sum()*dx
-                    
-                    ax.plot(x, exc_gauss, label=f'Exc {label}', color=self.full_params['exc_color'], linestyle=ls)
-                    ax.plot(x, inh_gauss, label=f'Inh {label}', color=self.full_params['inh_color'], linestyle=ls)
+                    self.plot_mf_hist_pair(
+                        ax,
+                        exc_mean,
+                        inh_mean,
+                        np.mean(results.exc_rate_std(x_unit)[mask]),
+                        np.mean(results.inh_rate_std(x_unit)[mask]),
+                        label,
+                        ls,
+                        exc_color=self.full_params['exc_color'],
+                        inh_color=self.full_params['inh_color'],
+                        normalization=self.full_params['normalization'],
+                        density=self.full_params['density'],
+                    )
                 else:
-                    ax.axvline(exc_mean, label=f'Exc {label}', color=self.full_params['exc_color'], linestyle=ls)
-                    ax.axvline(inh_mean, label=f'Inh {label}', color=self.full_params['inh_color'], linestyle=ls)
-
-    def plot_bell_curve(self, ax, mean, std, color, linestyle):
-        x = np.linspace(mean - 4*std, mean + 4*std, 100)
-        y = np.exp( -0.5 * ((x - mean)/std)**2)
-        ax.plot(x, y, color=color, linestyle=linestyle)
-
-    def plot_mf_hist(self, ax):
-        pass
+                    self.plot_hist_lines(
+                        ax,
+                        exc_mean,
+                        inh_mean,
+                        label,
+                        ls,
+                        exc_color=self.full_params['exc_color'],
+                        inh_color=self.full_params['inh_color'],
+                    )
 
 class VoltageHistogramPlot(BaseNetworkHistogramPlot):
     """Plot the voltage histogram of excitatory and inhibitory neurons."""
     DEFAULT_PARAMS = {
         **BaseNetworkHistogramPlot.DEFAULT_PARAMS,
         'title': 'Voltage Histogram',
-        'xlabel': 'Membrane potential (mV)',
+        'xlabel': 'Membrane potential',
+        'x_unit': 'mV',
     }
 
     def _draw(
@@ -321,21 +398,42 @@ class VoltageHistogramPlot(BaseNetworkHistogramPlot):
             ax, 
             network_results_list: List[BaseSNNResults | BaseMFResults],
             ) -> None:
-        self.update_params(network_results_list)
 
-        for results, ls, label in zip(network_results_list, self.full_params['linestyles'], self.full_params['labels']):
+        x_unit = self.full_params['x_unit']
+        time_unit = self.full_params['time_unit']
+
+        for results, ls, label in self.iter_results(network_results_list):
             if results.stim_params.pattern != 'NoStimulus':
                 raise ValueError("VoltageHistogramPlot only works for no stimulus simulations.")
             if isinstance(results, BaseSNNResults):
-                mask = (results.times() >= self.full_params['start_time']) & (results.times() <= self.full_params['end_time'])
+                mask = (results.times(time_unit) >= self.full_params['start_time']) & (results.times(time_unit) <= self.full_params['end_time'])
 
-                exc_voltage = results._exc_voltage_all[mask].mean(axis=0)
-                inh_voltage = results._inh_voltage_all[mask].mean(axis=0)
-                
-                bin_edges = self.get_bin_edges([exc_voltage, inh_voltage])
+                exc_voltage = results.exc_voltage_all(x_unit)[mask].mean(axis=0)
+                inh_voltage = results.inh_voltage_all(x_unit)[mask].mean(axis=0)
 
-                ax.hist(exc_voltage, bins=bin_edges, alpha=0.5, label=f'Exc {label}', edgecolor=self.full_params['exc_color'], color=self.full_params['exc_color'], linestyle=ls)
-                ax.hist(inh_voltage, bins=bin_edges, alpha=0.5, label=f'Inh {label}', edgecolor=self.full_params['inh_color'], color=self.full_params['inh_color'], linestyle=ls)
+                self.plot_hist_pair(
+                    ax,
+                    exc_voltage,
+                    inh_voltage,
+                    label,
+                    ls,
+                    exc_color=self.full_params['exc_color'],
+                    inh_color=self.full_params['inh_color'],
+                )
+
+            elif isinstance(results, BaseMFResults):
+                mask = (results.times(time_unit) >= self.full_params['start_time']) & (results.times(time_unit) <= self.full_params['end_time'])
+                exc_mean = np.mean(results.exc_voltage_mean(x_unit)[mask])
+                inh_mean = np.mean(results.inh_voltage_mean(x_unit)[mask])
+                self.plot_hist_lines(
+                    ax,
+                    exc_mean,
+                    inh_mean,
+                    label,
+                    ls,
+                    exc_color=self.full_params['exc_color'],
+                    inh_color=self.full_params['inh_color'],
+                )
 
 
 class AdaptationHistogramPlot(BaseNetworkHistogramPlot):
@@ -343,7 +441,8 @@ class AdaptationHistogramPlot(BaseNetworkHistogramPlot):
     DEFAULT_PARAMS = {
         **BaseNetworkHistogramPlot.DEFAULT_PARAMS,
         'title': 'Adaptation Histogram',
-        'xlabel': 'Adaptation current (nA)',
+        'xlabel': 'Adaptation current',
+        'x_unit': 'pA',
     }
 
     def _draw(
@@ -351,27 +450,34 @@ class AdaptationHistogramPlot(BaseNetworkHistogramPlot):
             ax, 
             network_results_list: List[BaseSNNResults | BaseMFResults],
             ) -> None:
-        self.update_params(network_results_list)
 
-        for results, ls, label in zip(network_results_list, self.full_params['linestyles'], self.full_params['labels']):
+        x_unit = self.full_params['x_unit']
+        time_unit = self.full_params['time_unit']
+
+        for results, ls, label in self.iter_results(network_results_list):
             if results.stim_params.pattern != 'NoStimulus':
                 raise ValueError("AdaptationHistogramPlot only works for no stimulus simulations.")
             if isinstance(results, BaseSNNResults):
-                mask = (results.times() >= self.full_params['start_time']) & (results.times() <= self.full_params['end_time'])
+                mask = (results.times(time_unit) >= self.full_params['start_time']) & (results.times(time_unit) <= self.full_params['end_time'])
 
-                exc_adaptation = results._exc_adaptation_all[mask].mean(axis=0)
+                exc_adaptation = results.exc_adaptation_all(x_unit)[mask].mean(axis=0)
 
                 bin_edges = self.get_bin_edges([exc_adaptation])
 
                 ax.hist(exc_adaptation, bins=bin_edges, alpha=0.5, label=f'Exc {label}', edgecolor='blue', color='blue', linestyle=ls)
 
+            elif isinstance(results, BaseMFResults):
+                mask = (results.times(time_unit) >= self.full_params['start_time']) & (results.times(time_unit) <= self.full_params['end_time'])
+                exc_mean = np.mean(results.exc_adaptation_mean(x_unit)[mask])
+                ax.axvline(exc_mean, label=f'Exc {label}', color='blue', linestyle=ls)
 
 class ExcitatoryNeuronConductanceHistogramPlot(BaseNetworkHistogramPlot):
     """Plot the conductance histogram of excitatory neurons."""
     DEFAULT_PARAMS = {
         **BaseNetworkHistogramPlot.DEFAULT_PARAMS,
         'title': 'Exc Neuron Conductances',
-        'xlabel': 'Conductance (nS)',
+        'xlabel': 'Conductance',
+        'x_unit': 'nS',
     }
 
     def _draw(
@@ -379,28 +485,50 @@ class ExcitatoryNeuronConductanceHistogramPlot(BaseNetworkHistogramPlot):
             ax, 
             network_results_list: List[BaseSNNResults | BaseMFResults],
             ) -> None:
-        self.update_params(network_results_list)
 
-        for results, ls, label in zip(network_results_list, self.full_params['linestyles'], self.full_params['labels']):
+        x_unit = self.full_params['x_unit']
+        time_unit = self.full_params['time_unit']
+
+        for results, ls, label in self.iter_results(network_results_list):
             if results.stim_params.pattern != 'NoStimulus':
                 raise ValueError("ExcitatoryNeuronConductanceHistogramPlot only works for no stimulus simulations.")
             if isinstance(results, BaseSNNResults):
-                mask = (results.times() >= self.full_params['start_time']) & (results.times() <= self.full_params['end_time'])
+                mask = (results.times(time_unit) >= self.full_params['start_time']) & (results.times(time_unit) <= self.full_params['end_time'])
 
-                exc_conductance = results._ee_conductance_all[mask].mean(axis=0)
-                inh_conductance = results._ie_conductance_all[mask].mean(axis=0)
+                exc_conductance = results.ee_conductance_all(x_unit)[mask].mean(axis=0)
+                inh_conductance = results.ie_conductance_all(x_unit)[mask].mean(axis=0)
 
-                bin_edges = self.get_bin_edges([exc_conductance, inh_conductance])
+                self.plot_hist_pair(
+                    ax,
+                    exc_conductance,
+                    inh_conductance,
+                    label,
+                    ls,
+                    exc_color=self.full_params['exc_color'],
+                    inh_color=self.full_params['inh_color'],
+                )
 
-                ax.hist(exc_conductance, bins=bin_edges, alpha=0.5, label=f'Exc {label}', edgecolor=self.full_params['exc_color'], color=self.full_params['exc_color'], linestyle=ls)
-                ax.hist(inh_conductance, bins=bin_edges, alpha=0.5, label=f'Inh {label}', edgecolor=self.full_params['inh_color'], color=self.full_params['inh_color'], linestyle=ls)
+            elif isinstance(results, BaseMFResults):
+                mask = (results.times(time_unit) >= self.full_params['start_time']) & (results.times(time_unit) <= self.full_params['end_time'])
+                exc_mean = np.mean(results.ee_conductance_mean(x_unit)[mask])
+                inh_mean = np.mean(results.ie_conductance_mean(x_unit)[mask])
+                self.plot_hist_lines(
+                    ax,
+                    exc_mean,
+                    inh_mean,
+                    label,
+                    ls,
+                    exc_color=self.full_params['exc_color'],
+                    inh_color=self.full_params['inh_color'],
+                )
 
 class InhibitoryNeuronConductanceHistogramPlot(BaseNetworkHistogramPlot):
     """Plot the conductance histogram of inhibitory neurons."""
     DEFAULT_PARAMS = {
         **BaseNetworkHistogramPlot.DEFAULT_PARAMS,
         'title': 'Inh Neuron Conductances',
-        'xlabel': 'Conductance (nS)',
+        'xlabel': 'Conductance',
+        'x_unit': 'nS',
     }
 
     def _draw(
@@ -408,22 +536,41 @@ class InhibitoryNeuronConductanceHistogramPlot(BaseNetworkHistogramPlot):
             ax, 
             network_results_list: List[BaseSNNResults | BaseMFResults],
             ) -> None:
-        self.update_params(network_results_list)
 
-        for results, ls, label in zip(network_results_list, self.full_params['linestyles'], self.full_params['labels']):
+        x_unit = self.full_params['x_unit']
+        time_unit = self.full_params['time_unit']
+
+        for results, ls, label in self.iter_results(network_results_list):
             if results.stim_params.pattern != 'NoStimulus':
                 raise ValueError("InhibitoryNeuronConductanceHistogramPlot only works for no stimulus simulations.")
             if isinstance(results, BaseSNNResults):
-                mask = (results.times() >= self.full_params['start_time']) & (results.times() <= self.full_params['end_time'])
+                mask = (results.times(time_unit) >= self.full_params['start_time']) & (results.times(time_unit) <= self.full_params['end_time'])
 
-                exc_conductance = results._ei_conductance_all[mask].mean(axis=0)
-                inh_conductance = results._ii_conductance_all[mask].mean(axis=0)
+                exc_conductance = results.ei_conductance_all(x_unit)[mask].mean(axis=0)
+                inh_conductance = results.ii_conductance_all(x_unit)[mask].mean(axis=0)
 
-                bin_edges = self.get_bin_edges([exc_conductance, inh_conductance])
-
-                ax.hist(exc_conductance, bins=bin_edges, alpha=0.5, label=f'Exc {label}', edgecolor=self.full_params['exc_color'], color=self.full_params['exc_color'], linestyle=ls)
-                ax.hist(inh_conductance, bins=bin_edges, alpha=0.5, label=f'Inh {label}', edgecolor=self.full_params['inh_color'], color=self.full_params['inh_color'], linestyle=ls)
-
+                self.plot_hist_pair(
+                    ax,
+                    exc_conductance,
+                    inh_conductance,
+                    label,
+                    ls,
+                    exc_color=self.full_params['exc_color'],
+                    inh_color=self.full_params['inh_color'],
+                )
+            elif isinstance(results, BaseMFResults):
+                mask = (results.times(time_unit) >= self.full_params['start_time']) & (results.times(time_unit) <= self.full_params['end_time'])
+                exc_mean = np.mean(results.ei_conductance_mean(x_unit)[mask])
+                inh_mean = np.mean(results.ii_conductance_mean(x_unit)[mask])
+                self.plot_hist_lines(
+                    ax,
+                    exc_mean,
+                    inh_mean,
+                    label,
+                    ls,
+                    exc_color=self.full_params['exc_color'],
+                    inh_color=self.full_params['inh_color'],
+                )
 
 class STPVariableXHistogramPlot(BaseNetworkHistogramPlot):
     """Plot the STP variable x histogram of excitatory and inhibitory neurons."""
@@ -431,6 +578,7 @@ class STPVariableXHistogramPlot(BaseNetworkHistogramPlot):
         **BaseNetworkHistogramPlot.DEFAULT_PARAMS,
         'title': 'STP Variable x Histogram',
         'xlabel': 'STP variable x',
+        'x_unit': None,
     }
 
     def _draw(
@@ -438,32 +586,49 @@ class STPVariableXHistogramPlot(BaseNetworkHistogramPlot):
             ax, 
             network_results_list: List[BaseSNNResults | BaseMFResults],
             ) -> None:
-        self.update_params(network_results_list)
 
-        for results, ls, label in zip(network_results_list, self.full_params['linestyles'], self.full_params['labels']):
+        x_unit = self.full_params['x_unit']
+        time_unit = self.full_params['time_unit']
+
+        for results, ls, label in self.iter_results(network_results_list):
             if results.stim_params.pattern != 'NoStimulus':
                 raise ValueError("STPVariableXHistogramPlot only works for no stimulus simulations.")
             if isinstance(results, BaseSNNResults):
-                mask = (results.times() >= self.full_params['start_time']) & (results.times() <= self.full_params['end_time'])
+                mask = (results.times(time_unit) >= self.full_params['start_time']) & (results.times(time_unit) <= self.full_params['end_time'])
 
-                results.exc_x_mean() # call just to ensure that the exc_x_mean is computed and cached
-                results.inh_x_mean() # call just to ensure that the inh_x_mean is computed and cached
+                exc_x = results.exc_x_all(x_unit)[mask].mean(axis=0)
+                inh_x = results.inh_x_all(x_unit)[mask].mean(axis=0)
 
-                exc_x = results._exc_x_all[mask].mean(axis=0)
-                inh_x = results._inh_x_all[mask].mean(axis=0)
+                self.plot_hist_pair(
+                    ax,
+                    exc_x,
+                    inh_x,
+                    label,
+                    ls,
+                    exc_color=self.full_params['exc_color'],
+                    inh_color=self.full_params['inh_color'],
+                )
 
-                bin_edges = self.get_bin_edges([exc_x, inh_x])
-
-                ax.hist(exc_x, bins=bin_edges, alpha=0.5, label=f'Exc {label}', edgecolor=self.full_params['exc_color'], color=self.full_params['exc_color'], linestyle=ls)
-                ax.hist(inh_x, bins=bin_edges, alpha=0.5, label=f'Inh {label}', edgecolor=self.full_params['inh_color'], color=self.full_params['inh_color'], linestyle=ls)
-
-
+            elif isinstance(results, BaseMFResults):
+                mask = (results.times(time_unit) >= self.full_params['start_time']) & (results.times(time_unit) <= self.full_params['end_time'])
+                exc_mean = np.mean(results.exc_x_mean(x_unit)[mask])
+                inh_mean = np.mean(results.inh_x_mean(x_unit)[mask])
+                self.plot_hist_lines(
+                    ax,
+                    exc_mean,
+                    inh_mean,
+                    label,
+                    ls,
+                    exc_color=self.full_params['exc_color'],
+                    inh_color=self.full_params['inh_color'],
+                )
 class STPVariableUHistogramPlot(BaseNetworkHistogramPlot):
     """Plot the STP variable u histogram of excitatory and inhibitory neurons."""
     DEFAULT_PARAMS = {
         **BaseNetworkHistogramPlot.DEFAULT_PARAMS,
         'title': 'STP Variable u Histogram',
         'xlabel': 'STP variable u',
+        'x_unit': None,
     }
 
     def _draw(
@@ -471,21 +636,39 @@ class STPVariableUHistogramPlot(BaseNetworkHistogramPlot):
             ax, 
             network_results_list: List[BaseSNNResults | BaseMFResults],
             ) -> None:
-        self.update_params(network_results_list)
 
-        for results, ls, label in zip(network_results_list, self.full_params['linestyles'], self.full_params['labels']):
+        x_unit = self.full_params['x_unit']
+        time_unit = self.full_params['time_unit']
+
+        for results, ls, label in self.iter_results(network_results_list):
             if results.stim_params.pattern != 'NoStimulus':
                 raise ValueError("STPVariableUHistogramPlot only works for no stimulus simulations.")
             if isinstance(results, BaseSNNResults):
-                mask = (results.times() >= self.full_params['start_time']) & (results.times() <= self.full_params['end_time'])
+                mask = (results.times(time_unit) >= self.full_params['start_time']) & (results.times(time_unit) <= self.full_params['end_time'])
 
-                results.exc_u_mean() # call just to ensure that the exc_u_mean is computed and cached
-                results.inh_u_mean() # call just to ensure that the inh_u_mean is computed and cached
 
-                exc_u = results._exc_u_all[mask].mean(axis=0)
-                inh_u = results._inh_u_all[mask].mean(axis=0)
+                exc_u = results.exc_u_all(x_unit)[mask].mean(axis=0)
+                inh_u = results.inh_u_all(x_unit)[mask].mean(axis=0)
 
-                bin_edges = self.get_bin_edges([exc_u, inh_u])
-
-                ax.hist(exc_u, bins=bin_edges, alpha=0.5, label=f'Exc {label}', edgecolor=self.full_params['exc_color'], color=self.full_params['exc_color'], linestyle=ls)
-                ax.hist(inh_u, bins=bin_edges, alpha=0.5, label=f'Inh {label}', edgecolor=self.full_params['inh_color'], color=self.full_params['inh_color'], linestyle=ls)
+                self.plot_hist_pair(
+                    ax,
+                    exc_u,
+                    inh_u,
+                    label,
+                    ls,
+                    exc_color=self.full_params['exc_color'],
+                    inh_color=self.full_params['inh_color'],
+                )
+            elif isinstance(results, BaseMFResults):
+                mask = (results.times(time_unit) >= self.full_params['start_time']) & (results.times(time_unit) <= self.full_params['end_time'])
+                exc_mean = np.mean(results.exc_u_mean(x_unit)[mask])
+                inh_mean = np.mean(results.inh_u_mean(x_unit)[mask])
+                self.plot_hist_lines(
+                    ax,
+                    exc_mean,
+                    inh_mean,
+                    label,
+                    ls,
+                    exc_color=self.full_params['exc_color'],
+                    inh_color=self.full_params['inh_color'],
+                )

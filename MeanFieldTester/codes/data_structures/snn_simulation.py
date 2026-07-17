@@ -167,6 +167,11 @@ class SNNResults(BaseSNNResults):
         target_unit = default_unit if unit is None else unit
         return self._get_scaled(self._drive_rate_mean, default_unit, target_unit)
 
+    def exc_adaptation_all(self, unit=None):
+        default_unit = self.DEFAULT_UNITS["exc_adaptation_all"]
+        target_unit = default_unit if unit is None else unit
+        return self._get_scaled(self._exc_adaptation_all, default_unit, target_unit)
+
     def exc_adaptation_mean(self, unit=None):
         default_unit = self.DEFAULT_UNITS["exc_adaptation_all"]
         target_unit = default_unit if unit is None else unit
@@ -176,6 +181,11 @@ class SNNResults(BaseSNNResults):
         default_unit = self.DEFAULT_UNITS["exc_adaptation_all"]
         target_unit = default_unit if unit is None else unit
         return self._get_scaled(self._exc_adaptation_all.std(axis=1), default_unit, target_unit)
+
+    def inh_adaptation_all(self, unit=None):
+        default_unit = self.DEFAULT_UNITS["inh_adaptation_all"]
+        target_unit = default_unit if unit is None else unit
+        return self._get_scaled(self._inh_adaptation_all, default_unit, target_unit)
 
     def inh_adaptation_mean(self, unit=None):
         default_unit = self.DEFAULT_UNITS["inh_adaptation_all"]
@@ -187,6 +197,11 @@ class SNNResults(BaseSNNResults):
         target_unit = default_unit if unit is None else unit
         return self._get_scaled(self._inh_adaptation_all.std(axis=1), default_unit, target_unit)
 
+    def exc_voltage_all(self, unit=None):
+        default_unit = self.DEFAULT_UNITS["exc_voltage_all"]
+        target_unit = default_unit if unit is None else unit
+        return self._get_scaled(self._exc_voltage_all, default_unit, target_unit)
+
     def exc_voltage_mean(self, unit=None):
         default_unit = self.DEFAULT_UNITS["exc_voltage_all"]
         target_unit = default_unit if unit is None else unit
@@ -196,6 +211,11 @@ class SNNResults(BaseSNNResults):
         default_unit = self.DEFAULT_UNITS["exc_voltage_all"]
         target_unit = default_unit if unit is None else unit
         return self._get_scaled(self._exc_voltage_all.std(axis=1), default_unit, target_unit)
+
+    def inh_voltage_all(self, unit=None):
+        default_unit = self.DEFAULT_UNITS["inh_voltage_all"]
+        target_unit = default_unit if unit is None else unit
+        return self._get_scaled(self._inh_voltage_all, default_unit, target_unit)
 
     def inh_voltage_mean(self, unit=None):
         default_unit = self.DEFAULT_UNITS["inh_voltage_all"]
@@ -207,6 +227,11 @@ class SNNResults(BaseSNNResults):
         target_unit = default_unit if unit is None else unit
         return self._get_scaled(self._inh_voltage_all.std(axis=1), default_unit, target_unit)
 
+    def ee_conductance_all(self, unit=None):
+        default_unit = self.DEFAULT_UNITS["ee_conductance_all"]
+        target_unit = default_unit if unit is None else unit
+        return self._get_scaled(self._ee_conductance_all, default_unit, target_unit)
+
     def ee_conductance_mean(self, unit=None):
         default_unit = self.DEFAULT_UNITS["ee_conductance_all"]
         target_unit = default_unit if unit is None else unit
@@ -216,6 +241,11 @@ class SNNResults(BaseSNNResults):
         default_unit = self.DEFAULT_UNITS["ee_conductance_all"]
         target_unit = default_unit if unit is None else unit
         return self._get_scaled(self._ee_conductance_all.std(axis=1), default_unit, target_unit)
+
+    def ei_conductance_all(self, unit=None):
+        default_unit = self.DEFAULT_UNITS["ei_conductance_all"]
+        target_unit = default_unit if unit is None else unit
+        return self._get_scaled(self._ei_conductance_all, default_unit, target_unit)
 
     def ei_conductance_mean(self, unit=None):
         default_unit = self.DEFAULT_UNITS["ei_conductance_all"]
@@ -227,6 +257,11 @@ class SNNResults(BaseSNNResults):
         target_unit = default_unit if unit is None else unit
         return self._get_scaled(self._ei_conductance_all.std(axis=1), default_unit, target_unit)
 
+    def ie_conductance_all(self, unit=None):
+        default_unit = self.DEFAULT_UNITS["ie_conductance_all"]
+        target_unit = default_unit if unit is None else unit
+        return self._get_scaled(self._ie_conductance_all, default_unit, target_unit)
+
     def ie_conductance_mean(self, unit=None):
         default_unit = self.DEFAULT_UNITS["ie_conductance_all"]
         target_unit = default_unit if unit is None else unit
@@ -236,6 +271,11 @@ class SNNResults(BaseSNNResults):
         default_unit = self.DEFAULT_UNITS["ie_conductance_all"]
         target_unit = default_unit if unit is None else unit
         return self._get_scaled(self._ie_conductance_all.std(axis=1), default_unit, target_unit)
+
+    def ii_conductance_all(self, unit=None):
+        default_unit = self.DEFAULT_UNITS["ii_conductance_all"]
+        target_unit = default_unit if unit is None else unit
+        return self._get_scaled(self._ii_conductance_all, default_unit, target_unit)
 
     def ii_conductance_mean(self, unit=None):
         default_unit = self.DEFAULT_UNITS["ii_conductance_all"]
@@ -249,10 +289,13 @@ class SNNResults(BaseSNNResults):
 
     def _compute_stp_variables(self, neuron_name):
         """Internal method to lazily evaluate and cache STP variables."""
-        U = self.network_params.synapses[neuron_name].syn_params.U
-        tau_rec = self.network_params.synapses[neuron_name].syn_params.tau_rec
-        tau_fac = self.network_params.synapses[neuron_name].syn_params.tau_fac
-        
+        syn_params = self.network_params.synapses[neuron_name].syn_params
+        # NOTE: in case of static synapses, U, tau_rec, and tau_fac will 
+        # default to 1.0, 0.0, and 0.0 respectively
+        U = getattr(syn_params, "U", 1.0)
+        tau_rec = getattr(syn_params, "tau_rec", 0.0)
+        tau_fac = getattr(syn_params, "tau_fac", 0.0)
+
         if neuron_name == "exc_neuron":
             u,x = snn_helpers.reconstruct_stp_dynamics(
                 self._exc_spikes_all, 
@@ -273,23 +316,59 @@ class SNNResults(BaseSNNResults):
             )
             self._inh_u_all = u
             self._inh_x_all = x
-            
-    def exc_u_mean(self):
+
+    def exc_u_all(self, unit=None):
         if not hasattr(self, '_exc_u_all'):
             self._compute_stp_variables("exc_neuron")
-        return self._exc_u_all.mean(axis=1)
+        default_unit = ""
+        target_unit = default_unit if unit is None else unit
+        return self._get_scaled(self._exc_u_all, default_unit, target_unit)
 
-    def exc_x_mean(self):
+    def exc_u_mean(self, unit=None):
+        if not hasattr(self, '_exc_u_all'):
+            self._compute_stp_variables("exc_neuron")
+        default_unit = ""
+        target_unit = default_unit if unit is None else unit
+        return self._get_scaled(self._exc_u_all.mean(axis=1), default_unit, target_unit)
+
+    def exc_x_all(self, unit=None):
         if not hasattr(self, '_exc_x_all'):
             self._compute_stp_variables("exc_neuron")
-        return self._exc_x_all.mean(axis=1)
+        default_unit = ""
+        target_unit = default_unit if unit is None else unit
+        return self._get_scaled(self._exc_x_all, default_unit, target_unit)
 
-    def inh_u_mean(self):
+    def exc_x_mean(self, unit=None):
+        if not hasattr(self, '_exc_x_all'):
+            self._compute_stp_variables("exc_neuron")
+        default_unit = ""
+        target_unit = default_unit if unit is None else unit
+        return self._get_scaled(self._exc_x_all.mean(axis=1), default_unit, target_unit)
+
+    def inh_u_all(self, unit=None):
         if not hasattr(self, '_inh_u_all'):
             self._compute_stp_variables("inh_neuron")
-        return self._inh_u_all.mean(axis=1)
+        default_unit = ""
+        target_unit = default_unit if unit is None else unit
+        return self._get_scaled(self._inh_u_all, default_unit, target_unit)
 
-    def inh_x_mean(self):
+    def inh_u_mean(self, unit=None):
+        if not hasattr(self, '_inh_u_all'):
+            self._compute_stp_variables("inh_neuron")
+        default_unit = ""
+        target_unit = default_unit if unit is None else unit
+        return self._get_scaled(self._inh_u_all.mean(axis=1), default_unit, target_unit)
+
+    def inh_x_all(self, unit=None):
         if not hasattr(self, '_inh_x_all'):
             self._compute_stp_variables("inh_neuron")
-        return self._inh_x_all.mean(axis=1)
+        default_unit = ""
+        target_unit = default_unit if unit is None else unit
+        return self._get_scaled(self._inh_x_all, default_unit, target_unit)
+
+    def inh_x_mean(self, unit=None):
+        if not hasattr(self, '_inh_x_all'):
+            self._compute_stp_variables("inh_neuron")
+        default_unit = ""
+        target_unit = default_unit if unit is None else unit
+        return self._get_scaled(self._inh_x_all.mean(axis=1), default_unit, target_unit)
