@@ -136,7 +136,7 @@ class AdaptationPlot(BaseNetworkPlot):
         **BaseNetworkPlot.DEFAULT_PARAMS,
         'title': 'Exc Adaptation',
         'x_unit': 'ms',
-        'y_unit': 'nA',
+        'y_unit': 'pA',
         'xlabel': 'Time',
         'ylabel': 'Adaptation',
     }

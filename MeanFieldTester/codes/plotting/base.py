@@ -65,7 +65,7 @@ class BasePlot(ABC):
             tf_funcs_results: Dict[str, List[BaseTransferFunction]],
             snn_results: BaseSNNResults,
             network_results_list: List[BaseSNNResults | BaseMFResults],
-            inspection_results: List[BaseInspectionResults],
+            inspection_results_list: List[BaseInspectionResults],
             ) -> None:
         pass
 
@@ -115,16 +115,16 @@ class BasePlot(ABC):
         if label:
             cbar.set_label(label)
 
-@staticmethod
-def format_label_with_unit(label: str, unit: str) -> str:
-    if not label or not unit:
-        return label
-    import re
-    # Matches suffixes like "(Hz)", "[ms]", " (nA)" at the end of the string
-    pattern = r'\s*[\(\[][a-zA-Z\^\d/_-]+[\)\]]$'
-    if re.search(pattern, label):
-        return re.sub(pattern, f" [{unit}]", label)
-    return f"{label} [{unit}]"
+    @staticmethod
+    def format_label_with_unit(label: str, unit: str) -> str:
+        if not label or not unit:
+            return label
+        import re
+        # Matches suffixes like "(Hz)", "[ms]", " (nA)" at the end of the string
+        pattern = r'\s*[\(\[][a-zA-Z\^\d/_-]+[\)\]]$'
+        if re.search(pattern, label):
+            return re.sub(pattern, f" [{unit}]", label)
+        return f"{label} [{unit}]"
 
 class BaseSingleNeuronPlot(BasePlot, ABC):
     """This is a meta class for single neuron plots, can be used to plot single neuron results."""

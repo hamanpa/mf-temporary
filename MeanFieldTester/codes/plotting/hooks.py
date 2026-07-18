@@ -3,7 +3,7 @@ from pathlib import Path
 from typing import Dict, List
 
 from ..data_structures.base import BaseSingleNeuronResults, BaseMFResults, BaseSNNResults, BaseInspectionResults
-from ..data_structures.inspection import ComparisonInspectionResults
+from ..data_structures.inspection import ModelComparisonInspectionResults
 from ..transfer_function.base import BaseTransferFunction
 
 from ..controller.interfaces import BasicWorkflowHook, InspectionWorkflowHook
@@ -127,7 +127,7 @@ class GridFigureHook:
                 elif isinstance(plot, (BaseNetworkPlot, BaseNetworkHistogramPlot)):
                     plot.draw(ax, network_results_list=network_results_list)
                 elif isinstance(plot, BaseInspectionPlot):
-                    plot.draw(ax, inspection_results=inspection_results_list)
+                    plot.draw(ax, inspection_results_list=inspection_results_list)
                 else:
                     raise TypeError(f"Unknown plot type in grid: {type(plot)}")
 
@@ -168,7 +168,7 @@ class InspectionWorkflowPlottingHook(GridFigureHook):
     def __call__(
             self,
             identifier: str,
-            inspection_results: List[BaseInspectionResults],
+            inspection_results_list: List[BaseInspectionResults],
             ) -> None:
         super().__call__(
             identifier=identifier,
@@ -176,7 +176,7 @@ class InspectionWorkflowPlottingHook(GridFigureHook):
             tf_funcs_results=None,
             snn_results=None,
             network_results_list=None,
-            inspection_results_list=inspection_results
+            inspection_results_list=inspection_results_list
         )
 
 
@@ -416,7 +416,7 @@ class NetworkHistogramPlottingHook(BasicWorkflowPlottingHook):
 
 
 
-class SteadyStateInspectionPlottingHook(InspectionWorkflowPlottingHook):
+class ModelSummaryInspectionPlottingHook(InspectionWorkflowPlottingHook):
 
     def __init__(
             self, 
@@ -450,7 +450,7 @@ class SteadyStateInspectionPlottingHook(InspectionWorkflowPlottingHook):
             subplot_params=subplot_params
         )
 
-class ComparisonInspectionPlottingHook(InspectionWorkflowPlottingHook):
+class ModelComparisonInspectionPlottingHook(InspectionWorkflowPlottingHook):
     MEASURE_SUFFIXES = ('rmse', 'error_mean', 'error_std', 'pearson')
     MEASURE_TITLES = {
         'rmse': r'RMSE : $\sqrt{1/T\int (SNN-MF)^2}$',
@@ -459,15 +459,10 @@ class ComparisonInspectionPlottingHook(InspectionWorkflowPlottingHook):
         'pearson': 'Pearson',
     }
 
-    @classmethod
-    def _split_metric_name(cls, metric_name: str) -> tuple[str, str]:
-        for measure in cls.MEASURE_SUFFIXES:
-            suffix = f'_{measure}'
-            if metric_name.endswith(suffix):
-                return metric_name[:-len(suffix)], measure
-        raise ValueError(
-            f"Could not parse measured variable '{metric_name}'. Expected a suffix in {cls.MEASURE_SUFFIXES}."
-        )
+    def _fotmat_label(self, label: str, mapping: dict=None) -> str:
+        if mapping is None:
+            mapping = {}
+        return mapping.get(label, label.replace('_', ' ').title())
 
     @staticmethod
     def _format_variable_label(variable_name: str) -> str:
@@ -497,28 +492,18 @@ class ComparisonInspectionPlottingHook(InspectionWorkflowPlottingHook):
 
     def prepare_plot_grid(self, inspection_results: BaseInspectionResults):
 
-        row_variables: list[str] = []
-        column_measures: list[str] = []
-        row_measures: list[str] = []
-        column_variables: list[str] = []
+        row_measures: list[str] = inspection_results.metrics
+        column_variables: list[str] = inspection_results.variables
 
-        for metric_name in inspection_results.measured_variables:
-            variable_name, measure_name = self._split_metric_name(metric_name)
-            if variable_name not in column_variables:
-                column_variables.append(variable_name)
-            if measure_name not in row_measures:
-                row_measures.append(measure_name)
-
-        row_measures = [measure for measure in self.MEASURE_SUFFIXES if measure in row_measures]
 
         plot_grid = [
             [
                 inspection_plots.MetricCustomInspectionPlot(
                     f'{variable_name}_{measure_name}',
                     {
-                        'title': self._format_measure_label(variable_name) if row_idx == 0 else None,
-                        'ylabel': self._format_variable_label(measure_name) if col_idx == 0 else None,
-                        # 'xlabel': inspection_results.inspected_param if row_idx == len(row_variables) - 1 else None,
+                        'title': self._fotmat_label(variable_name) if row_idx == 0 else None,
+                        'ylabel': self._fotmat_label(measure_name, self.MEASURE_TITLES) if col_idx == 0 else None,
+                        # 'xlabel': inspection_results.inspected_param if row_idx == len(row_measures) - 1 else None,
                         **self.common_params,
                         
                     },
@@ -536,10 +521,10 @@ class ComparisonInspectionPlottingHook(InspectionWorkflowPlottingHook):
             inspection_results_list: List[BaseInspectionResults],
             ) -> None:
 
-        inspection_results_list = [result for result in inspection_results_list if isinstance(result, ComparisonInspectionResults)]
+        inspection_results_list = [result for result in inspection_results_list if isinstance(result, ModelComparisonInspectionResults)]
 
         if len(inspection_results_list) != 1:
-            raise ValueError(f"Expected exactly one ComparisonInspectionResults, but found {len(inspection_results_list)}.")
+            raise ValueError(f"Expected exactly one ModelComparisonInspectionResults, but found {len(inspection_results_list)}.")
 
         inspection_results = inspection_results_list[0]
 

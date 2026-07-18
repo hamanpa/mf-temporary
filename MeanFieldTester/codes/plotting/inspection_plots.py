@@ -1,6 +1,6 @@
 
 from ..data_structures.base import BaseInspectionResults
-from ..data_structures.inspection import ComparisonInspectionResults, SteadyStateInspectionResults
+from ..data_structures.inspection import ModelComparisonInspectionResults, ModelSummaryInspectionResults
 from .base import BaseInspectionPlot
 from typing import List
 
@@ -34,8 +34,8 @@ class MetricCustomInspectionPlot(CustomInspectionPlot):
         super().__init__(plot_params)
 
 
-    def _draw(self, ax, inspection_results: BaseInspectionResults):
-        super()._draw(ax, inspection_results, variable=self.metric_name)
+    def _draw(self, ax, inspection_results_list:List[BaseInspectionResults]):
+        super()._draw(ax, inspection_results_list, variable=self.metric_name)
 
 
 
@@ -49,7 +49,7 @@ class FiringRateInspectionPlot(BaseInspectionPlot):
         'ylabel': 'Firing Rate (Hz)',
     }
 
-    inspection_results_type = SteadyStateInspectionResults 
+    inspection_results_type = ModelSummaryInspectionResults 
 
     def _draw(self, ax, inspection_results_list:List[BaseInspectionResults]):
         inspection_results = self.filter_results(inspection_results_list)[0]
@@ -97,7 +97,7 @@ class VoltageInspectionPlot(BaseInspectionPlot):
         'ylabel': 'Voltage (mV)',
     }
 
-    inspection_results_type = SteadyStateInspectionResults
+    inspection_results_type = ModelSummaryInspectionResults
 
     def _draw(self, ax, inspection_results_list:List[BaseInspectionResults]):
         inspection_results = self.filter_results(inspection_results_list)[0]
@@ -140,7 +140,7 @@ class AdaptationInspectionPlot(BaseInspectionPlot):
         'ylabel': 'Adaptation (pA)',
     }
 
-    inspection_results_type = SteadyStateInspectionResults 
+    inspection_results_type = ModelSummaryInspectionResults 
 
     def _draw(self, ax, inspection_results_list:List[BaseInspectionResults]):
         inspection_results = self.filter_results(inspection_results_list)[0]

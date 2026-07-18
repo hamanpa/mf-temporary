@@ -1,5 +1,6 @@
 from pathlib import Path
 from typing import Dict
+from unittest import result
 import numpy as np
 import copy
 import gc
@@ -9,7 +10,9 @@ from .workflows import run_basic_workflow
 from .interfaces import BasicWorkflowHook
 
 from ..data_structures.base import BaseResults, BaseMFResults, BaseSNNResults, BaseInspectionResults
-from ..data_structures.inspection import SteadyStateInspectionResults, ComparisonInspectionResults
+from ..data_structures.inspection import ModelSummaryInspectionResults, ModelComparisonInspectionResults
+from ..analysis.comparison_metrics import METRIC_REGISTRY
+
 
 from pydantic import BaseModel
 
@@ -19,7 +22,7 @@ INSPECTION_PARMAS_WITHOUT_UPDATE = {
 }
 
 
-class SteadyStateExtractor:
+class ModelSummaryExtractor:
     """
     Strategy class to extract steady-state metrics from raw simulation results.
 
@@ -27,55 +30,84 @@ class SteadyStateExtractor:
     This extractor computes time-averaged values and standard deviations for specified measured variables.
 
     """
+    input_mode = "unary"
 
-    DEFAULT_UNITS = {
-        "exc_rate_time_mean" : "Hz",
-        "exc_rate_time_std" : "Hz",
-        "inh_rate_time_mean" : "Hz",
-        "inh_rate_time_std" : "Hz",
-        "exc_voltage_time_mean" : "mV",
-        "exc_voltage_time_std" : "mV",
-        "inh_voltage_time_mean" : "mV",
-        "inh_voltage_time_std" : "mV",
-        "exc_adaptation_time_mean" : "nA",
-        "exc_adaptation_time_std" : "nA",
-        "inh_adaptation_time_mean" : "nA",
-        "inh_adaptation_time_std" : "nA",
-    }
+    DEFAULT_UNITS = ModelSummaryInspectionResults.DEFAULT_UNITS
+    ALLOWED_VARIABLES = ModelSummaryInspectionResults.ALLOWED_VARIABLES
+    DEFINED_METRICS = ModelSummaryInspectionResults.DEFINED_METRICS
 
-    ALLOWED_MEASURED_VARS = list(DEFAULT_UNITS.keys())  # just for explicitness
+    results_container_class = ModelSummaryInspectionResults
 
-
-    def __init__(self, measured_variables: list[str], start_time: float = 0.0, end_time: float = np.inf):
+    def __init__(
+            self, 
+            measured_variables: list[str], 
+            metrics: list[str],
+            start_time: float = 0.0, 
+            end_time: float = np.inf):
+        
+        self.measured_variables = measured_variables
+        self.metrics = metrics
+        
         self.start_time = start_time
         self.end_time = end_time
-        self.measured_variables = measured_variables
 
-    def extract(self, result: BaseMFResults | BaseSNNResults) -> dict[str, float]:
+    def _calc_time_mean(self, data: np.ndarray) -> float:
+        if data is None:
+            return None
+        return np.mean(data)
+
+    def _calc_time_std(self, data: np.ndarray) -> float:
+        if data is None:
+            return None
+        return np.std(data)
+
+    def _get_results_data(self, result: BaseResults, var: str) -> np.ndarray:
+        """
+        Smart lookup: handles short names like 'exc_rate' mapping to 'exc_rate_mean',
+        or accepts exact method names like 'exc_rate_std'.
+        """
+        if hasattr(result, f"{var}_mean"):
+            return getattr(result, f"{var}_mean")()
+        elif hasattr(result, var):
+            return getattr(result, var)()
+        else:
+            raise AttributeError(f"Results object does not have variable '{var}_mean' or '{var}'.")
+
+    def extract(self, result: BaseMFResults | BaseSNNResults | None) -> dict[str, float]:
         """
         Slices the time array and computes time-averages and standard deviations.
         """
+
+        if result is None:
+            # In case the simulation was skipped or failed, return a dictionary with NaN values for all metrics.
+            return {f"{var}_{metric}": np.nan for var in self.measured_variables for metric in self.metrics}        
+
         extracted_data = {}
-        
         mask = (result.times() >= self.start_time) & (result.times() <= self.end_time)
         
-        for variable in self.measured_variables:
-            base_var = variable.replace("_time_mean", "").replace("_time_std", "")
-            raw_data = getattr(result, f"{base_var}_mean")() # e.g., result.exc_rate_mean
-            
-            steady_state_data = raw_data[mask]
-            
-            if variable.endswith("_time_mean"):
-                extracted_data[variable] = steady_state_data.mean()
-            elif variable.endswith("_time_std"):
-                extracted_data[variable] = steady_state_data.std()
-            else:
-                raise ValueError(f"Variable '{variable}' must end in '_time_mean' or '_time_std'.")
+        for metric in self.metrics:
+            for variable in self.measured_variables:
+                if (isinstance(result, BaseMFResults)
+                    and "rate" in variable
+                    and metric == "time_std"):
+                    # NOTE: For MF results, the std of rates are computed separately
+                    # thus make sense to call the dedicated method for std instead of computing it from the mean.
+                    raw_data = self._get_results_data(result, variable + "_std")
+                    calculator_method = self._calc_time_mean
+                else:
+                    raw_data = self._get_results_data(result, variable)
+                    calculator_method = getattr(self, f"_calc_{metric}")
                 
+                masked_data = raw_data[mask]
+                
+                # Output a flat dictionary with f"{variable}_{metric}" keys 
+                # (perfectly matching what add_inspection_data expects)
+                extracted_data[f"{variable}_{metric}"] = calculator_method(masked_data)
+
         return extracted_data
 
 
-class ComparisonExtractor:
+class ModelComparisonExtractor:
     """
     Extracts error metrics (RMSE, Bias, Variance, Pearson) by comparing 
     a target result (MF) against a ground-truth result (SNN).
@@ -86,26 +118,42 @@ class ComparisonExtractor:
     where the time averaging does not make sense and we want to compare the full time series.
     """
 
-    def __init__(self, measured_variables: list[str], start_time: float = 0.0, end_time: float = np.inf):
+    input_mode = "pairwise"
+
+    DEFINED_METRICS = list(METRIC_REGISTRY.keys())
+
+    def __init__(
+            self, 
+            measured_variables: list[str], 
+            metrics: list[str],
+            custom_metrics: dict[str, callable] = None,
+            start_time: float = 0.0, 
+            end_time: float = np.inf
+            ):
         self.start_time = start_time
         self.end_time = end_time
         self.measured_variables = measured_variables
+        
+        defined_metrics = {metric: METRIC_REGISTRY[metric] for metric in metrics if metric in self.DEFINED_METRICS}
+        undefined_metrics = [metric for metric in metrics if metric not in self.DEFINED_METRICS]
+        if undefined_metrics:
+            raise ValueError(f"Unknown metrics: {undefined_metrics}. Available metrics: {self.DEFINED_METRICS}")
+        
+        self.metrics = {**defined_metrics, **(custom_metrics or {})}
 
-    # Helper methods for computing metrics
+    results_container_class = ModelComparisonInspectionResults
 
-    def _calc_error_mean(self, error, gt, target):
-        return np.mean(error)
-
-    def _calc_error_std(self, error, gt, target):
-        return np.std(error)
-
-    def _calc_rmse(self, error, gt, target):
-        return np.sqrt(np.mean(error**2))
-
-    def _calc_pearson(self, error, gt, target):
-        if np.std(gt) == 0 or np.std(target) == 0:
-            return np.nan
-        return np.corrcoef(gt, target)[0, 1]
+    def _get_results_data(self, result: BaseResults, var: str) -> np.ndarray:
+        """
+        Smart lookup: handles short names like 'exc_rate' mapping to 'exc_rate_mean',
+        or accepts exact method names like 'exc_rate_std'.
+        """
+        if hasattr(result, f"{var}_mean"):
+            return getattr(result, f"{var}_mean")()
+        elif hasattr(result, var):
+            return getattr(result, var)()
+        else:
+            raise AttributeError(f"Results object does not have variable '{var}_mean' or '{var}'.")
 
     def extract(self, ground_truth: BaseResults, target: BaseResults) -> dict[str, float]:
         """
@@ -123,10 +171,19 @@ class ComparisonExtractor:
             A dictionary containing the computed metrics for each measured variable.
         """
 
+        if result is None:
+            # In case the simulation was skipped or failed, return a dictionary with NaN values for all metrics.
+            return {f"{var}_{metric}": np.nan for var in self.measured_variables for metric in self.metrics}        
+
         extracted_data = {}
         
         gt_times = ground_truth.times()
         target_times = target.times()
+
+        if len(gt_times) >= 2:
+            dt = gt_times[1] - gt_times[0]
+        else:
+            dt = 0.1
 
         start_time = max(self.start_time, gt_times[0], target_times[0])
         end_time = min(self.end_time, gt_times[-1], target_times[-1])
@@ -137,24 +194,15 @@ class ComparisonExtractor:
         assert gt_mask.sum() == target_mask.sum(), "Time masks for ground truth and target must be of the same size."
 
         for var in self.measured_variables:
-            base_var = var.replace("_rmse", "").replace("_error_mean", "").replace("_error_std", "").replace("_pearson", "")
-            metric_suffix = var.replace(f"{base_var}_", "")
-            
-            gt_data = getattr(ground_truth, f"{base_var}_mean")()
-            target_data = getattr(target, f"{base_var}_mean")()
+            gt_data = self._get_results_data(ground_truth, var)
+            target_data = self._get_results_data(target, var)
             
             gt_masked = gt_data[gt_mask]
             target_masked = target_data[target_mask]
-            error = target_masked - gt_masked
 
-            method_name = f"_calc_{metric_suffix}"
-            
-            if hasattr(self, method_name):
-                calculator_method = getattr(self, method_name)
-                extracted_data[var] = calculator_method(error, gt_masked, target_masked)
-            else:
-                raise ValueError(f"Extractor does not know how to compute metric: {metric_suffix}")
-                
+            for metric, func in self.metrics.items():
+                extracted_data[f"{var}_{metric}"] = func(gt_masked, target_masked, dt=dt)
+
         return extracted_data
 
 
@@ -220,10 +268,10 @@ class ParameterInspector:
         extracted_data = []
         for i, extractor in enumerate(extractors):
             extracted_data.append([])
-            if isinstance(extractor, SteadyStateExtractor):
+            if extractor.input_mode == "unary":
                 extracted_data[i].append(extractor.extract(snn_results))
                 extracted_data[i].extend([extractor.extract(mf_results) for mf_results in mf_results_list])
-            elif isinstance(extractor, ComparisonExtractor):
+            elif extractor.input_mode == "pairwise":
                 extracted_data[i].extend([
                     extractor.extract(
                         ground_truth=snn_results,
@@ -232,7 +280,7 @@ class ParameterInspector:
                     for mf_results in mf_results_list
                 ])
             else:
-                raise ValueError(f"Unknown extractor type: {type(extractor)}")
+                raise ValueError(f"Unknown extractor input_mode: {extractor.input_mode}")
 
         # NOTE: if memory issues arise, consider using `del` and `gc.collect()`
         # since Python may store references to large objects in memory even after they go out of scope.
@@ -261,20 +309,20 @@ class ParameterInspector:
         inspection_results = []
         for extractor in extractors:
 
-            if isinstance(extractor, SteadyStateExtractor):
-                results_container = SteadyStateInspectionResults
+            results_container = extractor.results_container_class
+            if extractor.input_mode == "unary":
                 network_names = ["SNN"] + mf_names
-            elif isinstance(extractor, ComparisonExtractor):
-                results_container = ComparisonInspectionResults
+            elif extractor.input_mode == "pairwise":
                 network_names = mf_names
             else:
-                raise ValueError(f"Unknown extractor type: {type(extractor)}")
+                raise ValueError(f"Unknown extractor input_mode: {extractor.input_mode}")
 
             inspection_results.append(results_container(
                 inspected_param=inspected_param, 
                 inspected_values=inspected_values,
                 network_names=network_names, 
-                measured_variables=extractor.measured_variables,
+                variables=extractor.measured_variables,  
+                metrics=extractor.metrics,               
                 network_params=self.base_network_params,
                 stimulus_params=self.base_stimulus_params,
             ))

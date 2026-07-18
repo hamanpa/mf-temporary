@@ -18,16 +18,46 @@ import numpy as np
 from pydantic import BaseModel
 
 
-class CoreInspectionResults(BaseInspectionResults):
-    """
-    Abstract base class for all Inspection Results.
-    Handles incremental data collection, array freezing (transposition), 
-    and dynamic unit-scaling getters.
-    """
-    
-    DEFAULT_UNITS = {}
-    ALLOWED_MEASURED_VARS = []
+class VariableResultGroup:
+    """Helper class to support dot-notation metric access (e.g., results.exc_rate.time_mean())."""
+    def __init__(self, results_obj, variable: str):
+        self._results_obj = results_obj
+        self._variable = variable
 
+    def __getattr__(self, metric: str):
+        if metric in self._results_obj.metrics:
+            def getter(unit=None):
+                return self._results_obj.get_data(self._variable, metric, unit)
+            return getter
+        raise AttributeError(f"Metric '{metric}' not found for variable '{self._variable}'.")
+
+    def __dir__(self):
+        return self._results_obj.metrics
+
+
+class CoreInspectionResults(BaseInspectionResults):
+    DEFAULT_UNITS = {
+        "exc_rate": "Hz",
+        "inh_rate": "Hz",
+        "exc_voltage": "mV",
+        "inh_voltage": "mV",
+        "exc_adaptation": "nA",
+        "inh_adaptation": "nA",
+        "exc_x": "",
+        "exc_y": "",
+        "exc_u": "",
+        "inh_x": "",
+        "inh_y": "",
+        "inh_u": "",
+        "ee_conductance": "nS",
+        "ei_conductance": "nS",
+        "ie_conductance": "nS",
+        "ii_conductance": "nS",
+    }
+
+    ALLOWED_VARIABLES = list(DEFAULT_UNITS.keys())
+
+    DEFINED_METRICS = []
 
     def __init__(self, 
                  inspected_param: str, 
@@ -35,143 +65,128 @@ class CoreInspectionResults(BaseInspectionResults):
                  network_names: list[str], 
                  network_params: BaseModel,
                  stimulus_params: BaseModel,
-                 measured_variables: list[str] = None,
+                 variables: list[str] = None,
+                 metrics: list[str] = None
                  ):
         
         self.inspected_param = inspected_param
         self.param_values = np.array(inspected_values)
         self.network_names = network_names
-
         self.network_params = network_params
         self.stimulus_params = stimulus_params
 
-        if measured_variables is not None:
-            var_difference = set(measured_variables) - set(self.ALLOWED_MEASURED_VARS)
+        if variables is not None:
+            var_difference = set(variables) - set(self.ALLOWED_VARIABLES)
             if var_difference:
-                raise ValueError(f"Measured variables {var_difference} are not allowed. Allowed variables are: {self.ALLOWED_MEASURED_VARS}")
-            self.measured_variables = measured_variables
+                raise ValueError(f"Variables {var_difference} are not allowed. Allowed variables are: {self.ALLOWED_VARIABLES}")
+            self.variables = variables
         else:
-            self.measured_variables = self.ALLOWED_MEASURED_VARS
+            self.variables = self.ALLOWED_VARIABLES
+        
+        if metrics is not None:
+            self.metrics = metrics
+        else:
+            self.metrics = self.DEFINED_METRICS
 
         self._finalized = False
 
-        # Init data containers
-        for var in self.measured_variables:
-            setattr(self, f"_{var}", [])
-
-
-    def __getattr__(self, name):
-        """
-        Dynamically catches requests for measured variables (e.g., results.exc_rate_time_mean).
-        Returns a callable that applies unit scaling, matching the SNNResults API.
-        """
-        if '_finalized' not in self.__dict__:
-            raise AttributeError(f"Attribute '{name}' not found. Object not initialized.")
-        
-        if name in self.measured_variables:
-            
-            def getter_method(unit=None):
-                if not self._finalized:
-                    raise RuntimeError("Cannot access data before freezing. Call freeze() first.")
-                
-                internal_data = getattr(self, f"_{name}")
-                default_unit = self.DEFAULT_UNITS.get(name)
-                target_unit = default_unit if unit is None else unit
-                return self._get_scaled(internal_data, default_unit, target_unit)
-
-            return getter_method
-
-        elif name in self.ALLOWED_MEASURED_VARS:
-            raise AttributeError(f"'{name}' is a valid measured variable but has not been collected yet. Ensure it is included in `measured_variables` during initialization.")            
-
-        raise AttributeError(f"'{self.__class__.__name__}' object has no attribute '{name}'")
-
+        # Initialize nested list containers for data collection
+        self._data = {
+            var: {metric: [] for metric in self.metrics}
+            for var in self.variables
+        }
 
     def add_inspection_data(self, extracted_metrics: list[dict[str, float]]):
         """
         Adds one step of the parameter sweep.
-        
+
         Parameters
         ----------
         extracted_metrics : list[dict[str, float]]
             A list of extracted metrics. Must match the exact length and order 
             of `self.network_names` (e.g., [SNN_dict, DiVolo_dict, Zerlaut_dict]).
+            Keys are of the form f"{variable}_{metric}" (e.g., "exc_rate_time_mean").
         """
         if self._finalized:
             raise RuntimeError("Cannot add data to a finalized InspectionResult.")
-            
-        if len(extracted_metrics) != len(self.network_names):
-            raise ValueError("Length of extracted_metrics must match length of network_names.")
 
-        # Reorganize the data so each variable gets a list of values for this sweep
-        for var in self.measured_variables:
-            extracted_values = [net_metrics[var] for net_metrics in extracted_metrics]
-            getattr(self, f"_{var}").append(extracted_values)
+        if len(extracted_metrics) != len(self.network_names):
+            raise ValueError("Length of extracted_metrics must match network_names.")
+
+        for var in self.variables:
+            for metric in self.metrics:
+                key = f"{var}_{metric}"
+                # Collect the calculated value from each network
+                step_values = [net_metrics[key] for net_metrics in extracted_metrics]
+                self._data[var][metric].append(step_values)
 
     def freeze(self):
         """
         Converts internal lists into NumPy arrays and locks the data structure.
+
         The resulting arrays have shape: (number_of_networks, number_of_parameters)
         This shape makes plotting easy: plt.plot(param_values, data[network_idx])
         """
-        for var in self.measured_variables:
-            # list of lists (shape: num_params x num_networks)
-            raw_list = getattr(self, f"_{var}")
-            
-            # Convert to numpy and Transpose to (inspected_network_index, inspected_param_index)
-            frozen_array = np.array(raw_list).T
-            
-            # Set the public attribute and delete the private list
-            setattr(self, f"_{var}", frozen_array)
-            
+
+        for var in self.variables:
+            for metric in self.metrics:
+                raw_list = self._data[var][metric]
+                self._data[var][metric] = np.array(raw_list).T
         self._finalized = True
 
+    def get_data(self, variable: str, metric: str, unit: str = None) -> np.ndarray:
+
+        if not self._finalized:
+            raise RuntimeError("Cannot access data before freezing. Call freeze() first.")
+
+        if variable not in self.variables or metric not in self.metrics:
+            raise ValueError(f"No data for variable '{variable}' and metric '{metric}'.")
+        
+        internal_data = self._data[variable][metric]
+        default_unit = self.DEFAULT_UNITS.get(variable)
+        target_unit = default_unit if unit is None else unit
+        return self._get_scaled(internal_data, default_unit, target_unit)
+
+    def __getattr__(self, name):
+
+        if '_finalized' not in self.__dict__:
+            raise AttributeError(f"Attribute '{name}' not found. Object not initialized.")
+
+        # Dot-notation access (eg. results.exc_rate.time_mean())
+        if name in self.variables:
+            return VariableResultGroup(self, name)
+
+        # Backward compatibility layer: parses "exc_rate_time_mean" -> variable="exc_rate", metric="time_mean"
+        for var in self.variables:
+            if name.startswith(var):
+                metric = name[len(var):].lstrip('_')
+                if metric in self.metrics:
+                    def getter_method(unit=None):
+                        return self.get_data(var, metric, unit)
+                    return getter_method
+
+        raise AttributeError(f"'{self.__class__.__name__}' object has no attribute '{name}'")
+
+    @property
+    def measured_variables(self):
+        """Allows legacy plotting code to check 'variable in results.measured_variables'."""
+        return [f"{var}_{metric}" for var in self.variables for metric in self.metrics]
 
 
-class SteadyStateInspectionResults(CoreInspectionResults):
+class ModelSummaryInspectionResults(CoreInspectionResults):
     """
     Data structure for spontaneous activity inspections.
     Incrementally collects data and freezes it into NumPy arrays.
     """
-    DEFAULT_UNITS = {
-        "exc_rate_time_mean" : "Hz",
-        "exc_rate_time_std" : "Hz",
-        "inh_rate_time_mean" : "Hz",
-        "inh_rate_time_std" : "Hz",
-        "exc_voltage_time_mean" : "mV",
-        "exc_voltage_time_std" : "mV",
-        "inh_voltage_time_mean" : "mV",
-        "inh_voltage_time_std" : "mV",
-        "exc_adaptation_time_mean" : "nA",
-        "exc_adaptation_time_std" : "nA",
-        "inh_adaptation_time_mean" : "nA",
-        "inh_adaptation_time_std" : "nA",
-    }
 
-    ALLOWED_MEASURED_VARS = list(DEFAULT_UNITS.keys())
+    DEFINED_METRICS = [
+        "time_mean", 
+        "time_std",
+    ]
 
-
-class ComparisonInspectionResults(CoreInspectionResults):
+class ModelComparisonInspectionResults(CoreInspectionResults):
     """Data structure for dynamic stimulus comparisons (SNN vs MF)."""
 
-    DEFAULT_UNITS = {
-        "exc_rate_rmse": "Hz",
-        "exc_rate_error_mean": "Hz",
-        "exc_rate_error_std": "Hz",
-        "exc_rate_pearson": "Hz",
+    from ..analysis.comparison_metrics import METRIC_REGISTRY
+    DEFINED_METRICS = list(METRIC_REGISTRY.keys())
 
-        "inh_rate_rmse": "Hz",
-        "inh_rate_error_mean": "Hz",
-        "inh_rate_error_std": "Hz",
-        "inh_rate_pearson": "Hz",
-
-        "exc_adaptation_rmse": "Hz",
-        "exc_adaptation_error_mean": "Hz",
-        "exc_adaptation_error_std": "Hz",
-        "exc_adaptation_pearson": "Hz",
-        # TODO:
-        # add voltage
-        # add adaptation
-    }
-
-    ALLOWED_MEASURED_VARS = list(DEFAULT_UNITS.keys())

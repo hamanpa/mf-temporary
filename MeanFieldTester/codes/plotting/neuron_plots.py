@@ -37,7 +37,7 @@ class SingleNeuronActivityPlot(BaseSingleNeuronPlot):
 
         for j, (nu_i_idx, nu_i) in enumerate(indexed_linear_sample(single_neuron_result.inh_rate_grid(x_unit)[0], self.full_params['curves_num'])):
             if self.full_params['labels'] is None:
-                label = fr'$\nu_i$={nu_i:.0f} [{x_unit}]'
+                label = fr'$\nu_i$={nu_i:.0f} {x_unit}'
             else:
                 label = self.full_params['labels'][j]
             if self.full_params['yerrorbar']:
@@ -86,7 +86,7 @@ class SingleNeuronAdaptationPlot(BaseSingleNeuronPlot):
 
         for j, (nu_i_idx, nu_i) in enumerate(indexed_linear_sample(single_neuron_result.inh_rate_grid(x_unit)[0], self.full_params['curves_num'])):
             if self.full_params['labels'] is None:
-                label = fr'$\nu_i$={nu_i:.0f} [{x_unit}]'
+                label = fr'$\nu_i$={nu_i:.0f} {x_unit}'
             else:
                 label = self.full_params['labels'][j]
             if self.full_params['yerrorbar']:

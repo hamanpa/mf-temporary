@@ -31,7 +31,7 @@ class BaseResults:
             raise AttributeError(f"Instance of {self.__class__.__name__} is frozen. Data should not be modified post-simulation.")
         super().__setattr__(name, value)
 
-    def _ingest(self,var_value, var_name:str, input_units:dict):
+    def _ingest(self, var_value, var_name:str, input_units:dict):
         """Rescales the input value to the DEFAULT_UNITS if needed."""
         if var_value is None:
             return None
