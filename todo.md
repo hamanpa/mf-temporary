@@ -74,7 +74,43 @@
 
 - [ ] snn_simulation recorders options
 
+TODO
+- 2D inspection
+    - adding inspection params as dict
+    - possibility of cut (tuple_params) : [(list_of_tuple,values)]
+- merge inspection results (additional inspection)
+- saving full and reduced results (later I can remake the plots for details)
+- runable scripts (can run sbatch on the wintermute)
 
+- explosion detection within first 1000 ms high activity
+    - give it longer time, will the explosion happen again once the adaptation drops?  
+- control/detection of steady state?
+
+- Extractor do not have check on measured variables
+- there is no control of units (I have the whole system of working with units, use it)
+    - or use the unit conversion when public API, but internally expect the units (but what if I decide to change the units? will I?)
+
+- inspection neural data simulation choice
+
+- add neuron_simulation execution modes (run, load (alias for one of the following?), load-try (makes simulation if nothing found), load-strict (raises error), skip)
+
+- change the snn_results and mf_result to have variable and dot notation method to access metrics (eg. all, pop_mean, time_mean, future position_mean?)
+- maybe rename "_mean", "_std" to "_pop_mean" and "_pop_std"? so it is clear what mean is meant (I have "_time_mean")
+
+- Make myself tutorial notebook for comparison metrics to see what the metrics catch visually, so I understand the numbers
+
+
+plotting to inspect Zerlaut approach (neuron_simulation, transfer_function level)
+- neuron_simulation - voltage tau from simulation
+- Voltage plot (mean, std, tau)
+- TF Fitting params plot (V_eff, mu_v etc)
+- theoretical values vs measured ones
+- mu_V, sigma_V, tau_V, mu_G, sigma_G, v_eff
+- plot_fluctuation_theoretical, plot_fluctuation_comparison, plot_tf_fitting_steps
+
+
+- analysis/spike_metrics: Regularity, Synchrony
+    - as measures of AI state, also measures of UP/DOWN states
 
 ## [Architecture Decision Record] SNN Simulation Reset Paradigm
 
@@ -137,12 +173,6 @@ Priority
 
 - [ ] (4) **controller**: *Generation of template config params - Make this work nicer codes.controller.config --template --schema*
 
-- [ ] (3) **data_structures**: *MFResults voltage and conductance data calculation*
-  - implementation issues:
-    1. MPF does not differentiate drive, stimulus, exc_neuron inputs
-    2. exc_neuron has adaptation, but drive and stimulus do not
-  - make it a subclass?
-  - I can add different input sources in MPF
 - [ ] (3) **data_structures**: *SingleNeuronResults should keep spikes as data with default units*
 - [ ] (3) **data_structures**: *Create a method for all results classes listing measured values (what is not None)*
 - [ ] (3) **data_structures**: *Other methods of saving (due to spike data) np.save_compressed() or the h5py*
@@ -165,8 +195,10 @@ Priority
 - [ ] (4) **neuron_simulation**: *Option to pick neuron model*
 
 - [ ] (4) **transfer_function**: *Rename to tf_fitting? or rename the `run_tf_fittinf_workflow`*
+- [ ] (4) **transfer_function.neuropsi_tf**: *MembranePotentialFluctuations allows adaptation only for 'exc_neuron', could be optional the same as effective_weights...*
 
 - [ ] (4) **snn_simulation**: *implement parallelization (or use PyNN methods of parallelization)*
+- [ ] (4) **snn_simulation.config**: *Add recorders to allow specify what is measured in SNN and from how many neurons*
 
 - [ ] (4) **mf_simulation**: *implement parallelization? at least with various stimuli*
 - [ ] (2) **mf_simulation**: *add tsodyks models (models handling STP)*
@@ -179,27 +211,51 @@ Priority
 - [ ] (2) **mf_simulation**: *test first order model, added models handling STP but works only for second order and I did not even test the first order divolo*
 
 
-- [ ] (3) **plotting** : *Remove naming convention reliance (Refactor plotting logic to use `.results_type` instead of `.startswith("SNN")`)*
-- [ ] **plotting**: *Handle missing variables gracefully*
-- [ ] **plotting**: *Implement a generic Figure Plot Controller ("Style Plot" system).*
-- [ ] **plotting**: *Create predefined inspection plots (e.g., `SpontRateHistogramPlot`, `ActivityInspectionPlot`)*
-- [ ] **plotting**: *Create synaptic conductivity plot.*
-- [ ] **plotting**: *Create STP plots*
+- [ ] **plotting**: *Handle missing variables (when returns None) gracefully*
+  - None when not measured, None instead of Results class when skipped simulation
+  - np.nan when inspection metrics applied 
+- [ ] **plotting.inspection_plots**: *Add unit handling option*
 
 - [ ] (3) **utils.snn_helpers**: *Update activity calculation so that all method return 2D array*
 
 - [ ] (2) **research**: **
 
 
+- [ ] (2) **data_structures.inspection**: *Merge results, so that I can run two inspections in parallel and merge results*
+- [ ] (2) **data_structures.inspection**: *Change VariableResultGroup such that it represents raw data for single variable*
+  - and allows eg variable.pop_mean(), variable.time_mean(start_time, end_time), variable() -> returns all data
+  - now it just wraps the CoreInspectionResults, to provide the dot notation from self._data dictionary
+  - idea is to make ResultClasses represent measured variables as subclasses
 
+- [ ] (2) **controller.inspectors**: *Inspector for multidim inspection*
+  - e.g. inspection_dict = {param1: [values], param2: [values], ...}
+- [ ] (2) **controller.inspectors**: *Inspector for inspection with two params sharing value*
+  - i.e. not making 2D grid, but a slice
+  - e.g. inspection_dict = {(param1,param2): [(value11, value21), (value12, value22), ...]}
+- [ ] (3) **controller.inspectors**: *Extractor can extract data in nested dictionary or use dot notation for the var.metric instead*
+
+- [ ] (3) **testing**: *Small scripts for various optionalities, workflows, individual plots etc.*
+- [ ] (3) **testing**: *with each update run a script that generates dummy results to use for testing*
+  - so that for testing of plotting or calculations simulations are not needed to be run
 
 # ACTIVE:
 
-- [ ] (1) **controller**: *Full workflow config and loading*
-- [ ] (2) **controller**: *Make some high level API instead of the god-like class*
 
 # DONE:
+- [x] (1) **controller**: *Full workflow config and loading*
+- [x] (2) **controller**: *Make some high level API instead of the god-like class*
 - [x] (1) **controller**: *make it runable start to finish based on param files* (with plotting)
 - [x] (1) **data_structures**: *Clean up old code and update simulators*
 - [x] **data_structures**: *rewrite SNNResults*
 - [x] **BaseResults**: *create new Base Results class that would contain the the unit handling* 
+- [x] (3) **data_structures**: *MFResults voltage and conductance data calculation*
+  - implementation issues:
+    1. MPF does not differentiate drive, stimulus, exc_neuron inputs
+    2. exc_neuron has adaptation, but drive and stimulus do not
+  - make it a subclass?
+  - I can add different input sources in MPF
+- [x] **plotting**: *Implement a generic Figure Plot Controller ("Style Plot" system).*
+- [x] **plotting**: *Create predefined inspection plots (e.g., `SpontRateHistogramPlot`, `ActivityInspectionPlot`)*
+- [x] **plotting**: *Create synaptic conductivity plot.*
+- [x] **plotting**: *Create STP plots*
+- [x] (3) **plotting** : *Remove naming convention reliance (Refactor plotting logic to use `.results_type` instead of `.startswith("SNN")`)*

@@ -23,7 +23,7 @@ from codes.controller.config import load_workflow_config
 from codes.stimuli.loader import load_stimuli_config
 from codes.network_params.loader import load_network_parameters
 
-from codes.controller.inspectors import ParameterInspector, ComparisonExtractor, SteadyStateExtractor
+from codes.controller.inspectors import ParameterInspector, ModelComparisonExtractor, ModelSummaryExtractor
 
 import codes.plotting.hooks as plt_hooks
 from codes.stimuli.config import NoStimulusConfig
@@ -58,7 +58,6 @@ def main():
 
     network_params = load_network_parameters(project_path / "params" / "network_params.yaml")
     sim_params = load_workflow_config(project_path / "params" / "workflow_params.yaml")
-    stimuli_config = TEST_CONFIG
 
 
     inspector = ParameterInspector(
@@ -69,27 +68,6 @@ def main():
     )
 
     single_step_hooks = [
-        plt_hooks.NeuronActivityHook(
-            savefig_dir=results_path,
-            fig_file_prefix="neuron_activity",
-            neuron_names = ["exc_neuron", "inh_neuron"],
-            fig_params={},
-            common_params={},
-        ),
-        plt_hooks.TransferFunctionPlottingHook(
-            savefig_dir=results_path,
-            fig_file_prefix="neuron_activity_tf_fit",
-            neuron_names = ["exc_neuron", "inh_neuron"],
-            fig_params={
-                'figsize': (15, 10),  # width, height
-
-            },
-            common_params={
-                "labels" : list(sim_params.mf_models.keys()),
-                "ylim": (None, 30),
-                'linestyles' : ["--", "-.", ":"],
-            },
-        ),
         plt_hooks.NetworkOverviewPlottingHook(
             savefig_dir=results_path,
             fig_file_prefix="network_overview",
@@ -104,7 +82,7 @@ def main():
                 'ymargin': 0.0,
                 'labels': ['SNN'] + list(sim_params.mf_models.keys()),
                 'legend': {'loc': 'upper left'},
-                'xlim' : (0, TEST_STIMULUS.simulation_duration),
+                'xlim' : (0, 4000.0),
 
             },
         ),
@@ -126,32 +104,35 @@ def main():
     ]
 
     extractors = [
-        SteadyStateExtractor(
-            measured_variables = [
-                "exc_rate_time_mean",
-                "exc_rate_time_std",
-                "inh_rate_time_mean",
-                "inh_rate_time_std",
-                "exc_adaptation_time_mean",
-                "exc_adaptation_time_std",
+        ModelSummaryExtractor(
+            measured_variables=[
+                "exc_rate",
+                "inh_rate",
+                "exc_adaptation",
+            ],
+            metrics=[
+                "time_mean",
+                "time_std",
             ],
             start_time = 1000.0, 
             end_time = TEST_STIMULUS.simulation_duration
         ),
-        ComparisonExtractor(
-            measured_variables = [
-                "exc_rate_rmse",
-                "exc_rate_error_mean",
-                "exc_rate_error_std",
-                "exc_rate_pearson",
-                "inh_rate_rmse",
-                "inh_rate_error_mean",
-                "inh_rate_error_std",
-                "inh_rate_pearson",
-                "exc_adaptation_rmse",
-                "exc_adaptation_error_mean",
-                "exc_adaptation_error_std",
-                "exc_adaptation_pearson",
+        ModelComparisonExtractor(
+            measured_variables=[
+                "exc_rate",
+                "inh_rate",
+                "exc_adaptation",
+            ],
+            metrics=[
+                "mse",
+                "rmse",
+                "error_mean",
+                "error_std",
+                "pearson",
+                "spearman",
+                "lag",
+                "max_corr",
+                "psd_similarity",
             ],
             start_time = 1000.0, 
             end_time = TEST_STIMULUS.simulation_duration

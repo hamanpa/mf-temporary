@@ -17,7 +17,7 @@ from codes.controller.config import load_workflow_config
 from codes.stimuli.loader import load_stimuli_config
 from codes.network_params.loader import load_network_parameters
 
-from codes.controller.inspectors import ParameterInspector, ComparisonExtractor, SteadyStateExtractor
+from codes.controller.inspectors import ParameterInspector, ModelComparisonExtractor, ModelSummaryExtractor
 
 import codes.plotting as ax_plt
 
@@ -117,32 +117,35 @@ def main():
     ]
 
     extractors = [
-        SteadyStateExtractor(
-            measured_variables = [
-                "exc_rate_time_mean",
-                "exc_rate_time_std",
-                "inh_rate_time_mean",
-                "inh_rate_time_std",
-                "exc_adaptation_time_mean",
-                "exc_adaptation_time_std",
+        ModelSummaryExtractor(
+            measured_variables=[
+                "exc_rate",
+                "inh_rate",
+                "exc_adaptation",
+            ],
+            metrics=[
+                "time_mean",
+                "time_std",
             ],
             start_time = 2000.0, 
             end_time = 4000.0
         ),
-        ComparisonExtractor(
-            measured_variables = [
-                "exc_rate_rmse",
-                "exc_rate_error_mean",
-                "exc_rate_error_std",
-                "exc_rate_pearson",
-                "inh_rate_rmse",
-                "inh_rate_error_mean",
-                "inh_rate_error_std",
-                "inh_rate_pearson",
-                "exc_adaptation_rmse",
-                "exc_adaptation_error_mean",
-                "exc_adaptation_error_std",
-                "exc_adaptation_pearson",
+        ModelComparisonExtractor(
+            measured_variables=[
+                "exc_rate",
+                "inh_rate",
+                "exc_adaptation",
+            ],
+            metrics=[
+                "mse",
+                "rmse",
+                "error_mean",
+                "error_std",
+                "pearson",
+                "spearman",
+                "lag",
+                "max_corr",
+                "psd_similarity",
             ],
             start_time = 2000.0, 
             end_time = 4000.0
@@ -150,7 +153,7 @@ def main():
     ]
 
     inspection_hooks = [
-        plt_hooks.SteadyStateInspectionPlottingHook(
+        plt_hooks.ModelSummaryInspectionPlottingHook(
             savefig_dir=results_path,
             fig_file_prefix="steady_state_inspection",
             fig_params={
@@ -162,7 +165,7 @@ def main():
                 "xlabel": "Drive Rate (Hz)"
             },
         ),
-        plt_hooks.ComparisonInspectionPlottingHook(
+        plt_hooks.ModelComparisonInspectionPlottingHook(
             savefig_dir=results_path,
             fig_file_prefix="dynamic_inspection",
             fig_params={
