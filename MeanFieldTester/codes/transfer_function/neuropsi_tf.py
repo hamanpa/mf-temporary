@@ -282,10 +282,16 @@ class MembranePotentialFluctuations:
         for source_neuron_name in network_params.synapses:
 
             syn_weight = network_params.synapses[source_neuron_name].syn_params.weight
-            if not self.ignore_stp and network_params.synapses[source_neuron_name].syn_type == 'tsodyks_synapse':
+            
+            tsodyks_synapse = network_params.synapses[source_neuron_name].syn_type == 'tsodyks_synapse'
+            if tsodyks_synapse:
                 u = network_params.synapses[source_neuron_name].syn_params.U
-                tau_rec = network_params.synapses[source_neuron_name].syn_params.tau_rec
-                tau_fac = network_params.synapses[source_neuron_name].syn_params.tau_fac
+                if self.ignore_stp:
+                    tau_rec = 0.0
+                    tau_fac = 0.0
+                else:
+                    tau_rec = network_params.synapses[source_neuron_name].syn_params.tau_rec
+                    tau_fac = network_params.synapses[source_neuron_name].syn_params.tau_fac
             else:
                 u = 1.0
                 tau_rec = 0.0

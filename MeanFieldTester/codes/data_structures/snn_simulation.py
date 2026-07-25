@@ -331,6 +331,13 @@ class SNNResults(BaseSNNResults):
         target_unit = default_unit if unit is None else unit
         return self._get_scaled(self._exc_u_all.mean(axis=1), default_unit, target_unit)
 
+    def exc_u_std(self, unit=None):
+        if not hasattr(self, '_exc_u_all'):
+            self._compute_stp_variables("exc_neuron")
+        default_unit = ""
+        target_unit = default_unit if unit is None else unit
+        return self._get_scaled(self._exc_u_all.std(axis=1), default_unit, target_unit)
+
     def exc_x_all(self, unit=None):
         if not hasattr(self, '_exc_x_all'):
             self._compute_stp_variables("exc_neuron")
@@ -344,6 +351,13 @@ class SNNResults(BaseSNNResults):
         default_unit = ""
         target_unit = default_unit if unit is None else unit
         return self._get_scaled(self._exc_x_all.mean(axis=1), default_unit, target_unit)
+
+    def exc_x_std(self, unit=None):
+        if not hasattr(self, '_exc_x_all'):
+            self._compute_stp_variables("exc_neuron")
+        default_unit = ""
+        target_unit = default_unit if unit is None else unit
+        return self._get_scaled(self._exc_x_all.std(axis=1), default_unit, target_unit)
 
     def inh_u_all(self, unit=None):
         if not hasattr(self, '_inh_u_all'):
@@ -359,6 +373,13 @@ class SNNResults(BaseSNNResults):
         target_unit = default_unit if unit is None else unit
         return self._get_scaled(self._inh_u_all.mean(axis=1), default_unit, target_unit)
 
+    def inh_u_std(self, unit=None):
+        if not hasattr(self, '_inh_u_all'):
+            self._compute_stp_variables("inh_neuron")
+        default_unit = ""
+        target_unit = default_unit if unit is None else unit
+        return self._get_scaled(self._inh_u_all.std(axis=1), default_unit, target_unit)
+
     def inh_x_all(self, unit=None):
         if not hasattr(self, '_inh_x_all'):
             self._compute_stp_variables("inh_neuron")
@@ -372,3 +393,11 @@ class SNNResults(BaseSNNResults):
         default_unit = ""
         target_unit = default_unit if unit is None else unit
         return self._get_scaled(self._inh_x_all.mean(axis=1), default_unit, target_unit)
+
+    def inh_x_std(self, unit=None):
+        if not hasattr(self, '_inh_x_all'):
+            self._compute_stp_variables("inh_neuron")
+        default_unit = ""
+        target_unit = default_unit if unit is None else unit
+        return self._get_scaled(self._inh_x_all.std(axis=1), default_unit, target_unit)
+

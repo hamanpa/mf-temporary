@@ -123,15 +123,22 @@ class CoreInspectionResults(BaseInspectionResults):
     def freeze(self):
         """
         Converts internal lists into NumPy arrays and locks the data structure.
-
-        The resulting arrays have shape: (number_of_networks, number_of_parameters)
-        This shape makes plotting easy: plt.plot(param_values, data[network_idx])
+        - For scalar metrics (2D): shape is (number_of_networks, number_of_parameters)
+        - For time-series metrics (3D): shape is (number_of_networks, number_of_parameters, number_of_timepoints)
         """
-
         for var in self.variables:
             for metric in self.metrics:
                 raw_list = self._data[var][metric]
-                self._data[var][metric] = np.array(raw_list).T
+                arr = np.array(raw_list)
+
+                if arr.ndim == 2:
+                    self._data[var][metric] = arr.T
+                elif arr.ndim == 3:
+                    # Shape was (N_params, N_networks, N_time) -> transpose to (N_networks, N_params, N_time)
+                    self._data[var][metric] = np.swapaxes(arr, 0, 1)
+                else:
+                    self._data[var][metric] = arr
+
         self._finalized = True
 
     def get_data(self, variable: str, metric: str, unit: str = None) -> np.ndarray:
@@ -182,6 +189,7 @@ class ModelSummaryInspectionResults(CoreInspectionResults):
     DEFINED_METRICS = [
         "time_mean", 
         "time_std",
+        "pop_mean",
     ]
 
 class ModelComparisonInspectionResults(CoreInspectionResults):

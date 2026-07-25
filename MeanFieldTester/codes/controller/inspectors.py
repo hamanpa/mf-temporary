@@ -60,6 +60,11 @@ class ModelSummaryExtractor:
         if data is None:
             return None
         return np.std(data)
+    
+    def _calc_pop_mean(self, data: np.ndarray) -> np.ndarray:
+        if data is None:
+            return None
+        return data
 
     def _get_results_data(self, result: BaseResults, var: str) -> np.ndarray:
         """
@@ -73,7 +78,7 @@ class ModelSummaryExtractor:
         else:
             raise AttributeError(f"Results object does not have variable '{var}_mean' or '{var}'.")
 
-    def extract(self, result: BaseMFResults | BaseSNNResults | None) -> dict[str, float]:
+    def extract(self, result: BaseMFResults | BaseSNNResults | None) -> dict[str, float | np.ndarray]:
         """
         Slices the time array and computes time-averages and standard deviations.
         """
@@ -87,23 +92,25 @@ class ModelSummaryExtractor:
         
         for metric in self.metrics:
             for variable in self.measured_variables:
-                if (isinstance(result, BaseMFResults)
-                    and "rate" in variable
-                    and metric == "time_std"):
+                # Output a flat dictionary with f"{variable}_{metric}" keys 
+                # (perfectly matching what add_inspection_data expects)
+                if metric == "pop_mean":
+                    # For pop_mean, we want to return the full time series (or the sliced time series)
+                    raw_data = self._get_results_data(result, variable)
+                    extracted_data[f"{variable}_{metric}"] = self._calc_pop_mean(raw_data)
+                elif (isinstance(result, BaseMFResults)
+                        and "rate" in variable
+                        and metric == "time_std"):
                     # NOTE: For MF results, the std of rates are computed separately
                     # thus make sense to call the dedicated method for std instead of computing it from the mean.
                     raw_data = self._get_results_data(result, variable + "_std")
-                    calculator_method = self._calc_time_mean
+                    masked_data = raw_data[mask]
+                    extracted_data[f"{variable}_{metric}"] = self._calc_time_mean(masked_data)
                 else:
                     raw_data = self._get_results_data(result, variable)
                     calculator_method = getattr(self, f"_calc_{metric}")
-                
-                masked_data = raw_data[mask]
-                
-                # Output a flat dictionary with f"{variable}_{metric}" keys 
-                # (perfectly matching what add_inspection_data expects)
-                extracted_data[f"{variable}_{metric}"] = calculator_method(masked_data)
-
+                    masked_data = raw_data[mask]
+                    extracted_data[f"{variable}_{metric}"] = calculator_method(masked_data)
         return extracted_data
 
 
@@ -171,7 +178,7 @@ class ModelComparisonExtractor:
             A dictionary containing the computed metrics for each measured variable.
         """
 
-        if result is None:
+        if ground_truth is None or target is None:
             # In case the simulation was skipped or failed, return a dictionary with NaN values for all metrics.
             return {f"{var}_{metric}": np.nan for var in self.measured_variables for metric in self.metrics}        
 
@@ -271,6 +278,17 @@ class ParameterInspector:
             if extractor.input_mode == "unary":
                 extracted_data[i].append(extractor.extract(snn_results))
                 extracted_data[i].extend([extractor.extract(mf_results) for mf_results in mf_results_list])
+                if "pop_mean" in extractor.metrics:
+                    start_times = [snn_results.times()[0]] + [mf_results.times()[0] for mf_results in mf_results_list]
+                    end_times = [snn_results.times()[-1]] + [mf_results.times()[-1] for mf_results in mf_results_list]
+                    start_time = max(start_times)
+                    end_time = min(end_times)
+                    time_masks = [(snn_results.times() >= start_time) & (snn_results.times() <= end_time)] + \
+                                [(mf_results.times() >= start_time) & (mf_results.times() <= end_time) for mf_results in mf_results_list]
+                    for j, extracted_dict in enumerate(extracted_data[i]):
+                        for var in extractor.measured_variables:
+                            extracted_dict[f"{var}_pop_mean"] = extracted_dict[f"{var}_pop_mean"][time_masks[j]]
+
             elif extractor.input_mode == "pairwise":
                 extracted_data[i].extend([
                     extractor.extract(
@@ -358,16 +376,17 @@ class ParameterInspector:
             for i, data in enumerate(extracted_data):
                 inspection_results[i].add_inspection_data(data)
         
+        print("\nInspection Complete. Freezing results...")
+
+        for container in inspection_results:
+            container.freeze()
+
         for hook in inspection_hooks:
             hook(
                 identifier=f"{inspected_param.split('.')[-1]} inspection",
                 inspection_results_list=inspection_results
             )
         
-        print("\nInspection Complete. Freezing results...")
-
-        for container in inspection_results:
-            container.freeze()
         return inspection_results
 
 

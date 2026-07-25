@@ -129,8 +129,12 @@ class RunSimulationConfig(BaseModel):
 class SkipSimulationConfig(BaseModel):
     execution_mode: Literal["skip"]
 
+class TryLoadSimulationConfig(RunSimulationConfig):
+    execution_mode: Literal["try_load"]  # This is a new execution mode that allows for trying to load data first, and if not found, run the simulation
+    exc_neuron_data_path: str | Path = Field(description="Path to the saved simulation data for excitatory neuron")
+    inh_neuron_data_path: str | Path = Field(description="Path to the saved simulation data for inhibitory neuron")
 
 NeuronSimulationConfig = Annotated[
-    RunSimulationConfig | LoadSimulationConfig | SkipSimulationConfig, 
+    RunSimulationConfig | LoadSimulationConfig | SkipSimulationConfig | TryLoadSimulationConfig,
     Field(discriminator='execution_mode')
 ]

@@ -1,29 +1,94 @@
-
-# Todos (code base)
-
+STP inspection
+- what tau_rec should I set up?
+- inspect various stimulus
+- first inspect drive_rate
+- find some reasonable drive and run other stimuli
 
 # Todos (research)
-- [ ] **TF fitting replication**
-  - [ ] Replicate diVolo figures.
-  - [ ] Compare with Zerlaut data points.
+- [ ] **TVB direct stimulus issue**
+  - [ ] Create a minimal working example to isolate the weird behavior of direct stimulus in TVB.
+
+- [ ] **Voltage TF fitting**
+  - ISSUE: theoretical values are based on subthreshold activity, once the activity becomes high, these data are not reflecting much
+  - [ ] Determine what range of membrane fluctuation parameters should be used.
+
+- [ ] **DiVolo TF fitting**
+  - ISSUE: TF fit params in repo and paper are completely off, where is the issue?
+  - [ ] Generate neuron data using Zerlaut and my MFT scripts
+  - [ ] Compare data with Di Volo TF fit (use my MFT, Zerlaut and DiVolo TF function implementation)
+
+- [ ] **Verify TF Implementation**
+  - [ ] Compare neuron data (Zerlaut x My script)
+  - [ ] Compare membrane potential fluctuation computation
+  - [ ] Do not compare the fitting (different units results in different results), Compare that TF functions give the same curves if each script has the same TF fit coeffs
+
+- [ ] **Replicate DiVolo paper**
+  - Basically a sanity check, that the new models can do that (static synapse, there should be no changes)
   - [ ] Verify the $b=0$ fitting statement.
-- [ ] **Add ModelDB TF fit**
-  - [ ] Add a TF fit line based on the ModelDB repo to verify parameter reliance independently.
+
 - [ ] **MF models with STP**
   - [ ] Run sanity checks on diVolo with static synapses.
   - [ ] Test diVolo params with STP.
+  - [ ] Identify the network changes after introduction of STP
+  - [ ] inspect the network behavior
+  - [ ] is there any equivalence to statement of divolo - TF fit coeffs are independent of adaptation params changes?
   - [ ] Test CSNG with STP synapses.
-- [ ] **TVB direct stimulus issue**
-  - [ ] Create a minimal working example to isolate the weird behavior of direct stimulus in TVB.
-- [ ] **Spont activity inspection**
-  - [ ] Automate inspection over parameter ranges.
-  - [ ] Create histogram plots for activity, voltage, and adaptation.
-- [ ] **General stimuli inspection**
-  - [ ] Compute difference and correlation between SNN and MF over varying parameters.
+
 - [ ] **Test CSNG architecture**
   - [ ] Test CSNG with nonhomogeneous connectivity.
-- [ ] **Voltage TF fitting**
-  - [ ] Determine what range of membrane fluctuation parameters should be used.
+
+# Todos (code)
+Task pattern:
+- [ ] (Priority) **module part**: *name of the task*
+  - additional info
+
+Task should be short and clear, to get the idea quickly, details in additional info which can be folded/unfolded
+
+Priority
+(1) Critical/Blocker: Immediate action required. These tasks prevent the code from running (bugs/crashes) or are architectural dependencies for all other planned features.
+(2) Essential/High: Important for research progress. These are core features or experiments that are necessary for the next stage of your thesis.
+(3) Important/Medium: Non-blocking features that improve usability, code quality, or provide supplementary data.
+(4) Nice-to-have/Low: Minor optimizations, documentation polish, or experimental ideas that don't have a specific deadline.
+
+
+
+
+- [ ] (3) **codebase**: *update README.md files and other files providing explanations*
+- [ ] (3) **codebase**: *Check all the commented notes and todos within codes and put them on todo.md, readme.md or similarly instead*
+  -  Keep a single source of truth for all the todos and ideas, and they are not lost in the code comments.
+- [ ] (4) **codebase**: *Unify documentation and docstrings*
+  - Add docstrings to all functions, especially the main workflow and the unified batch runner, to clarify their purpose and expected inputs/outputs.
+- [ ] (4) **codebase**: *Migrate away from Pickle*
+  - Pickle is notoriously brittle if you rename classes (SingleNeuronResults). For long-term PhD research, storing simulation metrics in HDF5 or Parquet is much safer.
+- [ ] (3) **codebase**: *Write description of units handling setup in `units.md`*
+- [ ] (4) **codebase**: *Implement logging*
+- [ ] (4) **codebase**: *Create a tutorial notebook*
+- [ ] (3) **codebase**: *Clean up - Remove dead, unused, or commented-out code across the repository.*
+- [ ] (4) **codebase**: *Setup Testing - Write basic tests to check core functions quickly.*
+
+- [ ] (4) **controller**: *Generation of template config params - Make this work nicer codes.controller.config --template --schema*
+  - or create some other way of generating and providing example templates
+  - so the user can check what are allowed params in config files, the structure and expected format/values/types
+
+- [ ] (3) **data_structures**: *SingleNeuronResults should keep spikes as data with default units*
+- [ ] (3) **data_structures**: *Create a method for all results classes listing measured values (what is not None)*
+  - usecase?
+- [ ] (3) **data_structures**: *Other methods of saving (due to spike data) np.save_compressed() or the h5py*
+  - save all and save means (time means, pop means etc, so that we do not keep 40000x500 arrays, but rather the reasonable averages)
+- [ ] (4) **data_structures**: *Add load method (e.g., a @classmethod for load(cls, filepath))*
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 # Ideas
 - [ ] **"Style Plot" system:** Instead of specific classes like `FiringRatePlot`, pass a generic results object to a single class that applies "styles" (errorbar, line, fill_between).
@@ -36,7 +101,6 @@
 # Other notes
 - **Results Class Safety:** Ensure that we strictly use predefined methods when interacting with the `Results` class.
 - **New Variables to Measure:** Consider formally tracking inhibitory adaptation, conductances (ee, ei, ie, ii), and STP variables (u, x, y).
-- **Proposed Inspection Attributes:** `exc_rate_time_mean`, `exc_rate_diff_time_mean`, `exc_rate_time_std`, `exc_rate_diff_time_std`.
 - **Biology Notes on STP:** Inhibitory neurons are generally Facilitatory (e.g., PV interneurons), while excitatory neurons are Depressing (SST interneurons might be depressive). Look into observing ISN and STP.
 - **Reading Backlog:**
   - NeuroPSI MF papers
@@ -108,9 +172,11 @@ plotting to inspect Zerlaut approach (neuron_simulation, transfer_function level
 - mu_V, sigma_V, tau_V, mu_G, sigma_G, v_eff
 - plot_fluctuation_theoretical, plot_fluctuation_comparison, plot_tf_fitting_steps
 
-
 - analysis/spike_metrics: Regularity, Synchrony
     - as measures of AI state, also measures of UP/DOWN states
+
+- Overview plots dynamically adjusting to measured variables and plotting accordingly? (if conductance measure plot conductance etc.)
+  - if variable not measured do not include the plot?
 
 ## [Architecture Decision Record] SNN Simulation Reset Paradigm
 
@@ -146,38 +212,11 @@ We stick to **Option B (Clean Slate)** for all Mean-Field transfer-function fitt
 
 ----
 
-Task pattern:
-- [ ] Priority **module part**: *name of the task*
-  - additional info
-Priority
-(1) Critical/Blocker: Immediate action required. These tasks prevent the code from running (bugs/crashes) or are architectural dependencies for all other planned features.
-(2) Essential/High: Important for research progress. These are core features or experiments that are necessary for the next stage of your thesis.
-(3) Important/Medium: Non-blocking features that improve usability, code quality, or provide supplementary data.
-(4) Nice-to-have/Low: Minor optimizations, documentation polish, or experimental ideas that don't have a specific deadline.
 
 # TODO:
-- [ ] () **module**: *task*
 
-- [ ] (3) **codebase**: *update README.md files and other files providing explanations*
-- [ ] (3) **codebase**: *Check all the commented notes and todos and put them on todo.md instead*
-  -  Keep a single source of truth for all the todos and ideas, and they are not lost in the code comments.
-- [ ] (4) **codebase**: *Unify documentation and docstrings*
-  - Add docstrings to all functions, especially the main workflow and the unified batch runner, to clarify their purpose and expected inputs/outputs.
-- [ ] (4) **codebase**: *Migrate away from Pickle*
-  - Pickle is notoriously brittle if you rename classes (SingleNeuronResults). For long-term PhD research, storing simulation metrics in HDF5 or Parquet is much safer.
-- [ ] (3) **codebase**: *Write description of units handling setup in `units.md`*
-- [ ] (4) **codebase**: *Implement logging*
-- [ ] (4) **codebase**: *Create a tutorial notebook*
-- [ ] (3) **codebase**: *Clean up - Remove dead, unused, or commented-out code across the repository.*
-- [ ] (4) **codebase**: *Setup Testing - Write basic tests to check core functions quickly.*
 
-- [ ] (4) **controller**: *Generation of template config params - Make this work nicer codes.controller.config --template --schema*
 
-- [ ] (3) **data_structures**: *SingleNeuronResults should keep spikes as data with default units*
-- [ ] (3) **data_structures**: *Create a method for all results classes listing measured values (what is not None)*
-- [ ] (3) **data_structures**: *Other methods of saving (due to spike data) np.save_compressed() or the h5py*
-- [ ] (3) **data_structures**: *InspectionResults write in accordance with the new setup*
-- [ ] (4) **data_structures**: *Add load method (e.g., a @classmethod for load(cls, filepath))*
 
 - [ ] (2) **neuron_simulation**: *Subthreshold grid: allow adaptive grid to also cover subthreshold region*
 - [ ] (3) **neuron_simulation**: *implement execution modes 'skip", 'validate' (comparison of existing data and newly generated ones)* 

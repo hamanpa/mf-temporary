@@ -276,6 +276,8 @@ class BaseNetworkHistogramPlot(BaseNetworkPlot, ABC):
         'start_time': None,  # Start time for the histogram
         'end_time': None,  # End time for the histogram
         'time_unit': 'ms',  # Time unit for the histogram
+        'normalization': False,
+        'density': False,
     }
 
     def update_params(self, results_list:list):

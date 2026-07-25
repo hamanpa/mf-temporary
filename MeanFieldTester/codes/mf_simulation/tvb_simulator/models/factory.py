@@ -91,6 +91,14 @@ TVB_NEUROPSI_EXC_STATIC_SYNAPSE_MAPPING = {
     "Q_e": TranslationRule("weight", sim_unit="nS"),
 }
 
+TVB_NEUROPSI_EXC_EXTERNAL_STATIC_SYNAPSE_MAPPING = {
+    "Q_e_ext": TranslationRule("weight", sim_unit="nS"),
+}
+
+TVB_NEUROPSI_EXC_EXTERNAL_STATIC_SYNAPSE_MAPPING = {
+    "Q_i_ext": TranslationRule("weight", sim_unit="nS"),
+}
+
 TVB_NEUROPSI_EXC_TSODYKS_SYNAPSE_MAPPING = {
     "Q_e": TranslationRule("weight", sim_unit="nS"),
     "U_e": TranslationRule("U", sim_unit=""),
@@ -178,11 +186,24 @@ def setup_tvb_model(network_params: BiologicalParameters, mf_sim_params: MeanFie
             "weight_noise": 0,
         }
 
+        # Determine static weights (scale by U if they are Tsodyks synapses)
+        exc_syn = network_params.synapses[exc_neuron_name]
+        # exc_weight = exc_syn.syn_params.weight
+        exc_weight = translate_params(exc_syn.syn_params, TVB_NEUROPSI_EXC_STATIC_SYNAPSE_MAPPING)["Q_e"]
+        if exc_syn.syn_type == "tsodyks_synapse":
+            exc_weight *= exc_syn.syn_params.U
+
+        inh_syn = network_params.synapses[inh_neuron_name]
+        # inh_weight = inh_syn.syn_params.weight
+        inh_weight = translate_params(inh_syn.syn_params, TVB_NEUROPSI_INH_STATIC_SYNAPSE_MAPPING)["Q_i"]
+        if inh_syn.syn_type == "tsodyks_synapse":
+            inh_weight *= inh_syn.syn_params.U
+
         model_params = {
             **translate_params(network_params.neurons[exc_neuron_name].neuron_params, TVB_NEUROPSI_LEGACY_EXC_NEURON_MAPPING),
             **translate_params(network_params.neurons[inh_neuron_name].neuron_params, TVB_NEUROPSI_LEGACY_INH_NEURON_MAPPING),
-            **translate_params(network_params.synapses[exc_neuron_name].syn_params, TVB_NEUROPSI_EXC_STATIC_SYNAPSE_MAPPING),
-            **translate_params(network_params.synapses[inh_neuron_name].syn_params, TVB_NEUROPSI_INH_STATIC_SYNAPSE_MAPPING),
+            "Q_e": exc_weight,
+            "Q_i": inh_weight,
             **mf_model_params
         }
 
@@ -221,8 +242,27 @@ def setup_tvb_model(network_params: BiologicalParameters, mf_sim_params: MeanFie
         model_params = {
             **translate_params(network_params.neurons[exc_neuron_name].neuron_params, TVB_NEUROPSI_EXC_NEURON_MAPPING),
             **translate_params(network_params.neurons[inh_neuron_name].neuron_params, TVB_NEUROPSI_INH_NEURON_MAPPING),
-            **translate_params(network_params.synapses[exc_neuron_name].syn_params, TVB_NEUROPSI_EXC_TSODYKS_SYNAPSE_MAPPING),
-            **translate_params(network_params.synapses[inh_neuron_name].syn_params, TVB_NEUROPSI_INH_TSODYKS_SYNAPSE_MAPPING),
+            **(
+                translate_params(network_params.synapses[exc_neuron_name].syn_params, TVB_NEUROPSI_EXC_TSODYKS_SYNAPSE_MAPPING)
+                if network_params.synapses[exc_neuron_name].syn_type == "tsodyks_synapse"
+                else {
+                    **translate_params(network_params.synapses[exc_neuron_name].syn_params, TVB_NEUROPSI_EXC_STATIC_SYNAPSE_MAPPING),
+                    "U_e": 1.0,
+                    "tau_rec_e": 0.0,
+                    "tau_fac_e": 0.0,
+                }
+            ),
+            **(
+                translate_params(network_params.synapses[inh_neuron_name].syn_params, TVB_NEUROPSI_INH_TSODYKS_SYNAPSE_MAPPING)
+                if network_params.synapses[inh_neuron_name].syn_type == "tsodyks_synapse"
+                else {
+                    **translate_params(network_params.synapses[inh_neuron_name].syn_params, TVB_NEUROPSI_INH_STATIC_SYNAPSE_MAPPING),
+                    "U_i": 1.0,
+                    "tau_rec_i": 0.0,
+                    "tau_fac_i": 0.0,
+                }
+            ),
+            **translate_params(network_params.synapses["drive_neuron"].syn_params, TVB_NEUROPSI_EXC_EXTERNAL_STATIC_SYNAPSE_MAPPING),
             **mf_model_params
         }
 

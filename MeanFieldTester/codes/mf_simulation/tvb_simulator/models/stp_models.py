@@ -199,7 +199,20 @@ class NeuroPSI_STP_asymptotic_first_order(Model):
         domain=Range(lo=0.0, hi=5.0, step=0.1),
         doc="""excitatory quantal conductance [nS]""")
 
+    
+    Q_e_ext = NArray(
+        label=r":math:`Q_e`",
+        default=numpy.array([1.5]),
+        domain=Range(lo=0.0, hi=5.0, step=0.1),
+        doc="""excitatory quantal conductance [nS]""")
+
     Q_i = NArray(
+        label=r":math:`Q_i`",
+        default=numpy.array([5.0]),
+        domain=Range(lo=0.0, hi=10.0, step=0.1),
+        doc="""inhibitory quantal conductance [nS]""")
+
+    Q_i_ext = NArray(
         label=r":math:`Q_i`",
         default=numpy.array([5.0]),
         domain=Range(lo=0.0, hi=10.0, step=0.1),
@@ -492,9 +505,9 @@ class NeuroPSI_STP_asymptotic_first_order(Model):
         conns_i = numpy.array([inh_num, self.K_ext_i, inh_num])
         conns_i = conns_i.reshape((-1,1,1))
 
-        weights_e = numpy.array([self.Q_e, self.Q_e, self.Q_e, self.Q_e, self.Q_e])
+        weights_e = numpy.array([self.Q_e, self.Q_e_ext, self.Q_e_ext, self.Q_e_ext, self.Q_e_ext])
         weights_e = weights_e.reshape((-1,1,1))
-        weights_i = numpy.array([self.Q_i, self.Q_i, self.Q_i])
+        weights_i = numpy.array([self.Q_i, self.Q_i_ext, self.Q_i_ext])
         weights_i = weights_i.reshape((-1,1,1))
 
         try:
@@ -853,9 +866,9 @@ class NeuroPSI_STP_asymptotic_second_order(NeuroPSI_STP_asymptotic_first_order):
         conns_i = numpy.array([inh_num, self.K_ext_i, inh_num])
         conns_i = conns_i.reshape((-1,1,1))
 
-        weights_e = numpy.array([self.Q_e, self.Q_e, self.Q_e, self.Q_e, self.Q_e])
+        weights_e = numpy.array([self.Q_e, self.Q_e_ext, self.Q_e_ext, self.Q_e_ext, self.Q_e_ext])
         weights_e = weights_e.reshape((-1,1,1))
-        weights_i = numpy.array([self.Q_i, self.Q_i, self.Q_i])
+        weights_i = numpy.array([self.Q_i, self.Q_i_ext, self.Q_i_ext])
         weights_i = weights_i.reshape((-1,1,1))
 
         try:
@@ -1199,7 +1212,19 @@ class NeuroPSI_STP_dynamic_first_order(Model):
         domain=Range(lo=0.0, hi=5.0, step=0.1),
         doc="""excitatory quantal conductance [nS]""")
 
+    Q_e_ext = NArray(
+        label=r":math:`Q_e`",
+        default=numpy.array([1.5]),
+        domain=Range(lo=0.0, hi=5.0, step=0.1),
+        doc="""excitatory quantal conductance [nS]""")
+
     Q_i = NArray(
+        label=r":math:`Q_i`",
+        default=numpy.array([5.0]),
+        domain=Range(lo=0.0, hi=10.0, step=0.1),
+        doc="""inhibitory quantal conductance [nS]""")
+
+    Q_i_ext = NArray(
         label=r":math:`Q_i`",
         default=numpy.array([5.0]),
         domain=Range(lo=0.0, hi=10.0, step=0.1),
@@ -1472,15 +1497,17 @@ class NeuroPSI_STP_dynamic_first_order(Model):
         conns_i = numpy.array([inh_num, self.K_ext_i, inh_num])
         conns_i = conns_i.reshape((-1,1,1))
 
-        weights_e = numpy.array([self.Q_e, self.Q_e, self.Q_e, self.Q_e, self.Q_e])
+        weights_e = numpy.array([self.Q_e, self.Q_e_ext, self.Q_e_ext, self.Q_e_ext, self.Q_e_ext])
         weights_e = weights_e.reshape((-1,1,1))
-        weights_i = numpy.array([self.Q_i, self.Q_i, self.Q_i])
+        weights_i = numpy.array([self.Q_i, self.Q_i_ext, self.Q_i_ext])
         weights_i = weights_i.reshape((-1,1,1))
 
-        stp_e = [X_e*U_dyn_e, 1., 1., 1., 1.]
+        stp_e = [Y_e, 1., 1., 1., 1.]
+        # stp_e = [X_e*U_dyn_e, 1., 1., 1., 1.]
         stp_e = self.convert_to_array(stp_e, axis=0)
 
-        stp_i = [X_i*U_dyn_i, 1., 1.]
+        stp_i = [Y_i, 1., 1.]
+        # stp_i = [X_i*U_dyn_i, 1., 1.]
         stp_i = self.convert_to_array(stp_i, axis=0)
 
         weights_e = weights_e*stp_e
@@ -1520,8 +1547,9 @@ class NeuroPSI_STP_dynamic_first_order(Model):
         
         # Synaptic depression
         if self.tau_rec_e:
-            derivative[4] = (1-X_e-Y_e)/self.tau_rec_e - U_dyn_e*X_e*E
-            derivative[5] = -Y_e/self.tau_e + U_dyn_e*X_e*E
+            u = U_dyn_e*(1-self.U_e) + self.U_e
+            derivative[4] = (1-X_e-Y_e)/self.tau_rec_e - u*X_e*E
+            derivative[5] = -Y_e/self.tau_e + u*X_e*E
         else:
             derivative[4] = 0.
             derivative[5] = 0.
@@ -1534,8 +1562,9 @@ class NeuroPSI_STP_dynamic_first_order(Model):
 
 
         if self.tau_rec_i:
-            derivative[7] = (1-X_i-Y_i)/self.tau_rec_i - U_dyn_i*X_i*I
-            derivative[8] = -Y_i/self.tau_i + U_dyn_i*X_i*I
+            u = U_dyn_i*(1-self.U_i) + self.U_i
+            derivative[7] = (1-X_i-Y_i)/self.tau_rec_i - u*X_i*I
+            derivative[8] = -Y_i/self.tau_i + u*X_i*I
         else:
             derivative[7] = 0.
             derivative[8] = 0.
@@ -1867,9 +1896,9 @@ class NeuroPSI_STP_dynamic_second_order(NeuroPSI_STP_dynamic_first_order):
         conns_i = numpy.array([inh_num, self.K_ext_i, inh_num])
         conns_i = conns_i.reshape((-1,1,1))
 
-        weights_e = numpy.array([self.Q_e, self.Q_e, self.Q_e, self.Q_e, self.Q_e])
+        weights_e = numpy.array([self.Q_e, self.Q_e_ext, self.Q_e_ext, self.Q_e_ext, self.Q_e_ext])
         weights_e = weights_e.reshape((-1,1,1))
-        weights_i = numpy.array([self.Q_i, self.Q_i, self.Q_i])
+        weights_i = numpy.array([self.Q_i, self.Q_i_ext, self.Q_i_ext])
         weights_i = weights_i.reshape((-1,1,1))
 
         stp_e = [X_e*U_dyn_e, 1., 1., 1., 1.]
@@ -1998,8 +2027,9 @@ class NeuroPSI_STP_dynamic_second_order(NeuroPSI_STP_dynamic_first_order):
         derivative[6] = -W_i/self.tau_w_i+self.b_i*I+self.a_i*(mu_V-self.E_L_i)/self.tau_w_i
 
         if self.tau_rec_e:
-            derivative[7] = (1-X_e-Y_e)/self.tau_rec_e - self.U_e*X_e*E
-            derivative[8] = -Y_e/self.tau_e + self.U_e*X_e*E
+            u = U_dyn_e * (1- self.U_e) + self.U_e
+            derivative[7] = (1-X_e-Y_e)/self.tau_rec_e - u*X_e*E
+            derivative[8] = -Y_e/self.tau_e + u*X_e*E
         else:
             derivative[7] = 0.
             derivative[8] = 0.
@@ -2010,8 +2040,9 @@ class NeuroPSI_STP_dynamic_second_order(NeuroPSI_STP_dynamic_first_order):
             derivative[9] = 0.
 
         if self.tau_rec_i:
-            derivative[10] = (1-X_i-Y_i)/self.tau_rec_i - self.U_i*X_i*I
-            derivative[11] = -Y_i/self.tau_i + self.U_i*X_i*I
+            u = U_dyn_i * (1- self.U_i) + self.U_i
+            derivative[10] = (1-X_i-Y_i)/self.tau_rec_i - u*X_i*I
+            derivative[11] = -Y_i/self.tau_i + u*X_i*I
         else:
             derivative[10] = 0.
             derivative[11] = 0.

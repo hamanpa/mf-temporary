@@ -40,6 +40,37 @@ def run_neuron_simulation_workflow(neuron_sim_params: NeuronSimulationConfig, ne
             simulator = get_simulator(simulator_name)
             neuron_results = simulator.simulate(network_params, neuron_sim_params)
 
+        case "skip":
+            neuron_results = {neuron_name: None for neuron_name in network_params.internal_neurons}
+
+        case "try_load":
+            exc_path = Path(neuron_sim_params.exc_neuron_data_path)
+            inh_path = Path(neuron_sim_params.inh_neuron_data_path)
+
+            if exc_path.exists() and inh_path.exists():
+                print("Found existing neuron simulation data, loading...")
+                neuron_results = dict()
+                for neuron_name in network_params.internal_neurons:
+                    attribute_name = f"{neuron_name}_data_path"
+                    data_path = Path(getattr(neuron_sim_params, attribute_name))
+                    with open(data_path, 'rb') as f:
+                        data = pickle.load(f)
+                    if not isinstance(data, SingleNeuronResults):
+                        raise ValueError(f"Loaded data for {neuron_name} is not of type SingleNeuronResults.")
+                    neuron_results[neuron_name] = data
+            else:
+                print("Simulation data not found. Running simulation...")
+                simulator_name = neuron_sim_params.simulator
+                simulator = get_simulator(simulator_name)
+                neuron_results = simulator.simulate(network_params, neuron_sim_params)
+
+                for neuron_name, result in neuron_results.items():
+                    attribute_name = f"{neuron_name}_data_path"
+                    data_path = Path(getattr(neuron_sim_params, attribute_name))
+                    data_path.parent.mkdir(parents=True, exist_ok=True)
+                    with open(data_path, 'wb') as f:
+                        pickle.dump(result, f)
+                print("Saved simulation data successfully.")
         case _:
             # NOTE: this should never happen due to Pydantic validation, 
             # but we include it for safety and clarity, e.g. if someone allows
