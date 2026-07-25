@@ -1502,12 +1502,12 @@ class NeuroPSI_STP_dynamic_first_order(Model):
         weights_i = numpy.array([self.Q_i, self.Q_i_ext, self.Q_i_ext])
         weights_i = weights_i.reshape((-1,1,1))
 
-        stp_e = [Y_e, 1., 1., 1., 1.]
-        # stp_e = [X_e*U_dyn_e, 1., 1., 1., 1.]
+        # stp_e = [Y_e, 1., 1., 1., 1.]
+        stp_e = [X_e*U_dyn_e, 1., 1., 1., 1.]
         stp_e = self.convert_to_array(stp_e, axis=0)
 
-        stp_i = [Y_i, 1., 1.]
-        # stp_i = [X_i*U_dyn_i, 1., 1.]
+        # stp_i = [Y_i, 1., 1.]
+        stp_i = [X_i*U_dyn_i, 1., 1.]
         stp_i = self.convert_to_array(stp_i, axis=0)
 
         weights_e = weights_e*stp_e
@@ -1901,6 +1901,8 @@ class NeuroPSI_STP_dynamic_second_order(NeuroPSI_STP_dynamic_first_order):
         weights_i = numpy.array([self.Q_i, self.Q_i_ext, self.Q_i_ext])
         weights_i = weights_i.reshape((-1,1,1))
 
+
+        # u = U_dyn_e * (1- self.U_e) + self.U_e
         stp_e = [X_e*U_dyn_e, 1., 1., 1., 1.]
         stp_e = self.convert_to_array(stp_e, axis=0)
 

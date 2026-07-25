@@ -345,7 +345,7 @@ def simulate_adex_neuron_full_grid_multiprocess(neuron_name: str, neuron_params:
 
 # Dealing with the grid
 
-def find_exc_rate_max_for_out_rate_target(neuron_params, neuron_sim_params_dict, inh_rate, out_rate_target, rel_tol=0.1, max_iter=100):
+def find_exc_rate_max_for_out_rate_target(neuron_params, neuron_sim_params_dict, inh_rate, out_rate_target, max_input_rate=500.0, rel_tol=0.1, max_iter=100):
     """Finds the upper boundary nu_e using a fast geometric expansion and rough bisection."""
     # (Same helper to get the rate)
     def get_rate(exc_rate):
@@ -357,7 +357,8 @@ def find_exc_rate_max_for_out_rate_target(neuron_params, neuron_sim_params_dict,
     exc_rate_high = 1.0
     while get_rate(exc_rate_high) < out_rate_target:
         exc_rate_high *= 2.0
-        if exc_rate_high > 1000: return exc_rate_high # Safety
+        if exc_rate_high >= max_input_rate:
+            return max_input_rate
 
     # Only a few bisections just to get the "roof" reasonably close
     exc_rate_low = exc_rate_high / 2.0
@@ -381,49 +382,119 @@ def find_exc_rate_max_for_out_rate_target(neuron_params, neuron_sim_params_dict,
 
 def _resolve_adaptive_grid_worker(task_data):
     """Worker function to resolve a single column of the adaptive grid in parallel."""
-    (inh_rate_idx, inh_rate, out_rate_targets, out_rate_max, n_coarse_points,
+    (inh_rate_idx, inh_rate, out_rate_targets, out_rate_max, max_input_rate, skip_zeros, n_coarse_points,
      single_neuron_params, neuron_sim_params_dict) = task_data
 
-    # Find the maximum excitatory rate needed to reach out_rate_max
-    exc_rate_max = find_exc_rate_max_for_out_rate_target(
-        single_neuron_params, neuron_sim_params_dict, inh_rate, out_rate_max
-    )
+    try:
+        # Find the maximum excitatory rate needed to reach out_rate_max
+        exc_rate_max = find_exc_rate_max_for_out_rate_target(
+            single_neuron_params, neuron_sim_params_dict, inh_rate, out_rate_max, max_input_rate=max_input_rate
+        )
 
-    exc_rate_grid_coarse = np.linspace(0, exc_rate_max, n_coarse_points)
-    out_rate_values_coarse = np.zeros(n_coarse_points)
+        exc_rate_grid_coarse = np.linspace(0, exc_rate_max, n_coarse_points)
+        out_rate_values_coarse = np.zeros(n_coarse_points)
 
-    sim_time = neuron_sim_params_dict['simulation_time']
-    avg_window = neuron_sim_params_dict['averaging_window']
-    
-    # Run coarse simulations
-    for exc_rate_idx, exc_rate_test in enumerate(exc_rate_grid_coarse):
-        data = simulate_adex_neuron_single_point(exc_rate_test, inh_rate, **single_neuron_params, **neuron_sim_params_dict)
-        spikes = data['spikes']
-        out_rate_values_coarse[exc_rate_idx] = spikes[spikes > (sim_time - avg_window)].size / (avg_window * 1e-3)
-
-    # Reversal to capture the last zero activity before firing begins
-    out_rate_values_coarse_rev = out_rate_values_coarse[::-1]
-    unique_indices_rev = np.unique(out_rate_values_coarse_rev, return_index=True)[1]
-    unique_indices = n_coarse_points - 1 - unique_indices_rev
-
-    out_rate_unique = out_rate_values_coarse[unique_indices]
-    exc_rate_unique = exc_rate_grid_coarse[unique_indices]
-    
-    # Prepare the output columns for this specific inh_rate
-    out_n_points = len(out_rate_targets)
-    exc_rate_column = np.zeros(out_n_points)
-    
-    if len(out_rate_unique) > 1:
-        inverse_f_I_curve = PchipInterpolator(out_rate_unique, exc_rate_unique)
-        safe_targets = np.clip(out_rate_targets, out_rate_unique.min(), out_rate_unique.max())
-        exc_rate_column[:] = inverse_f_I_curve(safe_targets)
-    else:
-        # Fallback if the neuron is completely dead (never spiked)
-        exc_rate_column[:] = 0.0
+        sim_time = neuron_sim_params_dict['simulation_time']
+        avg_window = neuron_sim_params_dict['averaging_window']
         
-    inh_rate_column = np.full(out_n_points, inh_rate)
-    
-    return inh_rate_idx, exc_rate_column, inh_rate_column
+        # Run coarse simulations
+        for exc_rate_idx, exc_rate_test in enumerate(exc_rate_grid_coarse):
+            data = simulate_adex_neuron_single_point(exc_rate_test, inh_rate, **single_neuron_params, **neuron_sim_params_dict)
+            spikes = data['spikes']
+            out_rate_values_coarse[exc_rate_idx] = spikes[spikes > (sim_time - avg_window)].size / (avg_window * 1e-3)
+
+        # Find rheobase_exc: highest input rate with out_rate == 0.0 in coarse data
+        zero_indices = np.where(out_rate_values_coarse == 0.0)[0]
+        if len(zero_indices) > 0 and zero_indices[-1] < len(exc_rate_grid_coarse) - 1:
+            rheobase_idx = zero_indices[-1]
+            rheobase_exc = exc_rate_grid_coarse[rheobase_idx]
+        else:
+            rheobase_idx = 0
+            rheobase_exc = exc_rate_grid_coarse[0]
+
+        if skip_zeros:
+            # Mode 1 (skip_zeros=True): Start grid at the activity threshold (rheobase_exc)
+            out_rate_unique_list = [0.0]
+            exc_rate_unique_list = [rheobase_exc]
+            start_scan_idx = rheobase_idx + 1
+        else:
+            # Mode 2 (skip_zeros=False): Start grid at 0.0 Hz
+            out_rate_unique_list = [out_rate_values_coarse[0]]
+            exc_rate_unique_list = [exc_rate_grid_coarse[0]]
+            start_scan_idx = 1
+
+        for i in range(start_scan_idx, len(out_rate_values_coarse)):
+            if out_rate_values_coarse[i] > out_rate_unique_list[-1]:
+                out_rate_unique_list.append(out_rate_values_coarse[i])
+                exc_rate_unique_list.append(exc_rate_grid_coarse[i])
+
+        out_rate_unique = np.array(out_rate_unique_list)
+        exc_rate_unique = np.array(exc_rate_unique_list)
+
+        out_n_points = len(out_rate_targets)
+        exc_rate_column = np.zeros(out_n_points)
+        max_step = max_input_rate / max(1, out_n_points - 1)
+
+        if skip_zeros:
+            # Mode 1: All out_n_points are allocated to target output rates starting at rheobase_exc
+            if len(out_rate_unique) > 1:
+                inverse_f_I_curve = PchipInterpolator(out_rate_unique, exc_rate_unique)
+                safe_targets = np.clip(out_rate_targets, out_rate_unique.min(), out_rate_unique.max())
+                ideal_exc_rates = inverse_f_I_curve(safe_targets)
+
+                exc_rate_column[0] = ideal_exc_rates[0]
+                for i in range(1, out_n_points):
+                    exc_rate_column[i] = max(
+                        exc_rate_column[i - 1],
+                        min(ideal_exc_rates[i], exc_rate_column[i - 1] + max_step)
+                    )
+                exc_rate_column = np.clip(exc_rate_column, 0.0, max_input_rate)
+            else:
+                exc_rate_column[:] = rheobase_exc
+        else:
+            # Mode 2: Step through sub-threshold region with max_step up to rheobase_exc,
+            # then allocate all remaining points to target output rates (no gaps in nu_out)
+            if len(out_rate_unique) > 1:
+                sub_thresh_points = []
+                curr = 0.0
+                while curr < rheobase_exc - 1e-6 and len(sub_thresh_points) < out_n_points - 1:
+                    sub_thresh_points.append(curr)
+                    curr += max_step
+
+                if rheobase_exc > 0.0 and len(sub_thresh_points) < out_n_points:
+                    sub_thresh_points.append(rheobase_exc)
+
+                M = len(sub_thresh_points)
+                exc_rate_column[:M] = sub_thresh_points
+
+                rem_points = out_n_points - M
+                if rem_points > 0:
+                    inverse_f_I_curve = PchipInterpolator(out_rate_unique, exc_rate_unique)
+                    out_min, out_max = out_rate_targets[0], out_rate_targets[-1]
+                    active_targets = np.linspace(out_min, out_max, rem_points)
+                    safe_active = np.clip(active_targets, out_rate_unique.min(), out_rate_unique.max())
+                    ideal_active_rates = inverse_f_I_curve(safe_active)
+
+                    for j in range(rem_points):
+                        idx = M + j
+                        ideal = ideal_active_rates[j]
+                        prev = exc_rate_column[idx - 1] if idx > 0 else 0.0
+                        exc_rate_column[idx] = max(prev, min(ideal, prev + max_step))
+
+                exc_rate_column = np.clip(exc_rate_column, 0.0, max_input_rate)
+            else:
+                # Fallback if the neuron is completely dead (never spiked)
+                exc_rate_column[:] = 0.0
+        
+        inh_rate_column = np.full(out_n_points, inh_rate)
+        
+        return inh_rate_idx, exc_rate_column, inh_rate_column
+    except Exception as e:
+        import traceback
+        err_msg = f"Error in adaptive grid worker for inh_rate={inh_rate:.2f} Hz: {type(e).__name__}: {e}\n{traceback.format_exc()}"
+        print(err_msg, flush=True)
+        raise RuntimeError(err_msg) from None
+
 
 def resolve_adaptive_grid(neuron_name, neuron_params, neuron_sim_params):
     """
@@ -489,6 +560,8 @@ def resolve_adaptive_grid(neuron_name, neuron_params, neuron_sim_params):
     
     n_coarse_points = grid_params.n_coarse_interpolation_points
     cpus = neuron_sim_params.cpus
+    max_input_rate = grid_params.max_input_rate
+    skip_zeros = grid_params.skip_zeros
 
     neuron_sim_params_dict = {
         "simulator": neuron_sim_params.simulator,
@@ -502,7 +575,7 @@ def resolve_adaptive_grid(neuron_name, neuron_params, neuron_sim_params):
     tasks = []
     for inh_rate_idx, inh_rate in enumerate(inh_rates):
         tasks.append((
-            inh_rate_idx, inh_rate, out_rate_targets, out_rate_max, n_coarse_points,
+            inh_rate_idx, inh_rate, out_rate_targets, out_rate_max, max_input_rate, skip_zeros, n_coarse_points,
             neuron_params, neuron_sim_params_dict
         ))
 

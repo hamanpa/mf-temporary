@@ -95,7 +95,7 @@ TVB_NEUROPSI_EXC_EXTERNAL_STATIC_SYNAPSE_MAPPING = {
     "Q_e_ext": TranslationRule("weight", sim_unit="nS"),
 }
 
-TVB_NEUROPSI_EXC_EXTERNAL_STATIC_SYNAPSE_MAPPING = {
+TVB_NEUROPSI_INH_EXTERNAL_STATIC_SYNAPSE_MAPPING = {
     "Q_i_ext": TranslationRule("weight", sim_unit="nS"),
 }
 
@@ -272,6 +272,7 @@ def setup_tvb_model(network_params: BiologicalParameters, mf_sim_params: MeanFie
     else:
         raise NotImplementedError(f"Model '{model_name}' is not in the legacy registry, so we don't have a predefined mapping for it yet. Please implement the parameter translation for this model in build_mf_model().")
 
+    print(f"Setting up TVB model '{model_name}' with parameters: {model_params}")
     for param_name, param_value in model_params.items():
         setattr(model, param_name, convert_to_array(param_value))
 

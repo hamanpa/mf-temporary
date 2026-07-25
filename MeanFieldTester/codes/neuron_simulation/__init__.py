@@ -44,10 +44,10 @@ def run_neuron_simulation_workflow(neuron_sim_params: NeuronSimulationConfig, ne
             neuron_results = {neuron_name: None for neuron_name in network_params.internal_neurons}
 
         case "try_load":
-            exc_path = Path(neuron_sim_params.exc_neuron_data_path)
-            inh_path = Path(neuron_sim_params.inh_neuron_data_path)
+            valid_exc_path = Path(neuron_sim_params.exc_neuron_data_path).exists() if neuron_sim_params.exc_neuron_data_path else False
+            valid_inh_path = Path(neuron_sim_params.inh_neuron_data_path).exists() if neuron_sim_params.inh_neuron_data_path else False
 
-            if exc_path.exists() and inh_path.exists():
+            if valid_exc_path and valid_inh_path:
                 print("Found existing neuron simulation data, loading...")
                 neuron_results = dict()
                 for neuron_name in network_params.internal_neurons:

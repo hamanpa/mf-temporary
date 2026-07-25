@@ -8,8 +8,6 @@ MeanFieldTester/.ipynb_checkpoints/
 
 results/
 modeldb*/
-# projects/
-scripts/
 notebooks/
 drafts/
 *data/

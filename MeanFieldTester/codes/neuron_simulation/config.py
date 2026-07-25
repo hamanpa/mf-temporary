@@ -68,6 +68,14 @@ class SingleNeuronAdaptiveGrid(BaseModel):
             default=None, 
             description="Number of internal simulations for interpolation. If omitted, defaults to 1.5x the out_rate_grid n_points."
         )
+    max_input_rate: float = Field(
+            default=500.0,
+            description="Maximum allowed input rate in [Hz] for adaptive grid search"
+        )
+    skip_zeros: bool = Field(
+            default=True,
+            description="If True, skips sub-threshold zero activity and jumps to threshold. If False, steps through sub-threshold activity with max_step."
+        )
 
     @model_validator(mode='after')
     def validate_adaptive_logic(self):
@@ -131,8 +139,8 @@ class SkipSimulationConfig(BaseModel):
 
 class TryLoadSimulationConfig(RunSimulationConfig):
     execution_mode: Literal["try_load"]  # This is a new execution mode that allows for trying to load data first, and if not found, run the simulation
-    exc_neuron_data_path: str | Path = Field(description="Path to the saved simulation data for excitatory neuron")
-    inh_neuron_data_path: str | Path = Field(description="Path to the saved simulation data for inhibitory neuron")
+    exc_neuron_data_path: str | Path | None  = Field(default=None, description="Path to the saved simulation data for excitatory neuron")
+    inh_neuron_data_path: str | Path | None = Field(default=None, description="Path to the saved simulation data for inhibitory neuron")
 
 NeuronSimulationConfig = Annotated[
     RunSimulationConfig | LoadSimulationConfig | SkipSimulationConfig | TryLoadSimulationConfig,

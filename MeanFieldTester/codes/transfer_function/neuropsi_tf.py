@@ -189,7 +189,8 @@ class NeuroPSICustomTF(BaseTransferFunction):
         # STEP 1: Fit Effective Potential (V_eff)
         # ==========================================
 
-        mask1 = (out_rates > out_rate_min) & (out_rates < out_rate_max)
+        z_arg = 2.0 * voltage_tau * out_rates * 1e-3
+        mask1 = (out_rates > out_rate_min) & (out_rates < out_rate_max) & (z_arg < 1.999)
         
         v_eff_target = self._get_target_v_eff(
             out_rate=out_rates[mask1], 
