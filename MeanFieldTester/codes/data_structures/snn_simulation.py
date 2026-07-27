@@ -11,8 +11,10 @@ class SNNResults(BaseSNNResults):
         "times" : "ms",
         "drive_rate_mean" : "Hz",
         "stim_rate_mean" : "Hz",
+        "exc_rate_all" : "Hz",
         "exc_rate_mean" : "Hz",
         "exc_rate_std" : "Hz",
+        "inh_rate_all" : "Hz",
         "inh_rate_mean" : "Hz",
         "inh_rate_std" : "Hz",
         "exc_voltage_all" : "mV",
@@ -129,6 +131,13 @@ class SNNResults(BaseSNNResults):
         target_unit = default_unit if unit is None else unit
         return self._get_scaled(self._inh_spikes_all, default_unit, target_unit)
 
+    def exc_rate_all(self, unit=None):
+        default_unit = self.DEFAULT_UNITS["exc_rate_all"]
+        target_unit = default_unit if unit is None else unit
+        if self._exc_rate_all is None:
+            self._exc_rate_all = self._smoothing_function(self.exc_spikes_all())
+        return self._get_scaled(self._exc_rate_all, default_unit, target_unit)
+
     def exc_rate_mean(self, unit=None):
         default_unit = self.DEFAULT_UNITS["exc_rate_mean"]
         target_unit = default_unit if unit is None else unit
@@ -142,6 +151,13 @@ class SNNResults(BaseSNNResults):
         if self._exc_rate_all is None:
             self._exc_rate_all = self._smoothing_function(self.exc_spikes_all())
         return self._get_scaled(self._exc_rate_all.std(axis=1), default_unit, target_unit)
+
+    def inh_rate_all(self, unit=None):
+        default_unit = self.DEFAULT_UNITS["inh_rate_all"]
+        target_unit = default_unit if unit is None else unit
+        if self._inh_rate_all is None:
+            self._inh_rate_all = self._smoothing_function(self.inh_spikes_all())
+        return self._get_scaled(self._inh_rate_all, default_unit, target_unit)
 
     def inh_rate_mean(self, unit=None):
         default_unit = self.DEFAULT_UNITS["inh_rate_mean"]

@@ -119,14 +119,13 @@ def parse_val(val_str: str):
         return val_str
 
 
-def sync_param_combinations_csv(csv_path: Path, inspected_params, network_params, sim_params, stimuli_config):
+def sync_param_combinations_csv(csv_path: Path, inspected_params, network_params, sim_params, stimuli_config, override=False):
     """
     Syncs param_combinations.csv:
-    1. If CSV exists, reads header and existing rows.
-    2. Backfills default values for any new parameter columns not present in existing header.
-    3. Finds which combinations are already present in the CSV and skips them.
-    4. Adds new missing combinations with newly generated 8-char hash IDs.
-    5. Saves updated CSV and returns list of new (id, param_dict) jobs to submit.
+    1. If CSV doesn't exist or override mode is active, generates/updates rows.
+    2. Backfills default values for any new parameter columns.
+    3. If override=True: Forces re-submission of ALL jobs (ignoring existing run skip logic).
+    4. If override=False: Skips combinations already present in CSV and submits only new combinations.
     """
     param_names, param_combinations = generate_param_combinations(inspected_params)
 
@@ -146,6 +145,7 @@ def sync_param_combinations_csv(csv_path: Path, inspected_params, network_params
             except StopIteration:
                 existing_header = []
 
+    # If CSV doesn't exist yet, create it from scratch
     if not existing_header:
         header = ['id'] + param_names
         all_rows = []
@@ -157,7 +157,6 @@ def sync_param_combinations_csv(csv_path: Path, inspected_params, network_params
             param_dict = dict(zip(param_names, combo))
             new_jobs.append((sim_id, param_dict))
 
-        # Write new CSV
         csv_path.parent.mkdir(parents=True, exist_ok=True)
         with open(csv_path, 'w', newline='') as f:
             writer = csv.writer(f, delimiter=DELIMETER)
@@ -166,7 +165,7 @@ def sync_param_combinations_csv(csv_path: Path, inspected_params, network_params
 
         return new_jobs, header, all_rows
 
-    # Handle case where CSV already exists:
+    # Handle existing CSV:
     existing_params = existing_header[1:]
     new_params_to_add = [p for p in param_names if p not in existing_params]
 
@@ -183,22 +182,30 @@ def sync_param_combinations_csv(csv_path: Path, inspected_params, network_params
         existing_rows = updated_existing_rows
         existing_params = existing_header[1:]
 
-    # Build lookup of existing combination values
-    existing_combos_lookup = set()
+    # Build lookup map of existing combinations: sig -> (sim_id, row_dict)
+    existing_combos_lookup = {}
     for row in existing_rows:
         row_params = dict(zip(existing_params, [parse_val(v) for v in row[1:]]))
-        # Key combination signature
         sig = tuple(str(row_params.get(p, "")) for p in param_names)
-        existing_combos_lookup.add(sig)
+        existing_combos_lookup[sig] = (row[0], row_params)
 
     all_rows = list(existing_rows)
     new_jobs = []
 
+    if override:
+        print("[OVERRIDE MODE] Forcing re-submission for all parameter combinations...")
+
     for combo in param_combinations:
         sig = tuple(str(v) for v in combo)
+        
         if sig in existing_combos_lookup:
+            sim_id, row_dict = existing_combos_lookup[sig]
+            if override:
+                # Force re-submit existing combination
+                new_jobs.append((sim_id, row_dict))
             continue
 
+        # New combination not present in CSV
         sim_id = generate_unique_sim_id(combo, existing_ids)
         row_dict = {p: get_default_param_value(network_params, sim_params, stimuli_config, p) for p in existing_params}
         for p_name, p_val in zip(param_names, combo):
@@ -206,7 +213,7 @@ def sync_param_combinations_csv(csv_path: Path, inspected_params, network_params
 
         row = [sim_id] + [str(row_dict[p]) for p in existing_params]
         all_rows.append(row)
-        existing_combos_lookup.add(sig)
+        existing_combos_lookup[sig] = (sim_id, row_dict)
         new_jobs.append((sim_id, row_dict))
 
     # Write updated CSV
@@ -217,8 +224,7 @@ def sync_param_combinations_csv(csv_path: Path, inspected_params, network_params
 
     return new_jobs, existing_header, all_rows
 
-
-def submit_slurm_job(sim_id: str, results_dir: Path, script_dir: Path, dry_run=False, testing_mode=False):
+def submit_slurm_job(sim_id: str, results_dir: Path, script_dir: Path, dry_run=False, testing_mode=False, cpus: int = 1):
     """Submits worker job to Slurm via sbatch."""
     log_dir = results_dir / "logs"
     log_dir.mkdir(parents=True, exist_ok=True)
@@ -232,11 +238,11 @@ def submit_slurm_job(sim_id: str, results_dir: Path, script_dir: Path, dry_run=F
         "#SBATCH --mem=62G",
         "#SBATCH --time=168:00:00",
         "#SBATCH --exclude=w[9,11,13-17]",
-        "#SBATCH --cpus-per-task=16",
+        f"#SBATCH --cpus-per-task={cpus}",
         "",
         "source /home/haman/virt_env/mf-csng/bin/activate",
         f"cd {script_dir}",
-        f"python -u inspection_worker.py --id {sim_id} --project_dir {results_dir}" + (" --test" if testing_mode else ""),
+        f"python -u inspection_worker.py --id {sim_id} --project_dir {results_dir}" + (" --test" if testing_mode else "") + f" --cpus {cpus}",
     ])
 
     if dry_run or shutil.which("sbatch") is None:
@@ -282,7 +288,9 @@ def load_inspected_params(yaml_path):
 def main():
     parser = argparse.ArgumentParser(description="Worker script for multi-inspection runs.")
     parser.add_argument('--test', action='store_true', help="Enable test mode to use test parameter files.")
+    parser.add_argument('--override', action='store_true', help="Enable override mode to use test parameter files.")
     parser.add_argument("--project_dir", type=str, required=True, help="Path to project directory")
+    parser.add_argument("--cpus", type=int, default=1, help="Number of worker CPU processes")
 
     args = parser.parse_args()
 
@@ -322,13 +330,17 @@ def main():
         network_params=network_params,
         sim_params=sim_params,
         stimuli_config=stimuli_config,
+        override=args.override
     )
 
     print(f"Total parameter combinations in CSV: {len(all_rows)}")
     print(f"New combinations to submit: {len(new_jobs)}")
 
+    if sim_params.neuron_simulation.cpus > args.cpus:
+        raise ValueError(f"Workflow config specifies {sim_params.neuron_simulation.cpus} CPUs, but only {args.cpus} CPUs are available. Please adjust the workflow config or provide more CPUs.")
+
     for sim_id, p_dict in new_jobs:
-        submit_slurm_job(sim_id=sim_id, results_dir=results_path, script_dir=script_dir, testing_mode=args.test)
+        submit_slurm_job(sim_id=sim_id, results_dir=results_path, script_dir=script_dir, testing_mode=args.test, cpus=args.cpus)
 
 
 if __name__ == "__main__":

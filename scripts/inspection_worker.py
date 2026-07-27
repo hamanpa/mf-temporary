@@ -18,7 +18,8 @@ from codes.controller.workflows import (run_basic_workflow,
                                          run_neuron_simulation_workflow,
                                          run_tf_fitting_workflow,
                                          run_mf_simulation_workflow,
-                                         run_snn_simulation_workflow)
+                                         run_snn_simulation_workflow,
+                                         run_unified_batch_parallel)
 
 from codes.controller.config import load_workflow_config
 from codes.stimuli.loader import load_stimuli_config
@@ -106,7 +107,7 @@ def apply_parameter_update(network_params, sim_params, stimuli_config, param_pat
     return network_params, sim_params, stimuli_config
 
 
-def run_worker_workflow(network_params, sim_params, stimuli_config, sim_id: str, results_dir: Path):
+def run_worker_workflow(network_params, sim_params, stimuli_config, sim_id: str, results_dir: Path, cpus: int = 1):
     """
     Modular execution entry point for running inspection / simulation for a single ID.
     Can be customized as needed.
@@ -183,85 +184,96 @@ def run_worker_workflow(network_params, sim_params, stimuli_config, sim_id: str,
     )
 
 
-
-    snn_results = run_snn_simulation_workflow(sim_params.snn_simulation, network_params, stimuli_config)
-
-    mf_results_dict = {stim_name: [] for stim_name in stimuli_config}
-    for mf_model_name, mf_sim_params in sim_params.mf_models.items():
-        mf_results = run_mf_simulation_workflow(mf_sim_params, network_params, stimuli_config)
-        for stimulus_name in stimuli_config:
-            mf_results_dict[stimulus_name].append(mf_results[stimulus_name])
-
-
-
-    network_overview_plotter = plt_hooks.NetworkOverviewPlottingHook(
-        savefig_dir=worker_imgs_dir,
-        fig_file_prefix="network_overview",
-        fig_params={
-            'axsize' : (20,5),
-            # 'figsize': (20, 10),  # width, height
-            'constrained_layout' : True,
-            'gridspec_kw' : {'hspace': 0.065},
-            'title': f"Network Overview",
-            'bbox_inches': None,
-        },
-        common_params={
-            'xmargin': 0.0,
-            'ymargin': 0.0,
-            'labels': ['SNN'] + list(sim_params.mf_models.keys()),
-            'legend': {'loc': 'upper left'},
-            'xlim' : (0, 4000.0),
-
-        },
-        subplot_params = {
-            (3,0) : {'y_unit': 'pA', 'ylim': (0, 100)}
-        }
+    metadata = run_unified_batch_parallel(
+        network_params=network_params,
+        stimuli = stimuli_config,
+        snn_sim_params=sim_params.snn_simulation,
+        mf_sim_params_dict=sim_params.mf_models,
+        output_dir=worker_data_dir,
+        cpus=cpus,
+        net_idx=sim_id
     )
 
-    for stimulus_name in stimuli_config:
-        network_overview_plotter(
-            identifier=stimulus_name+f"_{sim_id}", 
-            neuron_results=neuron_results,
-            tf_funcs_results=tf_results_dict,
-            snn_results=snn_results[stimulus_name],
-            network_results_list=[snn_results[stimulus_name]]+mf_results_dict[stimulus_name]
-        )
+    print(f"[{sim_id}] Batch simulation completed. Metadata saved to {worker_data_dir / f'{sim_id}_batch_metadata.pkl'}")
+
+    # snn_results = run_snn_simulation_workflow(sim_params.snn_simulation, network_params, stimuli_config)
+
+    # mf_results_dict = {stim_name: [] for stim_name in stimuli_config}
+    # for mf_model_name, mf_sim_params in sim_params.mf_models.items():
+    #     mf_results = run_mf_simulation_workflow(mf_sim_params, network_params, stimuli_config)
+    #     for stimulus_name in stimuli_config:
+    #         mf_results_dict[stimulus_name].append(mf_results[stimulus_name])
 
 
 
-    variables = [
-        "exc_rate", "inh_rate", 
-        "exc_voltage", "inh_voltage",
-        "exc_adaptation", "inh_adaptation",
-        "ee_conductance", "ei_conductance", "ie_conductance", "ii_conductance", 
-        "exc_u", "exc_x", "inh_u", "inh_x", 
-    ]
-    metrics = ["pop_mean", "pop_std"]
+    # network_overview_plotter = plt_hooks.NetworkOverviewPlottingHook(
+    #     savefig_dir=worker_imgs_dir,
+    #     fig_file_prefix="network_overview",
+    #     fig_params={
+    #         'axsize' : (20,5),
+    #         # 'figsize': (20, 10),  # width, height
+    #         'constrained_layout' : True,
+    #         'gridspec_kw' : {'hspace': 0.065},
+    #         'title': f"Network Overview",
+    #         'bbox_inches': None,
+    #     },
+    #     common_params={
+    #         'xmargin': 0.0,
+    #         'ymargin': 0.0,
+    #         'labels': ['SNN'] + list(sim_params.mf_models.keys()),
+    #         'legend': {'loc': 'upper left'},
+    #         'xlim' : (0, 4000.0),
 
-    network_results = dict()
+    #     },
+    #     subplot_params = {
+    #         (3,0) : {'y_unit': 'pA', 'ylim': (0, 100)}
+    #     }
+    # )
+
+    # for stimulus_name in stimuli_config:
+    #     network_overview_plotter(
+    #         identifier=stimulus_name+f"_{sim_id}", 
+    #         neuron_results=neuron_results,
+    #         tf_funcs_results=tf_results_dict,
+    #         snn_results=snn_results[stimulus_name],
+    #         network_results_list=[snn_results[stimulus_name]]+mf_results_dict[stimulus_name]
+    #     )
 
 
-    for stim_name, snn_results in snn_results.items():
-        network_results[stim_name] = {}
-        for variable in variables:
-            network_results[stim_name][variable] = {}
-            for metric in metrics:
-                suffix = metric.split("_")[-1]
-                method_name = f"{variable}_{suffix}"
-                network_results[stim_name][variable][metric] = getattr(snn_results, method_name)() 
-        network_results[stim_name].update({
-            "times": snn_results.times(),
-            "drive_rate": snn_results.drive_rate_mean(),
-            "stim_rate": snn_results.stim_rate_mean(),
-            "exc_spikes" : snn_results.exc_spikes_all(),
-            "inh_spikes" : snn_results.inh_spikes_all(),
-        })
+
+    # variables = [
+    #     "exc_rate", "inh_rate", 
+    #     "exc_voltage", "inh_voltage",
+    #     "exc_adaptation", "inh_adaptation",
+    #     "ee_conductance", "ei_conductance", "ie_conductance", "ii_conductance", 
+    #     "exc_u", "exc_x", "inh_u", "inh_x", 
+    # ]
+    # metrics = ["pop_mean", "pop_std"]
+
+    # network_results = dict()
 
 
-    with open(worker_data_dir / f"{sim_id}_snn_results.pkl", "wb") as f:
-        pickle.dump(network_results, f)
-    with open(worker_data_dir / f"{sim_id}_mf_results.pkl", "wb") as f:
-        pickle.dump(mf_results_dict, f)
+    # for stim_name, snn_results in snn_results.items():
+    #     network_results[stim_name] = {}
+    #     for variable in variables:
+    #         network_results[stim_name][variable] = {}
+    #         for metric in metrics:
+    #             suffix = metric.split("_")[-1]
+    #             method_name = f"{variable}_{suffix}"
+    #             network_results[stim_name][variable][metric] = getattr(snn_results, method_name)() 
+    #     network_results[stim_name].update({
+    #         "times": snn_results.times(),
+    #         "drive_rate": snn_results.drive_rate_mean(),
+    #         "stim_rate": snn_results.stim_rate_mean(),
+    #         "exc_spikes" : snn_results.exc_spikes_all(),
+    #         "inh_spikes" : snn_results.inh_spikes_all(),
+    #     })
+
+
+    # with open(worker_data_dir / f"{sim_id}_snn_results.pkl", "wb") as f:
+    #     pickle.dump(network_results, f)
+    # with open(worker_data_dir / f"{sim_id}_mf_results.pkl", "wb") as f:
+    #     pickle.dump(mf_results_dict, f)
 
 
 
@@ -271,6 +283,7 @@ def main():
     parser.add_argument("--id", type=str, required=True, help="Simulation Hash ID")
     parser.add_argument("--project_dir", type=str, required=True, help="Path to project directory")
     parser.add_argument('--test', action='store_true', help="Enable test mode")
+    parser.add_argument("--cpus", type=int, default=1, help="Number of worker CPU processes")
     args = parser.parse_args()
 
     project_path = Path(args.project_dir)
@@ -328,7 +341,7 @@ def main():
                 convert_tsodyks_to_static_if_zero(network_params, syn_key, 0.0)
 
     # Run workflow
-    run_worker_workflow(network_params, sim_params, stimuli_config, args.id, project_path)
+    run_worker_workflow(network_params, sim_params, stimuli_config, args.id, project_path, args.cpus)
 
 
 if __name__ == "__main__":
