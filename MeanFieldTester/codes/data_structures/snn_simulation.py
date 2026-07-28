@@ -25,6 +25,16 @@ class SNNResults(BaseSNNResults):
         "ei_conductance_all" : "nS",
         "ie_conductance_all" : "nS",
         "ii_conductance_all" : "nS",
+        "exc_rate" : "Hz",
+        "inh_rate" : "Hz",
+        "exc_voltage" : "mV",
+        "inh_voltage" : "mV",
+        "exc_adaptation" : "nA",
+        "inh_adaptation" : "nA",
+        "ee_conductance" : "nS",
+        "ei_conductance" : "nS",
+        "ie_conductance" : "nS",
+        "ii_conductance" : "nS",
     }
 
 
@@ -416,4 +426,114 @@ class SNNResults(BaseSNNResults):
         default_unit = ""
         target_unit = default_unit if unit is None else unit
         return self._get_scaled(self._inh_x_all.std(axis=1), default_unit, target_unit)
+
+    # --- Generic Metric Methods for Output Extraction & Savings ---
+    def _get_n_neurons(self, variable: str) -> int:
+        """Helper to resolve neuron count N for array shaping when data is missing."""
+        if "inh" in variable and self._inh_spikes_all is not None:
+            return len(self._inh_spikes_all)
+        elif self._exc_spikes_all is not None:
+            return len(self._exc_spikes_all)
+        return 1
+
+    def _get_raw_all(self, variable: str) -> np.ndarray:
+        """Retrieves raw (T, N) spatio-temporal data array for any variable name."""
+        attr_name = f"_{variable}_all"
+        if hasattr(self, attr_name):
+            raw = getattr(self, attr_name)
+            if raw is None and hasattr(self, f"{variable}_all"):
+                raw = getattr(self, f"{variable}_all")()
+            return raw
+        
+        # Try method lookups
+        for candidate in [f"{variable}_all", f"{variable}_mean", variable]:
+            if hasattr(self, candidate) and callable(getattr(self, candidate)):
+                try:
+                    return getattr(self, candidate)()
+                except Exception:
+                    pass
+        return None
+
+    def get_all(self, variable: str, unit=None) -> np.ndarray:
+        """Returns full (T, N) spatio-temporal matrix for variable."""
+        raw = self._get_raw_all(variable)
+        if raw is None:
+            return None
+        default_unit = self.DEFAULT_UNITS.get(f"{variable}_all", self.DEFAULT_UNITS.get(variable, ""))
+        target_unit = default_unit if unit is None else unit
+        return self._get_scaled(raw, default_unit, target_unit)
+
+    def get_pop_mean(self, variable: str, unit=None) -> np.ndarray:
+        """Computes population mean time-series of shape (T,). Returns np.nan array if unrecorded."""
+        if hasattr(self, f"{variable}_mean") and callable(getattr(self, f"{variable}_mean")):
+            try:
+                res = getattr(self, f"{variable}_mean")(unit=unit)
+                if res is not None:
+                    return res
+            except Exception:
+                pass
+
+        raw = self._get_raw_all(variable)
+        if raw is None:
+            T = len(self.times()) if self.times() is not None else 0
+            return np.full(T, np.nan)
+
+        pop_avg = np.mean(raw, axis=1) if raw.ndim == 2 else raw
+        default_unit = self.DEFAULT_UNITS.get(f"{variable}_mean", self.DEFAULT_UNITS.get(variable, ""))
+        target_unit = default_unit if unit is None else unit
+        return self._get_scaled(pop_avg, default_unit, target_unit)
+
+    def get_pop_std(self, variable: str, unit=None) -> np.ndarray:
+        """Computes population standard deviation time-series of shape (T,). Returns np.nan array if unrecorded."""
+        if hasattr(self, f"{variable}_std") and callable(getattr(self, f"{variable}_std")):
+            try:
+                res = getattr(self, f"{variable}_std")(unit=unit)
+                if res is not None:
+                    return res
+            except Exception:
+                pass
+
+        raw = self._get_raw_all(variable)
+        if raw is None:
+            T = len(self.times()) if self.times() is not None else 0
+            return np.full(T, np.nan)
+
+        pop_std = np.std(raw, axis=1) if raw.ndim == 2 else np.zeros_like(raw)
+        default_unit = self.DEFAULT_UNITS.get(f"{variable}_std", self.DEFAULT_UNITS.get(variable, ""))
+        target_unit = default_unit if unit is None else unit
+        return self._get_scaled(pop_std, default_unit, target_unit)
+
+    def get_time_mean(self, variable: str, start_time: float = 0.0, end_time: float = None, unit=None) -> np.ndarray:
+        """Computes per-neuron time-averaged steady-state of shape (N,) over [start_time, end_time]. Returns np.nan array if unrecorded."""
+        raw = self._get_raw_all(variable)
+        if raw is None or raw.ndim != 2:
+            N = self._get_n_neurons(variable)
+            return np.full(N, np.nan)
+
+        t_end = np.inf if end_time is None else end_time
+        time_mask = (self.times() >= start_time) & (self.times() <= t_end)
+        time_avg = np.mean(raw[time_mask, :], axis=0)
+        default_unit = self.DEFAULT_UNITS.get(f"{variable}_all", self.DEFAULT_UNITS.get(variable, ""))
+        target_unit = default_unit if unit is None else unit
+        return self._get_scaled(time_avg, default_unit, target_unit)
+
+    def get_time_std(self, variable: str, start_time: float = 0.0, end_time: float = None, unit=None) -> np.ndarray:
+        """Computes per-neuron time standard deviation of shape (N,) over [start_time, end_time]. Returns np.nan array if unrecorded."""
+        raw = self._get_raw_all(variable)
+        if raw is None or raw.ndim != 2:
+            N = self._get_n_neurons(variable)
+            return np.full(N, np.nan)
+
+        t_end = np.inf if end_time is None else end_time
+        time_mask = (self.times() >= start_time) & (self.times() <= t_end)
+        time_std = np.std(raw[time_mask, :], axis=0)
+        default_unit = self.DEFAULT_UNITS.get(f"{variable}_all", self.DEFAULT_UNITS.get(variable, ""))
+        target_unit = default_unit if unit is None else unit
+        return self._get_scaled(time_std, default_unit, target_unit)
+
+    def get_full_mean(self, variable: str, start_time: float = 0.0, end_time: float = None, unit=None) -> float:
+        """Computes global steady-state average scalar over [start_time, end_time]. Returns np.nan if unrecorded."""
+        time_avg = self.get_time_mean(variable, start_time, end_time, unit)
+        return float(np.nanmean(time_avg)) if time_avg is not None else np.nan
+
 

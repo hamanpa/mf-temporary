@@ -29,11 +29,14 @@ def _mf_simulation_worker(task_tuple: tuple) -> Dict[str, Any]:
     os.environ["OPENBLAS_NUM_THREADS"] = "1"
     os.environ["MKL_NUM_THREADS"] = "1"
 
-    mf_output_dir = os.path.join(output_dir, sim_name.lower())
+    if net_idx:
+        mf_output_dir = os.path.join(output_dir, str(net_idx))
+    else:
+        mf_output_dir = os.path.join(output_dir, sim_name.lower())
     os.makedirs(mf_output_dir, exist_ok=True)
     
     safe_stim_name = str(stim_name).replace(" ", "_") if stim_name else f"stim{stim_idx}"
-    file_name = f"{net_idx}_{sim_name}_results_{safe_stim_name}_task_{task_id}.npz"
+    file_name = f"{sim_name.lower()}_results_{safe_stim_name}.npz"
     file_path = os.path.join(mf_output_dir, file_name)
 
     metadata = {
@@ -55,23 +58,38 @@ def _mf_simulation_worker(task_tuple: tuple) -> Dict[str, Any]:
 
         save_dict = {
             "times": results.times(),
-            "drive_rate_mean": results.drive_rate_mean(),
-            "stim_rate_mean": results.stim_rate_mean(),
+            "drive_rate": results.drive_rate_mean(),
+            "stim_rate": results.stim_rate_mean(),
         }
         
         # Save optional fields if present
-        for field_name in [
-            "exc_rate_mean", "exc_rate_std", "inh_rate_mean", "inh_rate_std",
-            "exc_adaptation_mean", "inh_adaptation_mean", "rate_cov",
-            "exc_x_mean", "exc_y_mean", "exc_u_mean",
-            "inh_x_mean", "inh_y_mean", "inh_u_mean",
-            "exc_voltage_mean", "inh_voltage_mean",
-        ]:
+        measurement_fields = {
+            "exc_rate_mean": "exc_rate_pop_mean",
+            "exc_rate_std": "exc_rate_pop_std",
+            "inh_rate_mean": "inh_rate_pop_mean",
+            "inh_rate_std": "inh_rate_pop_std",
+            "exc_adaptation_mean": "exc_adaptation_pop_mean",
+            "inh_adaptation_mean": "inh_adaptation_pop_mean",
+            "rate_cov": "rate_cov",
+            "exc_x_mean": "exc_x_pop_mean",
+            "exc_y_mean": "exc_y_pop_mean",
+            "exc_u_mean": "exc_u_pop_mean",
+            "inh_x_mean": "inh_x_pop_mean",
+            "inh_y_mean": "inh_y_pop_mean",
+            "inh_u_mean": "inh_u_pop_mean",
+            "exc_voltage_mean": "exc_voltage_pop_mean",
+            "inh_voltage_mean": "inh_voltage_pop_mean",
+        }
+        for field_name, save_name in measurement_fields.items():
             val = getattr(results, field_name, None)
             if callable(val):
                 arr = val()
                 if arr is not None:
-                    save_dict[field_name] = arr
+                    save_dict[save_name] = arr
+            elif val is None:
+                save_dict[save_name] = np.full((len(save_dict["times"]),), np.nan)
+            else:
+                raise ValueError(f"Unexpected type for {field_name}: {type(val)}")
 
         np.savez_compressed(file_path, **save_dict)
 
@@ -88,7 +106,10 @@ def _mf_simulation_worker(task_tuple: tuple) -> Dict[str, Any]:
 
     return metadata
 
-# TODO: Following has to be updated to work properly, commented out till then
+def run_mf_batch_parallel(*args, **kwargs):
+    """Placeholder function to maintain backwards compatibility during imports."""
+    raise NotImplementedError("run_mf_batch_parallel is currently deprecated. Use run_unified_batch_parallel from codes.controller instead.")
+
 # def run_mf_batch_parallel(
 #     network_params_list: Union[BiologicalParameters, List[BiologicalParameters]],
 #     stimuli: Union[Dict[str, BaseStimulusConfig], List[BaseStimulusConfig], BaseStimulusConfig],

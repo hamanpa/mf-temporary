@@ -238,7 +238,7 @@ def submit_slurm_job(sim_id: str, results_dir: Path, script_dir: Path, dry_run=F
         "#SBATCH --mem=62G",
         "#SBATCH --time=168:00:00",
         "#SBATCH --exclude=w[9,11,13-17]",
-        f"#SBATCH --cpus-per-task={cpus}",
+        f"#SBATCH --cpus-per-task={2*cpus}",
         "",
         "source /home/haman/virt_env/mf-csng/bin/activate",
         f"cd {script_dir}",

@@ -2,7 +2,7 @@ from typing import Dict
 from .base import BaseMFSimulator
 from .tvb_simulator.simulator import TVBMFSimulator # We will create this next
 from .config import MeanFieldSimulationConfig
-from .batch_runner import run_mf_batch_parallel, _mf_simulation_worker
+from .batch_runner import _mf_simulation_worker, run_mf_batch_parallel
 
 from ..stimuli.config import BaseStimulusConfig
 from ..network_params.models import BiologicalParameters

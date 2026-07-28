@@ -5,6 +5,7 @@ import csv
 import copy
 import argparse
 import pickle
+import numpy as np
 
 # Setup repository paths dynamically
 worker_dir = Path(__file__).resolve().parent
@@ -113,7 +114,8 @@ def run_worker_workflow(network_params, sim_params, stimuli_config, sim_id: str,
     Can be customized as needed.
     """
     worker_data_dir = results_dir / "data" 
-    worker_imgs_dir = results_dir / "imgs" 
+    worker_imgs_dir = results_dir / "imgs" / sim_id
+    worker_imgs_dir.mkdir(parents=True, exist_ok=True)
 
     print(f"[{sim_id}] Running worker workflow...")
     print(f"[{sim_id}] Data output directory: {worker_data_dir}")
@@ -131,9 +133,32 @@ def run_worker_workflow(network_params, sim_params, stimuli_config, sim_id: str,
 
 
     neuron_results = run_neuron_simulation_workflow(sim_params.neuron_simulation, network_params)
+    sim_id_dir = worker_data_dir / sim_id
+    sim_id_dir.mkdir(parents=True, exist_ok=True)
+
     for neuron_name, neuron_result in neuron_results.items():
         with open(worker_data_dir / f"{sim_id}_{neuron_name}_results.pkl", "wb") as f:
             pickle.dump(neuron_result, f)
+
+        # Save compressed .npz for ResultsAggregator inside data/{sim_id}/
+        save_dict = {}
+        for field in [
+            "exc_rate_grid", "inh_rate_grid", "out_rate_mean", "out_rate_std",
+            "adaptation_mean", "adaptation_std", "voltage_mean", "voltage_std",
+            "voltage_tau", "exc_conductance_mean", "exc_conductance_std",
+            "inh_conductance_mean", "inh_conductance_std"
+        ]:
+            getter = getattr(neuron_result, field, None)
+            if callable(getter):
+                val = getter()
+                if val is not None:
+                    save_dict[field] = val
+
+        if "out_rate_mean" in save_dict:
+            save_dict["out_rate"] = save_dict["out_rate_mean"]
+
+        npz_path = sim_id_dir / f"{neuron_name}_results.npz"
+        np.savez_compressed(npz_path, **save_dict)
 
     neuron_activity_plotter = plt_hooks.NeuronActivityHook(
         savefig_dir=worker_imgs_dir,

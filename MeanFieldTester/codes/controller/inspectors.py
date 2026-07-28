@@ -1,6 +1,7 @@
+import os
+import csv
 from pathlib import Path
-from typing import Dict
-from unittest import result
+from typing import Dict, List, Tuple, Any, Union
 import numpy as np
 import copy
 import gc
@@ -20,7 +21,7 @@ INSPECTION_PARMAS_WITHOUT_UPDATE = {
     "network.neurons.exc_neuron.neuron_params.a",
     "network.neurons.exc_neuron.neuron_params.b",
 }
-
+DELIMETER = ";"
 
 class ModelSummaryExtractor:
     """
@@ -425,3 +426,282 @@ def inject_pydantic_param(base_model: BaseModel, param_path: str, value: str|flo
     setattr(current_obj, keys[-1], value)
     
     return model_copy
+
+
+class ResultsAggregator:
+    """
+    Lightweight, pure-NumPy aggregator for multi-inspection project results.
+    
+    Reads param_combinations.csv, builds a 2D parameter matrix with unique alias and partial path resolution,
+    and lazily loads variable arrays from project_dir/data/{sim_id}/ with LRU memory caching.
+    """
+
+    def __init__(self, project_dir: Union[str, Path], cache_size: int = 256):
+        self.project_dir = Path(project_dir)
+        self.csv_path = self.project_dir / "param_combinations.csv"
+        self.data_dir = self.project_dir / "data"
+        self.cache_size = cache_size
+        self._cache: Dict[Tuple, np.ndarray] = {}
+
+        self.sim_ids: List[str] = []
+        self.param_names: List[str] = []
+        self.param_col_map: Dict[str, int] = {}
+        self.param_matrix: np.ndarray = None
+
+        self._load_param_combinations()
+
+    def _load_param_combinations(self):
+        """Loads param_combinations.csv into a 2D NumPy array and maps headers."""
+        if not self.csv_path.exists():
+            raise FileNotFoundError(f"param_combinations.csv not found in '{self.project_dir}'")
+
+        with open(self.csv_path, 'r', newline='') as f:
+            reader = csv.reader(f, delimiter=DELIMETER)
+            header = next(reader)
+            rows = [r for r in reader if r]
+
+        self.sim_ids = [r[0] for r in rows]
+        self.param_names = header[1:]
+
+        for idx, p_name in enumerate(self.param_names):
+            self.param_col_map[p_name] = idx
+
+        parsed_rows = []
+        for r in rows:
+            parsed_row = []
+            for val_str in r[1:]:
+                val_str = val_str.strip()
+                if val_str.lower() == 'true':
+                    parsed_row.append(True)
+                elif val_str.lower() == 'false':
+                    parsed_row.append(False)
+                else:
+                    try:
+                        f_val = float(val_str)
+                        parsed_row.append(int(f_val) if f_val.is_integer() else f_val)
+                    except ValueError:
+                        parsed_row.append(val_str)
+            parsed_rows.append(parsed_row)
+
+        self.param_matrix = np.array(parsed_rows, dtype=object)
+
+    def resolve_param_column(self, param_key: str) -> Tuple[str, int]:
+        """
+        Resolves a short alias or partial sub-path parameter key to exact CSV header column index.
+        Matches if all dot-separated tokens in param_key appear in order inside the full CSV column header.
+        Raises ValueError if ambiguous across multiple columns.
+        """
+        # 1. Exact match
+        if param_key in self.param_col_map:
+            return param_key, self.param_col_map[param_key]
+
+        # 2. Token sub-sequence search
+        key_parts = [p.strip() for p in param_key.split('.') if p.strip()]
+
+        matches = []
+        for full_name in self.param_names:
+            full_parts = full_name.split('.')
+            curr_idx = 0
+            is_match = True
+            for part in key_parts:
+                try:
+                    found_idx = full_parts.index(part, curr_idx)
+                    curr_idx = found_idx + 1
+                except ValueError:
+                    is_match = False
+                    break
+
+            if is_match:
+                matches.append(full_name)
+
+        if len(matches) == 1:
+            matched_name = matches[0]
+            return matched_name, self.param_col_map[matched_name]
+        elif len(matches) > 1:
+            raise ValueError(
+                f"Ambiguous parameter key '{param_key}'. Matches {len(matches)} columns:\n" +
+                "\n".join([f"  - {m}" for m in matches]) +
+                f"\nPlease specify a more specific parameter path."
+            )
+        else:
+            raise KeyError(f"Parameter '{param_key}' not found in CSV headers. Available headers: {self.param_names}")
+
+    def get_available_variables(self) -> Dict[str, List[str]]:
+        """
+        Inspects saved .npz files in the first available simulation directory
+        and returns a dictionary of available variable keys per model category.
+        """
+        if not self.sim_ids:
+            return {}
+
+        sample_sim_id = self.sim_ids[0]
+        sample_dir = self.data_dir / sample_sim_id
+
+        if not sample_dir.exists():
+            return {}
+
+        available = {}
+        for npz_file in sample_dir.glob("*.npz"):
+            cat_name = npz_file.stem.replace("_results", "")
+            try:
+                data = np.load(npz_file, allow_pickle=True)
+                available[cat_name] = list(data.keys())
+            except Exception:
+                pass
+
+        return available
+
+    def analyze_parameter_grid(self, params_matrix: np.ndarray, param_names: List[str] = None) -> Dict[str, Any]:
+        """
+        Analyzes a parameter matrix (from get_results) to determine:
+          - degrees_of_freedom: number of parameters that vary across the filtered set
+          - varying_params: dict mapping varying parameter names -> list of unique values
+          - constant_params: dict mapping constant parameter names -> constant value
+          - x_param: name of 1st varying parameter (for plotting X-axis)
+          - y_param: name of 2nd varying parameter (for plotting Y-axis grid)
+        """
+        if param_names is None:
+            param_names = self.param_names
+
+        if params_matrix is None or params_matrix.size == 0 or len(param_names) == 0:
+            return {
+                "degrees_of_freedom": 0,
+                "varying_params": {},
+                "constant_params": {},
+                "x_param": None,
+                "y_param": None
+            }
+
+        varying = {}
+        constant = {}
+
+        for j, p_name in enumerate(param_names):
+            col = params_matrix[:, j]
+            # Distinct values preserving insertion order
+            unique_vals = list(dict.fromkeys(col))
+            if len(unique_vals) > 1:
+                varying[p_name] = unique_vals
+            else:
+                constant[p_name] = unique_vals[0] if len(unique_vals) > 0 else None
+
+        var_names = list(varying.keys())
+        return {
+            "degrees_of_freedom": len(varying),
+            "varying_params": varying,
+            "constant_params": constant,
+            "x_param": var_names[0] if len(var_names) >= 1 else None,
+            "y_param": var_names[1] if len(var_names) >= 2 else None
+        }
+
+    def get_results(
+        self,
+        variable: str,
+        sim_name: str = "SNN",
+        stim_name: str = "SpontActivity",
+        **param_filters
+    ) -> Tuple[np.ndarray, np.ndarray, List[str], List[str]]:
+        """
+        Queries and retrieves stacked array results for filtered parameter combinations.
+
+        Parameters
+        ----------
+        variable : str
+            Variable name to extract (e.g., 'exc_rate_mean', 'exc_voltage_all', 'drive_rate_mean').
+        sim_name : str
+            Name of simulator/model ('SNN', 'divolo_second_order', etc.).
+        stim_name : str
+            Name of stimulus ('SpontActivity', etc.).
+        **param_filters : dict
+            Parameter equality or list filters (e.g., b=5.0, drive_rate=[0.0, 5.0]).
+
+        Returns
+        -------
+        Tuple[np.ndarray, np.ndarray, List[str], List[str]]
+            - data_array: Stacked NumPy array of shape (N_filtered_sims, T_time, ...)
+            - filtered_param_matrix: 2D NumPy array of parameter values for matching runs
+            - param_names: List of parameter names corresponding to the columns
+            - filtered_sim_ids: List of matching simulation hash IDs
+        """
+        mask = np.ones(len(self.sim_ids), dtype=bool)
+
+        for param_key, target_val in param_filters.items():
+            full_name, col_idx = self.resolve_param_column(param_key)
+            column_vals = self.param_matrix[:, col_idx]
+
+            if isinstance(target_val, (list, tuple, set, np.ndarray)):
+                match_mask = np.isin(column_vals, list(target_val))
+            else:
+                match_mask = (column_vals == target_val)
+
+            mask = mask & match_mask
+
+        filtered_indices = np.where(mask)[0]
+        filtered_sim_ids = [self.sim_ids[i] for i in filtered_indices]
+        filtered_params = self.param_matrix[filtered_indices, :]
+
+        if len(filtered_sim_ids) == 0:
+            return np.array([]), filtered_params, self.param_names, filtered_sim_ids
+
+        loaded_arrays = []
+        for sim_id in filtered_sim_ids:
+            arr = self._load_variable(sim_id, sim_name, stim_name, variable)
+            loaded_arrays.append(arr)
+
+        data_array = np.array(loaded_arrays)
+
+        # Warn user if any returned arrays contain NaN values
+        if data_array.size > 0:
+            try:
+                nan_mask = np.isnan(data_array.astype(float))
+                if np.any(nan_mask):
+                    nan_sims = [filtered_sim_ids[i] for i in range(len(filtered_sim_ids)) if np.any(nan_mask[i])]
+                    print(
+                        f"[ResultsAggregator Warning] Query for variable '{variable}' ({sim_name}) contains NaN values "
+                        f"in {len(nan_sims)}/{len(filtered_sim_ids)} simulation run(s): {nan_sims}"
+                    )
+            except (ValueError, TypeError):
+                pass
+
+        return data_array, filtered_params, self.param_names, filtered_sim_ids
+
+    def _load_variable(self, sim_id: str, sim_name: str, stim_name: str, variable: str) -> np.ndarray:
+        cache_key = (sim_id, sim_name.lower(), stim_name, variable)
+        if cache_key in self._cache:
+            return self._cache[cache_key]
+
+        sim_dir = self.data_dir / sim_id
+        safe_stim_name = str(stim_name).replace(" ", "_")
+        file_name = f"{sim_name.lower()}_results_{safe_stim_name}.npz"
+        file_path = sim_dir / file_name
+
+        if not file_path.exists():
+            alt_file_name = f"{sim_name.lower()}_results.npz"
+            if (sim_dir / alt_file_name).exists():
+                file_path = sim_dir / alt_file_name
+            else:
+                candidates = list(sim_dir.glob(f"*{sim_name.lower()}*.npz")) if sim_dir.exists() else []
+                if candidates:
+                    file_path = candidates[0]
+                else:
+                    raise FileNotFoundError(f"Result file '{file_name}' not found in '{sim_dir}'")
+
+        npz_data = np.load(file_path, allow_pickle=True)
+        target_key = variable
+        if target_key not in npz_data:
+            for cand in [f"{variable}_pop_mean", f"{variable}_mean", f"{variable}_all"]:
+                if cand in npz_data:
+                    target_key = cand
+                    break
+
+        if target_key not in npz_data:
+            available_keys = list(npz_data.keys())
+            raise KeyError(f"Variable '{variable}' not found in '{file_path}'. Available variables in file: {available_keys}")
+
+        arr = npz_data[target_key]
+
+        if len(self._cache) >= self.cache_size:
+            self._cache.pop(next(iter(self._cache)))
+        self._cache[cache_key] = arr
+
+        return arr
+

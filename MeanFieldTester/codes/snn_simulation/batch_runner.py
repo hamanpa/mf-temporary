@@ -29,11 +29,14 @@ def _snn_simulation_worker(task_tuple: tuple) -> Dict[str, Any]:
     os.environ["OPENBLAS_NUM_THREADS"] = "1"
     os.environ["MKL_NUM_THREADS"] = "1"
 
-    snn_output_dir = os.path.join(output_dir, sim_name.lower())
+    if net_idx:
+        snn_output_dir = os.path.join(output_dir, str(net_idx))
+    else:
+        snn_output_dir = os.path.join(output_dir, sim_name.lower())
     os.makedirs(snn_output_dir, exist_ok=True)
     
     safe_stim_name = str(stim_name).replace(" ", "_") if stim_name else f"stim{stim_idx}"
-    file_name = f"{net_idx}_{sim_name}_results_{safe_stim_name}_task_{task_id}.npz"
+    file_name = f"{sim_name.lower()}_results_{safe_stim_name}.npz"
     file_path = os.path.join(snn_output_dir, file_name)
 
     metadata = {
@@ -53,28 +56,67 @@ def _snn_simulation_worker(task_tuple: tuple) -> Dict[str, Any]:
         simulator.build_network(network_params=network_params, snn_sim_params=sim_params)
         results = simulator.run_stimulus(stim_params=stim_params)
 
-        np.savez_compressed(
-            file_path,
-            times=results.times(),
-            exc_spikes=np.array(results.exc_spikes_all(), dtype=object),
-            inh_spikes=np.array(results.inh_spikes_all(), dtype=object),
-            exc_rate=results.exc_rate_all(),
-            inh_rate=results.inh_rate_all(),
-            exc_voltage=results.exc_voltage_all(),
-            inh_voltage=results.inh_voltage_all(),
-            exc_adaptation=results.exc_adaptation_all(),
-            inh_adaptation=results.inh_adaptation_all(),
-            ee_conductance=results.ee_conductance_all(),
-            ei_conductance=results.ei_conductance_all(),
-            ie_conductance=results.ie_conductance_all(),
-            ii_conductance=results.ii_conductance_all(),
-            exc_x=results.exc_x_all(),
-            exc_u=results.exc_u_all(),
-            inh_x=results.inh_x_all(),
-            inh_u=results.inh_u_all(),
-            drive_rate_mean=results.drive_rate_mean(),
-            stim_rate_mean=results.stim_rate_mean()
-        )
+        # 1. Resolve time average window [start_time, end_time]
+        window = getattr(sim_params, "time_average_window", [0.0, None])
+        if isinstance(window, (list, tuple)):
+            t_start = window[0] if window[0] is not None else 0.0
+            t_end = window[1] if (len(window) > 1 and window[1] is not None) else np.inf
+        else:
+            t_start, t_end = 0.0, np.inf
+
+        save_dict = {
+            "times": results.times(),
+            "drive_rate": results.drive_rate_mean(),
+            "stim_rate": results.stim_rate_mean(),
+            }
+
+        saved_metrics = sim_params.saved_metrics
+        saved_variables = sim_params.saved_variables
+        saved_extra_keys = sim_params.saved_extra_keys
+
+        # 2. Main metric reduction loop over saved_metrics x saved_variables
+        for metric in saved_metrics:
+            getter = getattr(results, f"get_{metric}", None)
+            if not callable(getter):
+                raise AttributeError(f"SNNResults has no metric method 'get_{metric}'. Valid metrics: pop_mean, pop_std, time_mean, time_std, full_mean, all.")
+            
+            for var in saved_variables:
+                if "spikes" in var:
+                    continue
+                arr = getter(var, start_time=t_start, end_time=t_end) if metric in ["time_mean", "time_std", "full_mean"] else getter(var)
+                if arr is not None:
+                    save_dict[f"{var}_{metric}"] = arr
+                    if metric == "pop_mean" and f"{var}_mean" not in save_dict:
+                        save_dict[f"{var}_mean"] = arr  # Backwards compatibility alias
+
+        # 3. Save Spikes Arrays for Raster Plots (~250 KB)
+        if "exc_spikes" in saved_variables or "spikes" in saved_variables:
+            save_dict["exc_spikes"] = np.array(results.exc_spikes_all(), dtype=object)
+        if "inh_spikes" in saved_variables or "spikes" in saved_variables:
+            save_dict["inh_spikes"] = np.array(results.inh_spikes_all(), dtype=object)
+
+        # 4. Explicit Extra Key Overrides (e.g. "exc_rate_all")
+        for extra_key in saved_extra_keys:
+            if hasattr(results, extra_key) and callable(getattr(results, extra_key)):
+                val = getattr(results, extra_key)()
+                if val is not None:
+                    save_dict[extra_key] = val
+            else:
+                found_override = False
+                for m in ["all", "pop_mean", "pop_std", "time_mean", "time_std", "full_mean"]:
+                    if extra_key.endswith(f"_{m}"):
+                        var_name = extra_key[:-len(f"_{m}")]
+                        getter = getattr(results, f"get_{m}", None)
+                        if callable(getter):
+                            arr = getter(var_name, start_time=t_start, end_time=t_end) if m in ["time_mean", "time_std", "full_mean"] else getter(var_name)
+                            if arr is not None:
+                                save_dict[extra_key] = arr
+                                found_override = True
+                                break
+                if not found_override and extra_key not in save_dict:
+                    raise KeyError(f"Could not resolve extra_key '{extra_key}' on SNNResults.")
+
+        np.savez_compressed(file_path, **save_dict)
 
         metadata["status"] = "SUCCESS"
         metadata["output_path"] = file_path
@@ -90,7 +132,10 @@ def _snn_simulation_worker(task_tuple: tuple) -> Dict[str, Any]:
     return metadata
 
 
-# TODO: following has to be updated to work properly, commented out till then
+def run_snn_batch_parallel(*args, **kwargs):
+    """Placeholder function to maintain backwards compatibility during imports."""
+    raise NotImplementedError("run_snn_batch_parallel is currently deprecated. Use run_unified_batch_parallel from codes.controller instead.")
+
 # def run_snn_batch_parallel(
 #     network_params_list: Union[BiologicalParameters, List[BiologicalParameters]],
 #     stimuli: Union[Dict[str, BaseStimulusConfig], List[BaseStimulusConfig], BaseStimulusConfig],

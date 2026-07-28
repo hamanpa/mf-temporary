@@ -1,5 +1,5 @@
 from enum import Enum
-from typing import Literal, Dict, Any, Optional
+from typing import Literal, Dict, Any, List
 from pydantic import BaseModel, Field
 from ..neuron_simulation.config import NeuronInitialValuesConfig
 
@@ -31,4 +31,24 @@ class SpikingNeuralNetworkSimulationConfig(BaseModel):
     init_values: Dict[str, NeuronInitialValuesConfig] = Field(
         default_factory=dict, 
         description=("Initial values for each neuron type. Keys should match the internal neuron names defined in the network parameters.")
+    )
+
+    time_average_window: list[float | None] | None = Field(
+        default_factory=lambda: [0.0, None],
+        description="Time window [start_time, end_time] in ms for steady-state time averaging. end_time=None extends to simulation end."
+    )
+
+    saved_metrics: List[str] = Field(
+        default_factory=lambda: ["pop_mean"],
+        description="List of metrics to compute and save in .npz files (e.g. 'pop_mean', 'pop_std', 'time_mean', 'time_std', 'full_mean', 'all')."
+    )
+
+    saved_variables: List[str] = Field(
+        default_factory=lambda: ["exc_rate", "inh_rate", "exc_voltage", "inh_voltage", "exc_spikes", "inh_spikes"],
+        description="List of physical variables to save."
+    )
+
+    saved_extra_keys: List[str] = Field(
+        default_factory=list,
+        description="Explicit individual array keys to save on top of saved_metrics (e.g. 'exc_rate_all')."
     )

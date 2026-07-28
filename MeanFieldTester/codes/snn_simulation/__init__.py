@@ -4,7 +4,7 @@ from .base import BaseSNNSimulator
 
 from .pynn_simulator import PyNNSNNSimulator
 from .config import SpikingNeuralNetworkSimulationConfig
-from .batch_runner import run_snn_batch_parallel, _snn_simulation_worker
+from .batch_runner import _snn_simulation_worker, run_snn_batch_parallel
 
 from ..stimuli.config import BaseStimulusConfig
 from ..network_params.models import BiologicalParameters

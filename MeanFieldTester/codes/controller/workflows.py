@@ -9,8 +9,8 @@ import json
 
 from ..neuron_simulation import run_neuron_simulation_workflow
 from ..transfer_function import run_tf_fitting_workflow
-from ..snn_simulation import run_snn_simulation_workflow, run_snn_batch_parallel, _snn_simulation_worker, SpikingNeuralNetworkSimulationConfig
-from ..mf_simulation import run_mf_simulation_workflow, run_mf_batch_parallel, _mf_simulation_worker, MeanFieldSimulationConfig
+from ..snn_simulation import run_snn_simulation_workflow, _snn_simulation_worker, SpikingNeuralNetworkSimulationConfig
+from ..mf_simulation import run_mf_simulation_workflow, _mf_simulation_worker, MeanFieldSimulationConfig
 import multiprocessing as mp
 
 from ..network_params.models import BiologicalParameters
@@ -148,7 +148,7 @@ def run_unified_batch_parallel(
 
     # 5. Multiprocess all tasks concurrently across `cpus` worker processes
     all_metadata = []
-    with mp.Pool(processes=cpus) as pool:
+    with mp.Pool(processes=cpus, maxtasksperchild=1) as pool:
         iterator = pool.imap_unordered(_unified_simulation_worker, tasks)
         for res in iterator:
             all_metadata.append(res)
