@@ -59,7 +59,8 @@ def generate_param_combinations(inspected_params):
 
 def generate_unique_sim_id(combination, existing_ids, length=8) -> str:
     """Generates an 8-character unique hash ID from a parameter combination."""
-    combo_string = str(tuple(combination)).encode('utf-8')
+    norm_combo = tuple(normalize_val(v) for v in combination)
+    combo_string = str(norm_combo).encode('utf-8')
     hash_str = hashlib.md5(combo_string).hexdigest()
     for i in range(0, len(hash_str) - length + 1):
         short_hash = hash_str[i:i + length]
@@ -117,6 +118,16 @@ def parse_val(val_str: str):
         return val_float
     except ValueError:
         return val_str
+
+
+def normalize_val(val):
+    """Normalize integer-like floats to int, leave other types unchanged."""
+    if isinstance(val, (int, float)):
+        val_float = float(val)
+        if val_float.is_integer():
+            return int(val_float)
+        return val_float
+    return val
 
 
 def sync_param_combinations_csv(csv_path: Path, inspected_params, network_params, sim_params, stimuli_config, override=False):
@@ -186,7 +197,7 @@ def sync_param_combinations_csv(csv_path: Path, inspected_params, network_params
     existing_combos_lookup = {}
     for row in existing_rows:
         row_params = dict(zip(existing_params, [parse_val(v) for v in row[1:]]))
-        sig = tuple(str(row_params.get(p, "")) for p in param_names)
+        sig = tuple(str(normalize_val(row_params.get(p, ""))) for p in param_names)
         existing_combos_lookup[sig] = (row[0], row_params)
 
     all_rows = list(existing_rows)
@@ -278,10 +289,18 @@ def load_inspected_params(yaml_path):
         # 2. Convert nested list values into tuples if they represent tuples
         if isinstance(val, list):
             # If it's a list of lists (e.g. [[0.6, 0.2], [0.8, 0.4]]), convert inner lists to tuples
-            val = [tuple(item) if isinstance(item, list) else item for item in val]
-            
+            converted_val = []
+            for item in val:
+                if isinstance(item, list):
+                    converted_val.append(tuple([normalize_val(v) for v in item]))
+                else:
+                    converted_val.append(normalize_val(item))
+            val = converted_val
+        else:
+            val = normalize_val(val)
+
         parsed_params[key] = val
-            
+
     return parsed_params
 
 

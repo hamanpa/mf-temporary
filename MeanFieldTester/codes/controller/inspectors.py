@@ -450,6 +450,8 @@ class ResultsAggregator:
 
         self._load_param_combinations()
 
+        self.available_models = self.get_available_variables()
+
     def _load_param_combinations(self):
         """Loads param_combinations.csv into a 2D NumPy array and maps headers."""
         if not self.csv_path.exists():
@@ -526,30 +528,41 @@ class ResultsAggregator:
         else:
             raise KeyError(f"Parameter '{param_key}' not found in CSV headers. Available headers: {self.param_names}")
 
-    def get_available_variables(self) -> Dict[str, List[str]]:
+    def get_available_variables(self, sim_ids: str|List[str] = None, full_iter=False) -> Dict[str, List[str]]:
         """
         Inspects saved .npz files in the first available simulation directory
         and returns a dictionary of available variable keys per model category.
         """
-        if not self.sim_ids:
-            return {}
+        available_models = {}
 
-        sample_sim_id = self.sim_ids[0]
-        sample_dir = self.data_dir / sample_sim_id
+        if sim_ids is None:
+            if full_iter:
+                sim_ids = self.sim_ids
+            else:
+                sim_ids = [self.sim_ids[0]]
+        elif isinstance(sim_ids, str):
+            sim_ids = [sim_ids]
+        
+        for sim_id in sim_ids:
+            sim_dir = self.data_dir / sim_id
 
-        if not sample_dir.exists():
-            return {}
+            for npz_file in sim_dir.glob("*.npz"):
+                cat_name = npz_file.stem.split("results")
+                model_name = cat_name[0].rstrip("_")
+                if model_name not in available_models:
+                    available_models[model_name] = {
+                        "variables": set(),
+                        "stimuli": set(),
+                    }
+                if len(cat_name) > 1:
+                    stim_name = cat_name[1].lstrip("_")
+                    available_models[model_name]["stimuli"].add(stim_name)
 
-        available = {}
-        for npz_file in sample_dir.glob("*.npz"):
-            cat_name = npz_file.stem.replace("_results", "")
-            try:
-                data = np.load(npz_file, allow_pickle=True)
-                available[cat_name] = list(data.keys())
-            except Exception:
-                pass
 
-        return available
+                with np.load(npz_file, allow_pickle=True) as data:
+                    available_models[model_name]["variables"].update(data.keys())
+
+        return available_models
 
     def analyze_parameter_grid(self, params_matrix: np.ndarray, param_names: List[str] = None) -> Dict[str, Any]:
         """

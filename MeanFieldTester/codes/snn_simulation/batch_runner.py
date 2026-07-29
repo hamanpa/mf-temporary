@@ -86,8 +86,6 @@ def _snn_simulation_worker(task_tuple: tuple) -> Dict[str, Any]:
                 arr = getter(var, start_time=t_start, end_time=t_end) if metric in ["time_mean", "time_std", "full_mean"] else getter(var)
                 if arr is not None:
                     save_dict[f"{var}_{metric}"] = arr
-                    if metric == "pop_mean" and f"{var}_mean" not in save_dict:
-                        save_dict[f"{var}_mean"] = arr  # Backwards compatibility alias
 
         # 3. Save Spikes Arrays for Raster Plots (~250 KB)
         if "exc_spikes" in saved_variables or "spikes" in saved_variables:

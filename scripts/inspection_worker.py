@@ -137,9 +137,6 @@ def run_worker_workflow(network_params, sim_params, stimuli_config, sim_id: str,
     sim_id_dir.mkdir(parents=True, exist_ok=True)
 
     for neuron_name, neuron_result in neuron_results.items():
-        with open(worker_data_dir / f"{sim_id}_{neuron_name}_results.pkl", "wb") as f:
-            pickle.dump(neuron_result, f)
-
         # Save compressed .npz for ResultsAggregator inside data/{sim_id}/
         save_dict = {}
         for field in [
@@ -157,7 +154,7 @@ def run_worker_workflow(network_params, sim_params, stimuli_config, sim_id: str,
         if "out_rate_mean" in save_dict:
             save_dict["out_rate"] = save_dict["out_rate_mean"]
 
-        npz_path = sim_id_dir / f"{neuron_name}_results.npz"
+        npz_path = sim_id_dir / f"{neuron_name}_results_steady_state.npz"
         np.savez_compressed(npz_path, **save_dict)
 
     neuron_activity_plotter = plt_hooks.NeuronActivityHook(
