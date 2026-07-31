@@ -157,7 +157,8 @@ class MFResults(BaseMFResults):
         if self._exc_x_mean is not None and self._exc_y_mean is not None and self._exc_u_mean is not None:
             return  # Already updated
 
-        synapse_params = self.network_params.synapses[self.network_params.exc_neuron_name].syn_params
+        exc_name = self.network_params.exc_neuron_name
+        synapse_params = self.network_params.network.connectivity[exc_name][exc_name].syn_params
         if self.ignore_stp:
             self._exc_x_mean = np.ones_like(self.exc_rate_mean("Hz"))
             self._exc_y_mean = np.zeros_like(self.exc_rate_mean("Hz"))
@@ -183,7 +184,10 @@ class MFResults(BaseMFResults):
         if self._inh_x_mean is not None and self._inh_y_mean is not None and self._inh_u_mean is not None:
             return  # Already updated
 
-        synapse_params = self.network_params.synapses[self.network_params.inh_neuron_name].syn_params
+        exc_name = self.network_params.exc_neuron_name
+        inh_name = self.network_params.inh_neuron_name
+        target_name = inh_name if inh_name in self.network_params.network.connectivity else exc_name
+        synapse_params = self.network_params.network.connectivity[target_name][inh_name].syn_params
         if self.ignore_stp:
             self._inh_x_mean = np.ones_like(self.inh_rate_mean("Hz"))
             self._inh_y_mean = np.zeros_like(self.inh_rate_mean("Hz"))
@@ -243,10 +247,12 @@ class MFResults(BaseMFResults):
         }
 
         effective_weights={}
+        exc_name = self.network_params.exc_neuron_name
+        inh_name = self.network_params.inh_neuron_name
         if self._exc_x_mean is not None:
-            effective_weights["exc_neuron"] = self.exc_x_mean()*self.exc_u_mean()*self.network_params.synapses["exc_neuron"].syn_params.weight
+            effective_weights["exc_neuron"] = self.exc_x_mean()*self.exc_u_mean()*self.network_params.network.connectivity[exc_name]["exc_neuron"].syn_params.weight
         if self._inh_x_mean is not None:
-            effective_weights["inh_neuron"] = self.inh_x_mean()*self.inh_u_mean()*self.network_params.synapses["inh_neuron"].syn_params.weight
+            effective_weights["inh_neuron"] = self.inh_x_mean()*self.inh_u_mean()*self.network_params.network.connectivity[exc_name]["inh_neuron"].syn_params.weight
         for source_neuron_name in rates:
             if source_neuron_name not in effective_weights:
                 effective_weights[source_neuron_name] = self._exc_neuron_mpf._weight_effective(rates[source_neuron_name], **self._exc_neuron_mpf.synapse_params[source_neuron_name])
@@ -267,10 +273,13 @@ class MFResults(BaseMFResults):
         }
 
         effective_weights={}
+        exc_name = self.network_params.exc_neuron_name
+        inh_name = self.network_params.inh_neuron_name
+        target_name = inh_name if inh_name in self.network_params.network.connectivity else exc_name
         if self._exc_x_mean is not None:
-            effective_weights["exc_neuron"] = self.exc_x_mean()*self.exc_u_mean()*self.network_params.synapses["exc_neuron"].syn_params.weight
+            effective_weights["exc_neuron"] = self.exc_x_mean()*self.exc_u_mean()*self.network_params.network.connectivity[target_name]["exc_neuron"].syn_params.weight
         if self._inh_x_mean is not None:
-            effective_weights["inh_neuron"] = self.inh_x_mean()*self.inh_u_mean()*self.network_params.synapses["inh_neuron"].syn_params.weight
+            effective_weights["inh_neuron"] = self.inh_x_mean()*self.inh_u_mean()*self.network_params.network.connectivity[target_name]["inh_neuron"].syn_params.weight
         for source_neuron_name in rates:
             if source_neuron_name not in effective_weights:
                 effective_weights[source_neuron_name] = self._inh_neuron_mpf._weight_effective(rates[source_neuron_name], **self._inh_neuron_mpf.synapse_params[source_neuron_name])
@@ -296,13 +305,13 @@ class MFResults(BaseMFResults):
         if source_neuron_name == self.network_params.exc_neuron_name:
             rate = self.exc_rate_mean("Hz")
             if self._exc_x_mean is not None:
-                effective_weight = self.exc_x_mean()*self.exc_u_mean()*self.network_params.synapses[source_neuron_name].syn_params.weight
+                effective_weight = self.exc_x_mean()*self.exc_u_mean()*self.network_params.network.connectivity[target_neuron_name][source_neuron_name].syn_params.weight
             else:
                 effective_weight = mpf._weight_effective(rate, **synapse_params)
         elif source_neuron_name == self.network_params.inh_neuron_name:
             rate = self.inh_rate_mean("Hz")
             if self._inh_x_mean is not None:
-                effective_weight = self.inh_x_mean()*self.inh_u_mean()*self.network_params.synapses[source_neuron_name].syn_params.weight
+                effective_weight = self.inh_x_mean()*self.inh_u_mean()*self.network_params.network.connectivity[target_neuron_name][source_neuron_name].syn_params.weight
             else:
                 effective_weight = mpf._weight_effective(rate, **synapse_params)
         elif source_neuron_name == "stim_neuron":

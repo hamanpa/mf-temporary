@@ -127,21 +127,49 @@ TVB_STATE_VARIABLES_MAPPING = {
     "W_i": TranslationRule("inh_adaptation_mean", sim_unit="pA"),
     "noise": TranslationRule("noise_rate", sim_unit="kHz"),
     "stimulus": TranslationRule("stim_rate_mean", sim_unit="kHz"),
-    "X_e" : TranslationRule("exc_stp_x_mean", sim_unit=""),
-    "Y_e" : TranslationRule("exc_stp_y_mean", sim_unit=""),
-    "U_dyn_e" : TranslationRule("exc_stp_u_mean", sim_unit=""),
-    "X_i" : TranslationRule("inh_stp_x_mean", sim_unit=""),
-    "Y_i" : TranslationRule("inh_stp_y_mean", sim_unit=""),
-    "U_dyn_i" : TranslationRule("inh_stp_u_mean", sim_unit=""),
+    "X_ee": TranslationRule("exc_stp_x_mean", sim_unit=""),
+    "Y_ee": TranslationRule("exc_stp_y_mean", sim_unit=""),
+    "U_dyn_ee": TranslationRule("exc_stp_u_mean", sim_unit=""),
+    "X_ei": TranslationRule("inh_stp_x_mean", sim_unit=""),
+    "Y_ei": TranslationRule("inh_stp_y_mean", sim_unit=""),
+    "U_dyn_ei": TranslationRule("inh_stp_u_mean", sim_unit=""),
+    "X_ie": TranslationRule("exc_stp_x_mean", sim_unit=""),
+    "Y_ie": TranslationRule("exc_stp_y_mean", sim_unit=""),
+    "U_dyn_ie": TranslationRule("exc_stp_u_mean", sim_unit=""),
+    "X_ii": TranslationRule("inh_stp_x_mean", sim_unit=""),
+    "Y_ii": TranslationRule("inh_stp_y_mean", sim_unit=""),
+    "U_dyn_ii": TranslationRule("inh_stp_u_mean", sim_unit=""),
 }
-
 
 
 NEUROPSI_TF_FIT_ORDER = ["P_0", "P_mean", "P_std", "P_tau", "P_mean_mean", "P_std_std", "P_tau_tau", "P_mean_std", "P_mean_tau", "P_std_tau"]
 
 
+def extract_projection_params(conn, suffix: str) -> dict:
+    """Extracts K, Q, U, tau_rec, tau_fac parameters for a target-source projection suffix."""
+    if conn is None:
+        return {
+            f"K_{suffix}": 0,
+            f"Q_{suffix}": 0.0,
+            f"U_{suffix}": 1.0,
+            f"tau_rec_{suffix}": 0.0,
+            f"tau_fac_{suffix}": 0.0,
+        }
 
-# translate_params(single_neuron_params.neuron_params, PYNN_ADEX_MAPPING)
+    res = {
+        f"K_{suffix}": conn.conn_num,
+        f"Q_{suffix}": conn.syn_params.weight,
+    }
+    if hasattr(conn.syn_params, "U"):
+        res[f"U_{suffix}"] = conn.syn_params.U
+        res[f"tau_rec_{suffix}"] = conn.syn_params.tau_rec
+        res[f"tau_fac_{suffix}"] = conn.syn_params.tau_fac
+    else:
+        res[f"U_{suffix}"] = 1.0
+        res[f"tau_rec_{suffix}"] = 0.0
+        res[f"tau_fac_{suffix}"] = 0.0
+    return res
+
 
 def setup_tvb_model(network_params: BiologicalParameters, mf_sim_params: MeanFieldSimulationConfig) -> lab.models.Model:
     """
@@ -156,26 +184,30 @@ def setup_tvb_model(network_params: BiologicalParameters, mf_sim_params: MeanFie
     model = model_class(variables_of_interest=state_variables)
 
     if model_name in LEGACY_MODELS_REGISTRY:
-        # TODO: add assertions, because the legacy models have plenty of assumptions on parameters!!!
-
         exc_neuron_name = network_params.exc_neuron_name
         inh_neuron_name = network_params.inh_neuron_name
         drive_neuron_name = "drive_neuron"
         stim_neuron_name = "stim_neuron"
 
+        exc_conn = network_params.network.connectivity[exc_neuron_name][exc_neuron_name]
+        inh_conn = network_params.network.connectivity[exc_neuron_name][inh_neuron_name]
+        drive_conn = network_params.network.connectivity[exc_neuron_name][drive_neuron_name]
+
+        p_connect_e = exc_conn.conn_prob
+        p_connect_i = inh_conn.conn_prob
+        K_ext_e = drive_conn.conn_num
+
         mf_model_params = {
             "N_tot": network_params.internal_size,
-            "p_connect_e": network_params.network.connectivity[exc_neuron_name][exc_neuron_name],
-            "p_connect_i": network_params.network.connectivity[exc_neuron_name][inh_neuron_name],
+            "p_connect_e": p_connect_e,
+            "p_connect_i": p_connect_i,
             "g": network_params.g,
             "T": mf_sim_params.resolution_time,  # Translation rule
             "P_e": np.array([getattr(mf_sim_params.transfer_function.tf_fits[exc_neuron_name], param) for param in NEUROPSI_TF_FIT_ORDER])*1e-3,
             "P_i": np.array([getattr(mf_sim_params.transfer_function.tf_fits[inh_neuron_name], param) for param in NEUROPSI_TF_FIT_ORDER])*1e-3,
-            # This is drive
-            "K_ext_e": int(network_params.network.size[drive_neuron_name] * network_params.network.connectivity[exc_neuron_name][drive_neuron_name]),
+            "K_ext_e": K_ext_e,
             "K_ext_i": 0,
 
-            # This is based on the stimulus, has to be updated at each stimulus!
             "external_input_ex_ex": 0,  # [kHz]
             "external_input_ex_in": 0,
             "external_input_in_ex": 0,
@@ -187,14 +219,12 @@ def setup_tvb_model(network_params: BiologicalParameters, mf_sim_params: MeanFie
         }
 
         # Determine static weights (scale by U if they are Tsodyks synapses)
-        exc_syn = network_params.synapses[exc_neuron_name]
-        # exc_weight = exc_syn.syn_params.weight
+        exc_syn = exc_conn
         exc_weight = translate_params(exc_syn.syn_params, TVB_NEUROPSI_EXC_STATIC_SYNAPSE_MAPPING)["Q_e"]
         if exc_syn.syn_type == "tsodyks_synapse":
             exc_weight *= exc_syn.syn_params.U
 
-        inh_syn = network_params.synapses[inh_neuron_name]
-        # inh_weight = inh_syn.syn_params.weight
+        inh_syn = inh_conn
         inh_weight = translate_params(inh_syn.syn_params, TVB_NEUROPSI_INH_STATIC_SYNAPSE_MAPPING)["Q_i"]
         if inh_syn.syn_type == "tsodyks_synapse":
             inh_weight *= inh_syn.syn_params.U
@@ -216,53 +246,49 @@ def setup_tvb_model(network_params: BiologicalParameters, mf_sim_params: MeanFie
         drive_neuron_name = "drive_neuron"
         stim_neuron_name = "stim_neuron"
 
+        exc_targets = network_params.network.connectivity.get(exc_neuron_name, {})
+        inh_targets = network_params.network.connectivity.get(inh_neuron_name, {})
+
+        conn_ee = exc_targets.get(exc_neuron_name)
+        conn_ei = exc_targets.get(inh_neuron_name)
+        conn_ed = exc_targets.get(drive_neuron_name)
+        conn_es = exc_targets.get(stim_neuron_name)
+
+        conn_ie = inh_targets.get(exc_neuron_name)
+        conn_ii = inh_targets.get(inh_neuron_name)
+        conn_id = inh_targets.get(drive_neuron_name)
+        conn_is = inh_targets.get(stim_neuron_name)
+
+        proj_params = {}
+        proj_params.update(extract_projection_params(conn_ee, "ee"))
+        proj_params.update(extract_projection_params(conn_ei, "ei"))
+        proj_params.update(extract_projection_params(conn_ed, "ed"))
+        proj_params.update(extract_projection_params(conn_es, "es"))
+
+        proj_params.update(extract_projection_params(conn_ie, "ie"))
+        proj_params.update(extract_projection_params(conn_ii, "ii"))
+        proj_params.update(extract_projection_params(conn_id, "id"))
+        proj_params.update(extract_projection_params(conn_is, "is"))
+
         mf_model_params = {
-            "N_tot": network_params.internal_size,
-            "p_connect_e": network_params.network.connectivity[exc_neuron_name][exc_neuron_name],
-            "p_connect_i": network_params.network.connectivity[exc_neuron_name][inh_neuron_name],
-            "g": network_params.g,
-            "T": mf_sim_params.resolution_time,  # Translation rule
+            "T": mf_sim_params.resolution_time,
             "P_e": np.array([getattr(mf_sim_params.transfer_function.tf_fits[exc_neuron_name], param) for param in NEUROPSI_TF_FIT_ORDER])*1e-3,
             "P_i": np.array([getattr(mf_sim_params.transfer_function.tf_fits[inh_neuron_name], param) for param in NEUROPSI_TF_FIT_ORDER])*1e-3,
-            # This is drive
-            "K_ext_e": int(network_params.network.size[drive_neuron_name] * network_params.network.connectivity[exc_neuron_name][drive_neuron_name]),
-            "K_ext_i": 0,
 
-            # This is based on the stimulus, has to be updated at each stimulus!
-            "external_input_ex_ex": 0,  # [kHz]
-            "external_input_ex_in": 0,
-            "external_input_in_ex": 0,
-            "external_input_in_in": 0,
+            "external_input_ex_ex": 0.0,
+            "external_input_ex_in": 0.0,
+            "external_input_in_ex": 0.0,
+            "external_input_in_in": 0.0,
             "stim_target_ratio": 1.0,
 
             "tau_OU": 5.0,
-            "weight_noise": 0,
+            "weight_noise": 0.0,
         }
 
         model_params = {
             **translate_params(network_params.neurons[exc_neuron_name].neuron_params, TVB_NEUROPSI_EXC_NEURON_MAPPING),
             **translate_params(network_params.neurons[inh_neuron_name].neuron_params, TVB_NEUROPSI_INH_NEURON_MAPPING),
-            **(
-                translate_params(network_params.synapses[exc_neuron_name].syn_params, TVB_NEUROPSI_EXC_TSODYKS_SYNAPSE_MAPPING)
-                if network_params.synapses[exc_neuron_name].syn_type == "tsodyks_synapse"
-                else {
-                    **translate_params(network_params.synapses[exc_neuron_name].syn_params, TVB_NEUROPSI_EXC_STATIC_SYNAPSE_MAPPING),
-                    "U_e": 1.0,
-                    "tau_rec_e": 0.0,
-                    "tau_fac_e": 0.0,
-                }
-            ),
-            **(
-                translate_params(network_params.synapses[inh_neuron_name].syn_params, TVB_NEUROPSI_INH_TSODYKS_SYNAPSE_MAPPING)
-                if network_params.synapses[inh_neuron_name].syn_type == "tsodyks_synapse"
-                else {
-                    **translate_params(network_params.synapses[inh_neuron_name].syn_params, TVB_NEUROPSI_INH_STATIC_SYNAPSE_MAPPING),
-                    "U_i": 1.0,
-                    "tau_rec_i": 0.0,
-                    "tau_fac_i": 0.0,
-                }
-            ),
-            **translate_params(network_params.synapses["drive_neuron"].syn_params, TVB_NEUROPSI_EXC_EXTERNAL_STATIC_SYNAPSE_MAPPING),
+            **proj_params,
             **mf_model_params
         }
 

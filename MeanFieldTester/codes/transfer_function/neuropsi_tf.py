@@ -280,19 +280,19 @@ class MembranePotentialFluctuations:
         self.tau_w = network_params.neurons[neuron_name].neuron_params.tau_w
 
         self.synapse_params = {}
-        for source_neuron_name in network_params.synapses:
+        for source_neuron_name, conn_def in network_params.network.connectivity[neuron_name].items():
 
-            syn_weight = network_params.synapses[source_neuron_name].syn_params.weight
+            syn_weight = conn_def.syn_params.weight
             
-            tsodyks_synapse = network_params.synapses[source_neuron_name].syn_type == 'tsodyks_synapse'
+            tsodyks_synapse = conn_def.syn_type == 'tsodyks_synapse'
             if tsodyks_synapse:
-                u = network_params.synapses[source_neuron_name].syn_params.U
+                u = conn_def.syn_params.U
                 if self.ignore_stp:
                     tau_rec = 0.0
                     tau_fac = 0.0
                 else:
-                    tau_rec = network_params.synapses[source_neuron_name].syn_params.tau_rec
-                    tau_fac = network_params.synapses[source_neuron_name].syn_params.tau_fac
+                    tau_rec = conn_def.syn_params.tau_rec
+                    tau_fac = conn_def.syn_params.tau_fac
             else:
                 u = 1.0
                 tau_rec = 0.0
@@ -307,7 +307,7 @@ class MembranePotentialFluctuations:
             else:
                 raise ValueError(f"Unknown neuron type: {network_params.neurons[source_neuron_name].neuron_type}")
 
-            syn_num = int(network_params.network.size[source_neuron_name] * network_params.network.connectivity[neuron_name][source_neuron_name])
+            syn_num = conn_def.conn_num
 
             self.synapse_params[source_neuron_name] = {
                 'syn_weight': syn_weight,

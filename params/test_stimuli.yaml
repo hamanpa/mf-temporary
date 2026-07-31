@@ -1,0 +1,9 @@
+SpontActivity1_5: 
+  pattern : NoStimulus
+  stim_params : {}
+  drive_rate : 1.5
+  initial_increase_duration: 400
+  simulation_duration: 2000
+  stim_target_ratio: 1.0
+  target_nodes: 0
+  direct_stimulation: False

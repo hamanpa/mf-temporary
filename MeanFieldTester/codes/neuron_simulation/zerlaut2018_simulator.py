@@ -371,11 +371,12 @@ class Zerlaut2018Simulator(BaseNeuronSimulator):
 
         conn_matrix = np.empty((number, number), dtype=object)
         
-        if network_params.network.connectivity[exc_neuron_name][exc_neuron_name] != network_params.network.connectivity[inh_neuron_name][exc_neuron_name]:
-            print("WARNING: the connectivity from excitatory to excitatory and from excitatory to inhibitory neurons are different, which is not supported by the current implementation, using the one from excitatory to excitatory neurons")
+        exc_conn = network_params.network.connectivity[exc_neuron_name][exc_neuron_name]
+        target_name = inh_neuron_name if inh_neuron_name in network_params.network.connectivity else exc_neuron_name
+        inh_conn = network_params.network.connectivity[target_name][inh_neuron_name]
 
-        if network_params.network.connectivity[exc_neuron_name][inh_neuron_name] != network_params.network.connectivity[inh_neuron_name][inh_neuron_name]:
-            print("WARNING: the connectivity from inhibitory to excitatory and from inhibitory to inhibitory neurons are different, which is not supported by the current implementation, using the one from inhibitory to excitatory neurons")
+        p_conn_ee = exc_conn.conn_prob
+        p_conn_ii = inh_conn.conn_prob
 
         exc_pop = {
             **translate_params(
@@ -385,9 +386,9 @@ class Zerlaut2018Simulator(BaseNeuronSimulator):
                     'Erev': TranslationRule("e_rev_E", sim_unit="mV"),
                 }),
             **translate_params(
-                network_params.synapses[exc_neuron_name].syn_params,
+                exc_conn.syn_params,
                 {'Q': TranslationRule("weight", sim_unit="nS")}),
-            "p_conn" : network_params.network.connectivity[exc_neuron_name][exc_neuron_name]
+            "p_conn" : p_conn_ee
         }
 
         inh_pop = {
@@ -398,9 +399,9 @@ class Zerlaut2018Simulator(BaseNeuronSimulator):
                     'Erev': TranslationRule("e_rev_I", sim_unit="mV"),
                 }),
             **translate_params(
-                network_params.synapses[inh_neuron_name].syn_params,
+                inh_conn.syn_params,
                 {'Q': TranslationRule("weight", sim_unit="nS")}),
-            "p_conn" : network_params.network.connectivity[inh_neuron_name][inh_neuron_name]
+            "p_conn" : p_conn_ii
         }
 
         conn_matrix[:,0] = [exc_pop.copy(), inh_pop.copy()] # post-synaptic : exc

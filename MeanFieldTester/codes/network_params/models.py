@@ -1,7 +1,7 @@
 import yaml
 from pathlib import Path
-from typing import Dict, Literal, Annotated
-from pydantic import BaseModel, Field, computed_field
+from typing import Dict, Literal, Annotated, Union
+from pydantic import BaseModel, Field, PrivateAttr, computed_field, model_validator
 
 # ==========================================
 # SYNAPSE MODELS
@@ -22,17 +22,61 @@ class TsodyksSynapseParams(BaseModel):
     tau_fac: float = Field(..., ge=0, description="Facilitation time constant [ms]")
 
 class StaticSynapseDefinition(BaseModel):
-    syn_type: Literal["static_synapse"]
+    syn_type: Literal["static_synapse"] = "static_synapse"
     syn_params: StaticSynapseParams
 
 class TsodyksSynapseDefinition(BaseModel):
-    syn_type: Literal["tsodyks_synapse"]
+    syn_type: Literal["tsodyks_synapse"] = "tsodyks_synapse"
     syn_params: TsodyksSynapseParams
 
 SynapseDefinition = Annotated[
-    StaticSynapseDefinition | TsodyksSynapseDefinition,
+    Union[StaticSynapseDefinition, TsodyksSynapseDefinition],
     Field(discriminator="syn_type")
 ]
+
+# ==========================================
+# CONNECTIVITY / PROJECTION MODELS
+# ==========================================
+ConnectivityRule = Literal["fixed_prob", "fixed_in", "fixed_out"]
+
+class ConnectionDefinition(BaseModel):
+    """
+    Defines a projection from source_neuron to target_neuron.
+    Combines topology rule, count/probability, and synapse parameters.
+    """
+    rule: ConnectivityRule = Field(default="fixed_prob", description="Connectivity rule: fixed_prob, fixed_in, or fixed_out")
+    val: float = Field(..., gt=0.0, description="Probability (0..1) or connection count K (fixed_in/fixed_out)")
+    syn_type: Literal["static_synapse", "tsodyks_synapse"]
+    syn_params: Union[StaticSynapseParams, TsodyksSynapseParams]
+
+    # Private context attached automatically by BiologicalParameters
+    _source_size: int | None = PrivateAttr(default=None)
+    _target_size: int | None = PrivateAttr(default=None)
+    _source_name: str | None = PrivateAttr(default=None)
+    _target_name: str | None = PrivateAttr(default=None)
+
+    @property
+    def conn_num(self) -> int:
+        """Returns the exact number of synaptic connections (K)."""
+        if self.rule in ("fixed_in", "fixed_out"):
+            return int(self.val)
+        elif self.rule == "fixed_prob":
+            if self._source_size is None:
+                raise ValueError("ConnectionDefinition context is uninitialized (_source_size missing).")
+            return int(round(self.val * self._source_size))
+        raise ValueError(f"Unknown rule: {self.rule}")
+
+    @property
+    def conn_prob(self) -> float:
+        """Returns the connection probability p in (0, 1]."""
+        if self.rule == "fixed_prob":
+            return self.val
+        elif self.rule in ("fixed_in", "fixed_out"):
+            if self._source_size is None or self._source_size == 0:
+                raise ValueError("ConnectionDefinition context is uninitialized (_source_size missing).")
+            return self.val / self._source_size
+        raise ValueError(f"Unknown rule: {self.rule}")
+
 
 # ==========================================
 # NEURON MODELS
@@ -83,7 +127,7 @@ class PoissonDefinition(BaseModel):
     neuron_params: PoissonParams | None = None
 
 NeuronDefinition = Annotated[
-    AdExDefinition | PoissonDefinition,
+    Union[AdExDefinition, PoissonDefinition],
     Field(discriminator="neuron_model")
 ]
 
@@ -97,9 +141,9 @@ class NetworkTopology(BaseModel):
         ..., 
         description="Population sizes. Map of pop_name -> N"
     )
-    connectivity: Dict[str, Dict[str, float]] = Field(
+    connectivity: Dict[str, Dict[str, ConnectionDefinition]] = Field(
         ..., 
-        description="Nested mapping: {target_pop: {source_pop: probability}}"
+        description="Nested mapping: {target_pop: {source_pop: ConnectionDefinition}}"
     )
 
 # ==========================================
@@ -112,21 +156,37 @@ class BiologicalParameters(BaseModel):
     """
     neurons: Dict[str, NeuronDefinition]
     network: NetworkTopology
-    synapses: Dict[str, SynapseDefinition]
 
+    @model_validator(mode="after")
+    def _attach_connection_contexts_and_validate(self):
+        """Strictly validate target neurons and attach metadata to ConnectionDefinitions."""
+        internal_set = set(self.internal_neurons)
+        for target_name, sources in self.network.connectivity.items():
+            if target_name not in internal_set:
+                raise ValueError(
+                    f"Invalid connectivity target '{target_name}'. Target populations in network.connectivity "
+                    f"must be internal neurons (found internal neurons: {self.internal_neurons}). "
+                    f"External sources (e.g. drive_neuron, stim_neuron) cannot receive incoming connections."
+                )
+            target_size = self.network.size[target_name]
+            for source_name, conn_def in sources.items():
+                source_size = self.network.size[source_name]
+                conn_def._source_name = source_name
+                conn_def._target_name = target_name
+                conn_def._source_size = source_size
+                conn_def._target_size = target_size
+        return self
 
     @property
     def internal_neurons(self) -> list[str]:
         """Returns a list of population names that are internal (not external drives)."""
         return [name for name, definition in self.neurons.items() if not definition.is_external]
 
-    # @computed_field
     @property
     def total_size(self) -> int:
         """The sum of ALL populations (Internal + External Drives/Stimuli)."""
         return sum(self.network.size.values())
 
-    # @computed_field
     @property
     def internal_size(self) -> int:
         """
@@ -136,7 +196,6 @@ class BiologicalParameters(BaseModel):
 
         return sum(self.network.size[pop_name] for pop_name in self.internal_neurons)
 
-    # @computed_field
     @property
     def g(self) -> float:
         """

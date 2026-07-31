@@ -1,0 +1,61 @@
+SpontActivity1_5:
+  pattern : NoStimulus
+  stim_params : {}
+  drive_rate : 1.5
+  initial_increase_duration: 400
+  simulation_duration: 4000
+  stim_target_ratio: 1.0
+  target_nodes: 0
+  direct_stimulation: False
+
+Pulse:
+  pattern: PulseTrain
+  stim_params:
+    start : 2000
+    end: 4000
+    magnitude : 1
+    offset: 1
+    pulse_duration : 500
+    pulse_period : 1500
+  drive_rate : 1.5
+  initial_increase_duration: 400
+  simulation_duration: 4000
+  stim_target_ratio: 1.0
+  target_nodes: 0
+  direct_stimulation: False
+
+TwoSidedGaussian: 
+  pattern: TwoSidedGaussian
+  stim_params:
+    start : 1000
+    end: 4000
+    magnitude: 1
+    center: 2500
+    sigma_left: 100
+    sigma_right: 200
+    offset: 1
+  drive_rate : 1.5
+  initial_increase_duration: 400
+  simulation_duration: 4000
+  stim_target_ratio: 1.0
+  target_nodes: 0
+  direct_stimulation: False
+
+
+Sinusoidal:
+  pattern: Sinusoidal
+  stim_params:
+    start: 2000
+    end: 4000
+    magnitude: 1
+    freq: 2
+    offset: 1
+    phase: 0
+  drive_rate : 1.5
+  initial_increase_duration: 400
+  simulation_duration: 4000
+  stim_target_ratio: 1.0
+  target_nodes: 0
+  direct_stimulation: False
+
+

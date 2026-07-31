@@ -65,23 +65,30 @@ class PyNNSNNSimulator(BaseSNNSimulator):
                 )
 
         for target_pop, sources in network_params.network.connectivity.items():
-            for source_pop, prob in sources.items():
-                if prob <= 0.0:
+            for source_pop, conn_def in sources.items():
+                if conn_def.val <= 0.0:
                     continue
-                    
-                connector = self.sim.FixedProbabilityConnector(p_connect=prob)
-                synapse_param = network_params.synapses[source_pop]
-                match synapse_param.syn_type:
+
+                if conn_def.rule == "fixed_prob":
+                    connector = self.sim.FixedProbabilityConnector(p_connect=conn_def.val)
+                elif conn_def.rule == "fixed_in":
+                    connector = self.sim.FixedNumberPreConnector(n=conn_def.val)
+                elif conn_def.rule == "fixed_out":
+                    connector = self.sim.FixedNumberPostConnector(n=conn_def.val)
+                else:
+                    raise ValueError(f"Unknown connectivity rule: {conn_def.rule}")
+
+                match conn_def.syn_type:
                     case "static_synapse":
                         synapse_mapping = NEST_STATIC_SYNAPSE_MAPPING
                     case "tsodyks_synapse":
                         synapse_mapping = NEST_TSODYKS_SYNAPSE_MAPPING
                     case _:
-                        raise ValueError(f"Unknown synapse type: {synapse_param.syn_type}")
-                
-                synapse_type = self.sim.native_synapse_type(synapse_param.syn_type)(**translate_params(synapse_param.syn_params, synapse_mapping))
+                        raise ValueError(f"Unknown synapse type: {conn_def.syn_type}")
+
+                synapse_type = self.sim.native_synapse_type(conn_def.syn_type)(**translate_params(conn_def.syn_params, synapse_mapping))
                 receptor = network_params.neurons[source_pop].neuron_type
-               
+
                 proj = self.sim.Projection(
                     self.populations[source_pop], 
                     self.populations[target_pop], 
