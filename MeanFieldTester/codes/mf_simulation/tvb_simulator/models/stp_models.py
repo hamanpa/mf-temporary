@@ -123,6 +123,20 @@ class BaseNeuroPSI_STP(Model):
         doc="""inhibitory decay [ms]"""
     )
 
+    N_e = NArray(
+        label=":math:`N_e`",
+        default=numpy.array([8000]),
+        domain=Range(lo=0.0, hi=10000.0, step=100.0),
+        doc="""Number of excitatory neurons"""
+    )
+
+    N_i = NArray(
+        label=":math:`N_i`",
+        default=numpy.array([2000]),
+        domain=Range(lo=0.0, hi=10000.0, step=100.0),
+        doc="""Number of inhibitory neurons"""
+    )
+
     # exc -> exc conns
     K_ee = NArray(
         label=":math:`\\epsilon`",
@@ -513,6 +527,10 @@ class BaseNeuroPSI_STP(Model):
                                     stp_ee_custom=None, stp_ei_custom=None,
                                     stp_ie_custom=None, stp_ii_custom=None):
         """Prepares input populations, connection counts, and synaptic weights."""
+
+        def stack_broadcast(values):
+            arrays = numpy.broadcast_arrays(*[numpy.asarray(value) for value in values])
+            return numpy.stack(arrays, axis=0)
         
         # NOTE: no idea what that is, I believe it is zero and it is self 
         # connection on the node, but that is in equations thus here left to zero.
@@ -530,53 +548,53 @@ class BaseNeuroPSI_STP(Model):
         # (self conns, drive input, stimulus, coupling inside node, coupling with other nodes)
         # inhibitory sources:
         # (self cons, inhibitory external, coupling inside node)
-        input_ee = self.convert_to_array([E, self.external_input_ex_ex, stimulus, lc_E, coupling_0], axis=0)
-        input_ie = self.convert_to_array([E, self.external_input_in_ex, stim_ratio * stimulus, lc_E, coupling_0], axis=0)
-        input_ei = self.convert_to_array([I, self.external_input_ex_in, lc_I], axis=0)
-        input_ii = self.convert_to_array([I, self.external_input_in_in, lc_I], axis=0)
+        input_ee = stack_broadcast([E, self.external_input_ex_ex, stimulus, lc_E, coupling_0])
+        input_ie = stack_broadcast([E, self.external_input_in_ex, stim_ratio * stimulus, lc_E, coupling_0])
+        input_ei = stack_broadcast([I, self.external_input_ex_in, lc_I])
+        input_ii = stack_broadcast([I, self.external_input_in_in, lc_I])
 
-        conns_ee = numpy.array([self.K_ee, self.K_ed, self.K_es, 0, 0]).reshape((-1, 1, 1))
-        conns_ei = numpy.array([self.K_ei, 0, 0]).reshape((-1, 1, 1))
-        conns_ie = numpy.array([self.K_ie, self.K_id, self.K_is, 0, 0]).reshape((-1, 1, 1))
-        conns_ii = numpy.array([self.K_ii, 0, 0]).reshape((-1, 1, 1))
+        conns_ee = stack_broadcast([self.K_ee, self.K_ed, self.K_es, 0, 0]).reshape((-1, 1, 1))
+        conns_ei = stack_broadcast([self.K_ei, 0, 0]).reshape((-1, 1, 1))
+        conns_ie = stack_broadcast([self.K_ie, self.K_id, self.K_is, 0, 0]).reshape((-1, 1, 1))
+        conns_ii = stack_broadcast([self.K_ii, 0, 0]).reshape((-1, 1, 1))
 
-        weights_ee = numpy.array([self.Q_ee, self.Q_ed, self.Q_es, 0, 0]).reshape((-1, 1, 1))
-        weights_ei = numpy.array([self.Q_ei, 0, 0]).reshape((-1, 1, 1))
-        weights_ie = numpy.array([self.Q_ie, self.Q_id, self.Q_is, 0, 0]).reshape((-1, 1, 1))
-        weights_ii = numpy.array([self.Q_ii, 0, 0]).reshape((-1, 1, 1))
+        weights_ee = stack_broadcast([self.Q_ee, self.Q_ed, self.Q_es, 0, 0]).reshape((-1, 1, 1))
+        weights_ei = stack_broadcast([self.Q_ei, 0, 0]).reshape((-1, 1, 1))
+        weights_ie = stack_broadcast([self.Q_ie, self.Q_id, self.Q_is, 0, 0]).reshape((-1, 1, 1))
+        weights_ii = stack_broadcast([self.Q_ii, 0, 0]).reshape((-1, 1, 1))
 
         if stp_ee_custom is not None:
             stp_ee = stp_ee_custom
         else:
             # NOTE: drive and stimulus are expected to be static synapses
             stp_ee = [self._steady_state_stp(E, self.U_ee, self.tau_rec_ee, self.tau_fac_ee), 1., 1., 1., 1.]
-        stp_ee = self.convert_to_array(stp_ee, axis=0)
+        stp_ee = stack_broadcast(stp_ee)
 
         if stp_ei_custom is not None:
             stp_ei = stp_ei_custom
         else:
             stp_ei = [self._steady_state_stp(I, self.U_ei, self.tau_rec_ei, self.tau_fac_ei), 1., 1.]
-        stp_ei = self.convert_to_array(stp_ei, axis=0)
+        stp_ei = stack_broadcast(stp_ei)
 
         if stp_ie_custom is not None:
             stp_ie = stp_ie_custom
         else:
             stp_ie = [self._steady_state_stp(E, self.U_ie, self.tau_rec_ie, self.tau_fac_ie), 1., 1., 1., 1.]
-        stp_ie = self.convert_to_array(stp_ie, axis=0)
+        stp_ie = stack_broadcast(stp_ie)
 
         if stp_ii_custom is not None:
             stp_ii = stp_ii_custom
         else:
             stp_ii = [self._steady_state_stp(I, self.U_ii, self.tau_rec_ii, self.tau_fac_ii), 1., 1.]
-        stp_ii = self.convert_to_array(stp_ii, axis=0)
+        stp_ii = stack_broadcast(stp_ii)
 
         weights_ee = weights_ee * stp_ee
         weights_ei = weights_ei * stp_ei
         weights_ie = weights_ie * stp_ie
         weights_ii = weights_ii * stp_ii
 
-        taus_e = numpy.array([self.tau_e, self.tau_e, self.tau_e, self.tau_e, self.tau_e]).reshape((-1, 1, 1))
-        taus_i = numpy.array([self.tau_i, self.tau_i, self.tau_i]).reshape((-1, 1, 1))
+        taus_e = stack_broadcast([self.tau_e, self.tau_e, self.tau_e, self.tau_e, self.tau_e]).reshape((-1, 1, 1))
+        taus_i = stack_broadcast([self.tau_i, self.tau_i, self.tau_i]).reshape((-1, 1, 1))
 
         return (input_ee, input_ei, input_ie, input_ii, 
                 weights_ee, conns_ee, weights_ei, conns_ei, weights_ie, conns_ie, weights_ii, conns_ii,
@@ -763,8 +781,8 @@ class NeuroPSI_STP_asymptotic_second_order(NeuroPSI_STP_asymptotic_first_order):
     _nvar = 9
 
     def dfun(self, state_variables, coupling, local_coupling=0.00):
-        N_e = self.N_tot * (1 - self.g)
-        N_i = self.N_tot * self.g
+        N_e = self.N_e
+        N_i = self.N_i
 
         E = state_variables[0, :]
         I = state_variables[1, :]
@@ -1026,8 +1044,8 @@ class NeuroPSI_STP_dynamic_second_order(NeuroPSI_STP_dynamic_first_order):
     _nvar = 21
 
     def dfun(self, state_variables, coupling, local_coupling=0.00):
-        N_e = self.N_tot * (1 - self.g)
-        N_i = self.N_tot * self.g
+        N_e = self.N_e
+        N_i = self.N_i
 
         E = state_variables[0, :]
         I = state_variables[1, :]

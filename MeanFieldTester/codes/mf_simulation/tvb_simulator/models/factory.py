@@ -271,6 +271,8 @@ def setup_tvb_model(network_params: BiologicalParameters, mf_sim_params: MeanFie
         proj_params.update(extract_projection_params(conn_is, "is"))
 
         mf_model_params = {
+            "N_e": network_params.network.size[exc_neuron_name],
+            "N_i": network_params.network.size[inh_neuron_name],
             "T": mf_sim_params.resolution_time,
             "P_e": np.array([getattr(mf_sim_params.transfer_function.tf_fits[exc_neuron_name], param) for param in NEUROPSI_TF_FIT_ORDER])*1e-3,
             "P_i": np.array([getattr(mf_sim_params.transfer_function.tf_fits[inh_neuron_name], param) for param in NEUROPSI_TF_FIT_ORDER])*1e-3,

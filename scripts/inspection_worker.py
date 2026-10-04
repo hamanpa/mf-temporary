@@ -25,8 +25,7 @@ from codes.controller.workflows import (run_basic_workflow,
 from codes.controller.config import load_workflow_config
 from codes.stimuli.loader import load_stimuli_config
 from codes.network_params.loader import load_network_parameters
-from codes.network_params.models import StaticSynapseDefinition, StaticSynapseParams
-
+from codes.network_params.models import StaticSynapseParams
 from codes.controller.inspectors import inject_pydantic_param, ParameterInspector, ModelSummaryExtractor
 import codes.plotting.hooks as plt_hooks
 
@@ -48,29 +47,28 @@ def parse_val(val_str: str):
     except ValueError:
         return val_str
 
-def convert_tsodyks_to_static_if_zero(network_params, syn_key: str, tau_value):
-    try:
-        val_float = float(tau_value)
-    except (ValueError, TypeError):
-        return False
 
-    if val_float == 0.0 and syn_key in network_params.synapses:
-        current_syn = network_params.synapses[syn_key]
-        if getattr(current_syn, "syn_type", None) == "tsodyks_synapse":
-            w = current_syn.syn_params.weight
-            u = current_syn.syn_params.U
-            d = current_syn.syn_params.delay
-            network_params.synapses[syn_key] = StaticSynapseDefinition(
-                syn_type="static_synapse",
-                syn_params=StaticSynapseParams(
-                    weight=w * u,
-                    delay=d,
-                )
+def convert_zero_recovery_connections(network_params):
+    """Convert zero-recovery Tsodyks connections to equivalent static synapses."""
+    for target_name, sources in network_params.network.connectivity.items():
+        for source_name, connection in sources.items():
+            if connection.syn_type != "tsodyks_synapse":
+                continue
+
+            syn_params = connection.syn_params
+            if float(syn_params.tau_rec) != 0.0:
+                continue
+
+            connection.syn_type = "static_synapse"
+            connection.syn_params = StaticSynapseParams(
+                weight=syn_params.weight * syn_params.U,
+                delay=syn_params.delay,
             )
-            print(f"Converted synapse '{syn_key}' to static_synapse (weight={w * u:.4f}, delay={d:.2f}) because tau_rec = 0.")
-            return True
-    return False
-
+            print(
+                f"Converted connection '{source_name} -> {target_name}' to "
+                f"static_synapse (weight={syn_params.weight * syn_params.U:.4f}, "
+                f"delay={syn_params.delay:.2f}) because tau_rec = 0."
+            )
 
 def apply_parameter_update(network_params, sim_params, stimuli_config, param_path: str, value):
     """
@@ -354,13 +352,7 @@ def main():
             network_params, sim_params, stimuli_config, p_name, p_val
         )
 
-    # Post-process: Convert any tsodyks_synapse with tau_rec == 0.0 to static_synapse after all updates
-    for syn_key in list(network_params.synapses.keys()):
-        syn_def = network_params.synapses[syn_key]
-        if getattr(syn_def, "syn_type", None) == "tsodyks_synapse":
-            tau_rec = getattr(syn_def.syn_params, "tau_rec", None)
-            if tau_rec is not None and float(tau_rec) == 0.0:
-                convert_tsodyks_to_static_if_zero(network_params, syn_key, 0.0)
+    convert_zero_recovery_connections(network_params)
 
     # Run workflow
     run_worker_workflow(network_params, sim_params, stimuli_config, args.id, project_path, args.cpus)

@@ -8,6 +8,10 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 from .base import BasePlot, EXC_COLOR, INH_COLOR, LINESTYLES
+from ..data_structures.neuron_simulation import SingleNeuronResults
+from ..network_params.translators import get_unit_multiplier
+from ..transfer_function import get_transfer_function
+from ..transfer_function.base import BaseTransferFunction
 
 
 class BaseAggregatorPlot(BasePlot, ABC):
@@ -63,7 +67,7 @@ class BaseAggregatorPlot(BasePlot, ABC):
 
     def draw(self, ax: plt.Axes, sim_id: str = None, aggregator=None, **kwargs):
         self.apply_preplot_params(ax, self.full_params)
-        im = self._draw(ax, sim_id=sim_id, aggregator=aggregator)
+        im = self._draw(ax, sim_id=sim_id, aggregator=aggregator, **kwargs)
         self.apply_postplot_params(ax, self.full_params)
         return im
 
@@ -432,21 +436,28 @@ class AggregatorSNNRasterPlotter(BaseAggregatorPlot):
 
 
 class AggregatorNeuronIOCurvePlotter(BaseAggregatorPlot):
-    """Plotter for single neuron I/O response curves loaded via aggregator."""
+    """Plot single-neuron I/O curves and optionally overlay transfer-function fits."""
 
     DEFAULT_PARAMS = {
         **BaseAggregatorPlot.DEFAULT_PARAMS,
         "title": "Single Neuron Activity",
-        "xlabel": r"$\nu_e$",
-        "ylabel": r"$\nu_{out}$",
+        "xlabel": r"Firing Rate $r_{E}$",
+        "ylabel": r"Firing Rate $r_{out}$",
         "x_unit": "Hz",
         "y_unit": "Hz",
         "curves_num": 5,
+        "inh_rate_values": None,
+        "inh_rate_indices": None,
         "linestyle": "None",
         "marker": "o",
         "markersize": 5,
         "yerrorbar": False,
         "capsize": 3,
+        "curve_legend": False,
+        "curve_legend_title": None,
+        "tf_funcs": None,
+        "tf_labels": None,
+        "tf_linestyles": LINESTYLES,
     }
 
     def __init__(
@@ -455,12 +466,106 @@ class AggregatorNeuronIOCurvePlotter(BaseAggregatorPlot):
         models: List[str] = None,
         stim_name: str = "SpontActivity0_5",
         model: str = "single_neuron",
+        tf_funcs: List[BaseTransferFunction] | Dict[str, List[BaseTransferFunction]] | None = None,
+        neuron_name: str | None = None,
+        workflow_params=None,
+        network_params=None,
+        mf_model_name: str | None = None,
+        fit_transfer_function: bool = False,
         params: dict = None,
     ):
         super().__init__(variables=variables, models=models, stim_name=stim_name, params=params)
         self.model = model
+        self.tf_funcs = tf_funcs
+        self.neuron_name = neuron_name
+        self.workflow_params = workflow_params
+        self.network_params = network_params
+        self.mf_model_name = mf_model_name
+        self.fit_transfer_function = fit_transfer_function
 
-    def _draw(self, ax: plt.Axes, sim_id: str = None, aggregator=None, **kwargs) -> None:
+    def _load_workflow_params(self):
+        if self.workflow_params is None:
+            return None
+        if isinstance(self.workflow_params, (str, Path)):
+            from ..controller.config import load_workflow_config
+
+            return load_workflow_config(self.workflow_params)
+        return self.workflow_params
+
+    def _get_tf_params(self):
+        workflow_params = self._load_workflow_params()
+        if workflow_params is None:
+            return None
+
+        if hasattr(workflow_params, "transfer_function"):
+            return workflow_params.transfer_function
+
+        mf_models = getattr(workflow_params, "mf_models", None)
+        if not mf_models:
+            raise ValueError("workflow_params contains no mean-field models.")
+        model_name = self.mf_model_name or next(iter(mf_models))
+        if model_name not in mf_models:
+            raise KeyError(f"Mean-field model '{model_name}' not found in workflow_params.")
+        return mf_models[model_name].transfer_function
+
+    def _load_neuron_results(self, aggregator, sim_id: str) -> SingleNeuronResults:
+        fields = [
+            "exc_rate_grid", "inh_rate_grid", "out_rate_mean", "out_rate_std",
+            "adaptation_mean", "adaptation_std", "voltage_mean", "voltage_std",
+            "voltage_tau", "exc_conductance_mean", "exc_conductance_std",
+            "inh_conductance_mean", "inh_conductance_std",
+        ]
+        data = {}
+        for field in fields:
+            try:
+                data[field] = aggregator._load_variable(
+                    sim_id, self.model, self.stim_name, field
+                )
+            except (FileNotFoundError, KeyError):
+                data[field] = None
+
+        required = ["exc_rate_grid", "inh_rate_grid", "out_rate_mean"]
+        missing = [field for field in required if data[field] is None]
+        if missing:
+            raise ValueError(
+                f"Cannot fit a transfer function: missing neuron result fields {missing}."
+            )
+        return SingleNeuronResults(neuron_name=self.neuron_name, **data)
+
+    def _fit_tf_funcs(self, aggregator, sim_id: str):
+        tf_params = self._get_tf_params()
+        if tf_params is None:
+            return None
+        if self.neuron_name is None:
+            raise ValueError("neuron_name is required when fitting a transfer function.")
+
+        network_params = self.network_params
+        if isinstance(network_params, (str, Path)):
+            from ..network_params.loader import load_network_parameters
+
+            network_params = load_network_parameters(network_params)
+        if network_params is None:
+            raise ValueError(
+                "network_params is required to construct a transfer function."
+            )
+
+        tf_func = get_transfer_function(
+            tf_method_name=tf_params.tf_model.model_name,
+            neuron_name=self.neuron_name,
+            network_params=network_params,
+            tf_params=tf_params,
+        )
+        tf_func.fit(self._load_neuron_results(aggregator, sim_id))
+        return [tf_func]
+
+    def _draw(
+        self,
+        ax: plt.Axes,
+        sim_id: str = None,
+        aggregator=None,
+        tf_funcs: List[BaseTransferFunction] | Dict[str, List[BaseTransferFunction]] | None = None,
+        **kwargs,
+    ) -> None:
         if aggregator is None or sim_id is None:
             return None
 
@@ -473,11 +578,44 @@ class AggregatorNeuronIOCurvePlotter(BaseAggregatorPlot):
             ax.text(0.5, 0.5, f"No Data\n({sim_id})", ha="center", va="center", transform=ax.transAxes, color="gray")
             return None
 
-        inh_slice_indices = np.linspace(0, inh_grid.shape[1] - 1, self.full_params["curves_num"], dtype=int)
+        inh_values = np.asarray(inh_grid[0, :] if inh_grid.ndim == 2 else inh_grid)
+        requested_indices = self.full_params["inh_rate_indices"]
+        requested_values = self.full_params["inh_rate_values"]
 
+        if requested_indices is not None and requested_values is not None:
+            raise ValueError("Specify only one of 'inh_rate_indices' or 'inh_rate_values'.")
+        if requested_indices is not None:
+            inh_slice_indices = np.asarray(requested_indices, dtype=int)
+            if np.any((inh_slice_indices < 0) | (inh_slice_indices >= len(inh_values))):
+                raise IndexError(
+                    f"'inh_rate_indices' must be between 0 and {len(inh_values) - 1}."
+                )
+        elif requested_values is not None:
+            requested_values = np.atleast_1d(requested_values)
+            inh_slice_indices = np.asarray(
+                [np.argmin(np.abs(inh_values - value)) for value in requested_values],
+                dtype=int,
+            )
+        else:
+            inh_slice_indices = np.linspace(
+                0, len(inh_values) - 1, self.full_params["curves_num"], dtype=int
+            )
+
+        # Preserve the requested order while avoiding duplicate nearest-grid slices.
+        _, unique_positions = np.unique(inh_slice_indices, return_index=True)
+        inh_slice_indices = inh_slice_indices[np.sort(unique_positions)]
+
+        colors = self.full_params["colors"]
+        if colors is None:
+            colors = plt.rcParams["axes.prop_cycle"].by_key()["color"]
+        elif isinstance(colors, dict):
+            colors = [colors.get(f"curve_{j}", self.full_params["default_color"]) for j in range(len(inh_slice_indices))]
+
+        curve_labels = []
         for j, nu_i_idx in enumerate(inh_slice_indices):
             nu_i_val = inh_grid[0, nu_i_idx]
-            label = self.full_params["labels"][j] if (self.full_params["labels"] and j < len(self.full_params["labels"])) else fr"$\nu_i$={nu_i_val:.0f} Hz"
+            label = self.full_params["labels"][j] if (self.full_params["labels"] and j < len(self.full_params["labels"])) else fr"$r_i$={nu_i_val:.0f} Hz"
+            curve_labels.append(label)
             yerr = out_std[:, nu_i_idx] if out_std is not None else None
 
             ax.errorbar(
@@ -488,9 +626,99 @@ class AggregatorNeuronIOCurvePlotter(BaseAggregatorPlot):
                 linestyle=self.full_params["linestyle"],
                 markersize=self.full_params["markersize"],
                 capsize=self.full_params["capsize"],
-                color=self.get_variable_color(f"curve_{j}", j),
-                label=label,
+                color=colors[j % len(colors)],
+                label=label if self.full_params["curve_legend"] else "_nolegend_",
             )
+
+        fit_funcs = self.tf_funcs if tf_funcs is None else tf_funcs
+        if fit_funcs is None and self.fit_transfer_function:
+            fit_funcs = self._fit_tf_funcs(aggregator, sim_id)
+        if isinstance(fit_funcs, dict):
+            fit_key = self.neuron_name or self.model
+            fit_funcs = fit_funcs.get(fit_key, [])
+
+        if fit_funcs:
+            fit_labels = self.full_params["tf_labels"]
+            if fit_labels is None:
+                fit_labels = [f"TF {i + 1}" for i in range(len(fit_funcs))]
+            fit_linestyles = self.full_params["tf_linestyles"][:len(fit_funcs)]
+
+            for j, nu_i_idx in enumerate(inh_slice_indices):
+                adaptation = None
+                if any("adaptation" in tf.required_inputs() for tf in fit_funcs):
+                    try:
+                        adaptation = aggregator._load_variable(
+                            sim_id, self.model, self.stim_name, "adaptation_mean"
+                        )[:, nu_i_idx]
+                    except (FileNotFoundError, KeyError):
+                        raise ValueError(
+                            "Transfer-function fits require 'adaptation_mean', "
+                            f"which is unavailable for model '{self.model}'."
+                        ) from None
+
+                for tf, linestyle in zip(fit_funcs, fit_linestyles, strict=True):
+                    nu_out_fit = tf(
+                        exc_rate=exc_grid[:, nu_i_idx],
+                        inh_rate=inh_grid[:, nu_i_idx],
+                        adaptation=adaptation,
+                    ) * get_unit_multiplier("Hz", self.full_params["y_unit"])
+                    ax.plot(
+                        exc_grid[:, nu_i_idx],
+                        nu_out_fit,
+                        color=colors[j % len(colors)],
+                        linestyle=linestyle,
+                        linewidth=self.full_params["linewidth"],
+                    )
+
+            legend_elements = []
+            if self.full_params["curve_legend"]:
+                legend_elements.extend(
+                    Line2D(
+                        [0], [0], marker=self.full_params["marker"],
+                        color=colors[j % len(colors)], label=label,
+                        markerfacecolor=colors[j % len(colors)],
+                        markersize=self.full_params["markersize"], linestyle="None",
+                    )
+                    for j, label in enumerate(curve_labels)
+                )
+            else:
+                legend_elements.append(
+                    Line2D(
+                        [0], [0], marker=self.full_params["marker"], color="black",
+                        label="Data", markerfacecolor="black",
+                        markersize=self.full_params["markersize"], linestyle="None",
+                    )
+                )
+            if len(fit_funcs) > 1 or self.full_params["tf_labels"] is not None:
+                legend_elements += [
+                    Line2D(
+                        [0], [0], color="black", label=label,
+                        linestyle=linestyle, linewidth=self.full_params["linewidth"],
+                    )
+                    for label, linestyle in zip(fit_labels, fit_linestyles, strict=True)
+                ]
+            if self.full_params["legend"] is True:
+                self.full_params["legend"] = {"handles": legend_elements}
+            elif isinstance(self.full_params["legend"], dict):
+                self.full_params["legend"]["handles"] = legend_elements
+            if isinstance(self.full_params["legend"], dict) and self.full_params["curve_legend_title"]:
+                self.full_params["legend"]["title"] = self.full_params["curve_legend_title"]
+        elif self.full_params["curve_legend"]:
+            legend_elements = [
+                Line2D(
+                    [0], [0], marker=self.full_params["marker"],
+                    color=colors[j % len(colors)], label=label,
+                    markerfacecolor=colors[j % len(colors)],
+                    markersize=self.full_params["markersize"], linestyle="None",
+                )
+                for j, label in enumerate(curve_labels)
+            ]
+            if self.full_params["legend"] is True:
+                self.full_params["legend"] = {"handles": legend_elements}
+            elif isinstance(self.full_params["legend"], dict):
+                self.full_params["legend"]["handles"] = legend_elements
+            if isinstance(self.full_params["legend"], dict) and self.full_params["curve_legend_title"]:
+                self.full_params["legend"]["title"] = self.full_params["curve_legend_title"]
         return None
 
 

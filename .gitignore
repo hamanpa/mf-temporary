@@ -13,3 +13,5 @@ drafts/
 *data/
 *.sbatch
 *.png
+
+.notes

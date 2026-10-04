@@ -2,6 +2,7 @@ import os
 import multiprocessing as mp
 import numpy as np
 from typing import List, Dict, Any, Union
+import traceback
 
 from .tvb_simulator.simulator import TVBMFSimulator
 from .config import MeanFieldSimulationConfig
@@ -98,6 +99,7 @@ def _mf_simulation_worker(task_tuple: tuple) -> Dict[str, Any]:
 
     except Exception as e:
         metadata["error"] = str(e)
+        metadata["traceback"] = traceback.format_exc()
     finally:
         try:
             simulator.end()
