@@ -41,7 +41,7 @@ class TransferFunctionFitPlot(BaseTransferFunctionPlot):
             tf_funcs_results: Dict[str, List[BaseTransferFunction]],
             ) -> None:
 
-        neuron_results = neuron_results[self.full_params['neuron_name']]
+        neuron_results = self.get_neuron_results(neuron_results)
         tf_funcs_list = tf_funcs_results[self.full_params['neuron_name']]
 
         x_unit = self.full_params.get('x_unit', None)
@@ -87,8 +87,9 @@ class TransferFunctionFitPlot(BaseTransferFunctionPlot):
                     adaptation = None
 
                 nu_out_fit = tf_funcs(
-                    exc_rate = neuron_results.exc_rate_grid("Hz")[:,nu_i_idx], 
-                    inh_rate = neuron_results.inh_rate_grid("Hz")[:,nu_i_idx], 
+                    exc_rate = neuron_results.exc_rate_grid("Hz")[:,nu_i_idx],
+                    inh_rate = neuron_results.inh_rate_grid("Hz")[:,nu_i_idx],
+                    drive_rate = neuron_results.drive_rate_grid("Hz")[:,nu_i_idx],  # the plotted drive slice
                     adaptation = adaptation)*get_unit_multiplier("Hz", y_unit)
 
                 ax.plot(neuron_results.exc_rate_grid(x_unit)[:,nu_i_idx], 

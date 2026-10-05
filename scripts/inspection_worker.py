@@ -78,7 +78,7 @@ def run_worker_workflow(network_params, sim_params, stimuli_config, sim_id: str,
         # Save compressed .npz for ResultsAggregator inside data/{sim_id}/
         save_dict = {}
         for field in [
-            "exc_rate_grid", "inh_rate_grid", "out_rate_mean", "out_rate_std",
+            "exc_rate_grid", "inh_rate_grid", "drive_rate_grid", "out_rate_mean", "out_rate_std",
             "adaptation_mean", "adaptation_std", "voltage_mean", "voltage_std",
             "voltage_tau", "exc_conductance_mean", "exc_conductance_std",
             "inh_conductance_mean", "inh_conductance_std"

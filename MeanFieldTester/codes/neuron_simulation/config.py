@@ -11,28 +11,35 @@ class SimulatorType(str, Enum):
     ZERLAUT2018 = "zerlaut2018"
 
 
+_CUSTOM_GRID_DESCRIPTION = (
+    "One of the following \n" +
+    "- a 3D meshgrid array indexed (exc_rate, inh_rate, drive_rate) \n" +
+    "- a path to a .npy file containing it \n"
+)
+
+_DRIVE_RATE_GRID_DESCRIPTION = (
+    "[min, max, n_points] of the drive input rate in [Hz] (rate of each drive Poisson source, as in the network). "
+    "Optional; the default [0, 0, 1] means no drive input."
+)
+
+
+def _check_linear_spec(value: List[float]) -> List[float]:
+    if len(value) != 3 or int(value[2]) < 1:
+        raise ValueError(f"Expected [min, max, n_points] with n_points >= 1, got {value}")
+    return value
+
+
 class SingleNeuronCustomGrid(BaseModel):
     """Sub-model to handle the grids for a specific neuron type."""
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
     grid_type: Literal["custom"]
 
-    exc_rate_grid: Path | str | np.ndarray = Field(
-        description=(
-            "One of the following \n" +
-            "- a 2D array of meshgrid \n" +
-            "- a path to a .npy file containing the grid \n"
-        )
-    )
-    inh_rate_grid: Path | str | np.ndarray = Field(
-        description=(
-            "One of the following \n" +
-            "- a 2D array of meshgrid \n" +
-            "- a path to a .npy file containing the grid \n"
-        )
-    )
+    exc_rate_grid: Path | str | np.ndarray = Field(description=_CUSTOM_GRID_DESCRIPTION)
+    inh_rate_grid: Path | str | np.ndarray = Field(description=_CUSTOM_GRID_DESCRIPTION)
+    drive_rate_grid: Path | str | np.ndarray = Field(description=_CUSTOM_GRID_DESCRIPTION)
 
-    @field_validator('exc_rate_grid', 'inh_rate_grid', mode='before')
+    @field_validator('exc_rate_grid', 'inh_rate_grid', 'drive_rate_grid', mode='before')
     @classmethod
     def load_mesh_if_path(cls, value: Any) -> np.ndarray:
         if isinstance(value, list):
@@ -49,17 +56,30 @@ class SingleNeuronCustomGrid(BaseModel):
                 raise ValueError(f"Failed to load numpy array from {file_path}. Error: {e}")
 
         if isinstance(value, np.ndarray):
-            if value.ndim != 2:
-                raise ValueError(f"Mesh array must be 2D, but got {value.ndim}D")
+            if value.ndim != 3:
+                raise ValueError(f"Mesh array must be 3D (exc_rate, inh_rate, drive_rate), but got {value.ndim}D")
             return value
-                
+
         raise ValueError("Must be a valid path string, Path object, or numpy array.")
+
+    @model_validator(mode='after')
+    def check_shapes(self):
+        shapes = {self.exc_rate_grid.shape, self.inh_rate_grid.shape, self.drive_rate_grid.shape}
+        if len(shapes) != 1:
+            raise ValueError(f"Custom exc/inh/drive rate grids must have the same shape, got {shapes}")
+        return self
 
 
 class SingleNeuronLinearGrid(BaseModel):
     grid_type: Literal["linear"]
     exc_rate_grid: List[float] = Field(description="[min, max, n_points]")
     inh_rate_grid: List[float] = Field(description="[min, max, n_points]")
+    drive_rate_grid: List[float] = Field(default_factory=lambda: [0.0, 0.0, 1], description=_DRIVE_RATE_GRID_DESCRIPTION)
+
+    @field_validator('drive_rate_grid')
+    @classmethod
+    def check_drive_rate_grid(cls, value: List[float]) -> List[float]:
+        return _check_linear_spec(value)
 
 
 class SingleNeuronAdaptiveGrid(BaseModel):
@@ -67,6 +87,10 @@ class SingleNeuronAdaptiveGrid(BaseModel):
     exc_rate_grid: List[float] | Literal["adaptive"] = Field(description="[min, max, n_points] OR 'adaptive' to automatically determine based on the data")
     inh_rate_grid: List[float] | Literal["adaptive"] = Field(description="[min, max, n_points] OR 'adaptive' to automatically determine based on the data")
     out_rate_grid: List[float] = Field(description="[min, max, n_points] defining the grid for the output firing rate, used to determine where to place more points in the adaptive input grid")
+    drive_rate_grid: List[float] = Field(
+            default_factory=lambda: [0.0, 0.0, 1],
+            description=_DRIVE_RATE_GRID_DESCRIPTION + " The adaptive axis is resolved separately for every (inh, drive) pair."
+        )
 
     n_coarse_interpolation_points: int | None = Field(
             default=None, 
@@ -80,6 +104,11 @@ class SingleNeuronAdaptiveGrid(BaseModel):
             default=True,
             description="If True, skips sub-threshold zero activity and jumps to threshold. If False, steps through sub-threshold activity with max_step."
         )
+
+    @field_validator('drive_rate_grid')
+    @classmethod
+    def check_drive_rate_grid(cls, value: List[float]) -> List[float]:
+        return _check_linear_spec(value)
 
     @model_validator(mode='after')
     def validate_adaptive_logic(self):

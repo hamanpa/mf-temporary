@@ -19,6 +19,45 @@ Last full review against the code: 2026-10-04.
 
 # ACTIVE
 
+- [ ] (2) **neuron_simulation / transfer_function**: *Drive axis in the TF input grid*
+  - Why: the "exc" input of the single-neuron grid reuses the ee/ie projection (possibly STP), while the drive has its own (static) synapses and number of sources, so the drive must be a separate input dimension.
+  - [x] Part A (2026-10-05): `drive_rate_grid` in the grid configs (optional `[min, max, n]` for linear/adaptive, explicit for custom); 3D grids (exc, inh, drive); drive Poisson population in the single-neuron simulation; adaptive grid per (inh, drive); `SingleNeuronResults.drive_rate_grid()` / `at_drive()`; old 2D data loads as drive = 0; the worker saves `drive_rate_grid`; plots select a drive slice (`drive_rate` param, default first value). The serial/multiprocess grid code was unified, which also fixed the serial path missing the µS conductance units. Not yet tested on the cluster.
+  - [x] Part B (2026-10-05): `NeuroPSICustomTF` fits all drive values together, with the drive as its own source in the membrane potential fluctuations; `evaluate(..., drive_rate=...)` is optional (omitted or 0 means exactly the previous behaviour); the TF plots and the aggregator I/O overlay evaluate at the plotted drive slice.
+  - [x] Cluster check of Parts A + B (2026-10-05, `projects/11_drive_axis_check`: drive 0/1/2 Hz, adaptive exc grid, linear inh grid).
+    - Grids (8, 8, 3) with units, all models SUCCESS, all TF fits converged.
+    - g_e rises by 2.0 nS per Hz of drive, exactly K_drive·w·τ_syn = 400 · 1 nS · 5 ms.
+    - Adaptive exc axis shifts with drive as intended; plots and TF overlays work on the drive = 0 slice.
+    - Observation: the static-synapse TF (DiVolo2019, `static_synapses: true`) fits much worse once the drive axis is included (exc TF_MSE 6.2 vs 0.22 without drive; STP-aware TF 0.71 vs 0.11). Ignoring STP on the exc input can no longer be absorbed into the polynomial when a static drive is a separate input.
+    - The high inh TF_MSE (35–50) comes from the linear inh grid reaching ~108 Hz output, not from the drive.
+    - Possible reasons for the worse static-TF fit: (1) the static TF assumes weight·U for the exc input, so with a separate static drive the same μV can come from different exc/drive mixes with different true outputs, and the error can no longer be absorbed by the polynomial; (2) the grids differ (8×8×3 with a drive-dependent exc axis vs 16×16 at drive 0), so the MSEs average over different regions. Check: fit both TFs on the drive = 0 slice of projects/11 and compute the error per drive slice (`ResultsAggregator.load_run_params` / `load_transfer_functions`).
+
+- [ ] (2) **plotting**: *Task 2: review `aggregator_plots.py`, add plots of the other variables*
+  - Goal:
+    - make the aggregator plots consistent with the plotting module (`plotting/base.py`: `DEFAULT_PARAMS` merge, unit-aware data access, no computation in plots);
+    - add plots of adaptation, STP x/u (per projection), drive, and voltage;
+    - respect the results structure and filtering used in `projects/05_DiVolo-STP/explore_results.ipynb` (`ResultsAggregator.get_results`, `AggregatorGridPlottingHook`).
+  - Process: write a review and plan first, and get it approved before changing code (as done for task 1).
+  - Data available per run since iteration 1:
+    - SNN and MF `*_pop_mean` for rate, adaptation and voltage, `drive_rate`, and STP per projection (`ee_x_pop_mean`, …);
+    - SNN-only conductances (MF conductance is a draft and not saved);
+    - `units` in every `.npz`, `data/<id>/params/` (with `tf_fits`), and the neuron grids with a drive axis.
+  - Known issues in `aggregator_plots.py`:
+    - units are only labels: the data is plotted raw. Use `ResultsAggregator.get_units` and convert. `AggregatorAdaptationHeatmapPlotter` says pA, but the data is nA.
+    - the plotters call the private `aggregator._load_variable`.
+    - `AggregatorNeuronIOCurvePlotter` refits the TF from the base YAMLs; use `load_transfer_functions` (see the "No computation inside plots" item).
+    - `full_params` is mutated while drawing (list → dict conversion, injected legend handles); this is safe in `AggregatorGridPlottingHook` (deep copy per cell) but not on repeated direct `draw`.
+    - colours and models are chosen by name prefix.
+    - `plotted_any` is never initialised (`NameError` when nothing is plotted; "No Data" never shows).
+    - the heatmap defaults (`stim_name="SpontActivity0_5"`, `model="single_neuron"`) don't match the worker's files (`exc_neuron`, `steady_state`).
+    - `update_params` (labels, linestyles, alphas, linewidths: ~60 lines) belongs in the base class.
+    - white wedges in adaptive-grid heatmaps (see the item below).
+  - Semantic traps to decide on:
+    - `*_rate_pop_std` is the spread across neurons for the SNN, but `sqrt(C_ee)` (population-rate fluctuation) for the MF;
+    - the MF drive is constant, while the SNN drive ramps (see mf_simulation).
+  - User idea to discuss: a lazy-loading results container (metadata such as units and params loaded up front; data loaded when filtered), possibly an evolution of `ResultsAggregator`.
+  - `explore_results.ipynb` cells 25, 27 and 28 use the alias `exc_neuron.tau_rec`, which is ambiguous with the new connectivity paths. Use `exc_neuron.exc_neuron.tau_rec`.
+  - Caveat: `try_load` reuses an existing neuron cache (`data/<id>_*_neuron_results.pkl`) even if the configured grid changed (e.g. a drive axis was added). Delete the caches or use a new project when changing the grid.
+
 - [ ] (3) **docs**: *Rewrite the documentation set*
   - Done: `design.md`, `todo.md`, `README.md`, `CLAUDE.md`. `MeanFieldTester/README.md` was deleted; its content was migrated.
   - When `workflow.md` exists, update `CLAUDE.md` (Quick facts → point to it) and `README.md` (quick start).
@@ -74,6 +113,7 @@ Last full review against the code: 2026-10-04.
   - This is validated for many Poisson synapses at 15/30/80 Hz, τ_rec = 450 ms (projects/09 `tsodyks_inspection_notebook.ipynb`), i.e. r·τ_rec ≈ 7–36.
   - For one Poisson synapse the exact mean is x* = 1/(1 + U·r·τ_rec) (averaging e^(−Δ/τ_rec) over exponential intervals). The two converge for r·τ_rec ≫ 1, but differ by up to ~20% at r·τ_rec ≈ 0.5–2 (U = 0.6). That is ~1–10 Hz for τ_rec 200–600 ms, the spontaneous regime.
   - Open question: does the mean over many i.i.d. Poisson synapses approach the regular-train value? Check: repeat the notebook comparison at 1–10 Hz.
+  - Data point (projects/10 check, exc neuron grid, K = 400 Poisson sources, w = 1.667 nS, U = 0.6, τ_rec = 200 ms, τ_syn = 5 ms): ⟨g_e⟩ measured vs Poisson vs regular is 10.37 / 10.43 / 11.65 nS at 13.9 Hz (r·τ_rec = 2.8), and 12.78 / 12.92 / 13.84 nS at 28.7 Hz. The measured values follow the Poisson value.
 
 ## mf_simulation
 
@@ -174,6 +214,8 @@ Last full review against the code: 2026-10-04.
 - [ ] (3) **plotting**: *No computation inside plots*
   - `AggregatorNeuronIOCurvePlotter` can fit a TF itself (`_fit_tf_funcs`), and it refits from the project's *base* YAMLs, not from the run's parameters (wrong for swept τ_rec with STP TFs).
   - Use `ResultsAggregator.load_transfer_functions(sim_id, mf_model)` instead: the run's own fitted TFs, no refitting. This only works for runs made after iteration 1.
+- [ ] (3) **plotting**: *Heatmaps of adaptive grids show white wedges*
+  - `SingleNeuronActivityHeatmapPlot` / `AggregatorHeatmapPlotter` use `contourf`, which assumes a rectangular grid. On adaptive grids each inh column has its own exc axis, and columns where the neuron never fires collapse to exc = 0, leaving gaps (already visible before the drive axis, e.g. projects/10). Use `tricontourf` on the scattered points, or `pcolormesh`.
 - [ ] (3) **plotting**: *Handle missing data gracefully*
   - `None` when a variable wasn't measured, `None` instead of a results object when a run was skipped, and NaN arrays when an MF field is missing. See `.notes/none_data_handling.md`.
 - [ ] (3) **plotting**: *Diagnostic plots for the TF approach*

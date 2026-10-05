@@ -41,10 +41,12 @@ def simulate_adex_neuron_single_point(
                                 inh_rate : float,
                                 neuron_params : dict, 
                                 init_values : dict, 
-                                exc_synapses : dict, 
+                                exc_synapses : dict,
                                 inh_synapses : dict,
-                                simulation_time=1000.0, 
-                                time_step=0.1, 
+                                drive_rate : float = 0.0,
+                                drive_synapses : dict | None = None,
+                                simulation_time=1000.0,
+                                time_step=0.1,
                                 seed=1,
                                 **kwargs) -> dict:
     """Simulates a single AdEx neuron with Poisson synaptic input.
@@ -56,6 +58,10 @@ def simulate_adex_neuron_single_point(
         init_values (dict): Initial values for the neuron state variables.
         exc_synapses (dict): Parameters for the excitatory synapse model.
         inh_synapses (dict): Parameters for the inhibitory synapse model.
+        drive_rate (float): Rate of each drive Poisson source (Hz). 0 means no drive input.
+        drive_synapses (dict): Synapse model, number of sources and receptor type of the drive input
+                               (required if drive_rate > 0). Its conductance is recorded in 'gsyn_exc'
+                               (or 'gsyn_inh') together with the other inputs of that receptor.
         synapse_type (str): Type of synapse to use (e.g., 'static_synapse').
 
         simulation_time (float, optional): Total simulation time in milliseconds
@@ -100,6 +106,13 @@ def simulate_adex_neuron_single_point(
     poisson_input_inh = sim.Population(inh_synapses["number"], sim.SpikeSourcePoisson(rate=inh_rate))
     sim.Projection(poisson_input_inh, neuron, connector, synapse_type=synapse_inh, receptor_type='inhibitory')
 
+    if drive_rate > 0:
+        if drive_synapses is None:
+            raise ValueError("drive_rate > 0 requires drive_synapses (the neuron has no drive connection).")
+        synapse_drive = sim.native_synapse_type(drive_synapses["syn_type"])(**drive_synapses["syn_params"])
+        poisson_input_drive = sim.Population(drive_synapses["number"], sim.SpikeSourcePoisson(rate=drive_rate))
+        sim.Projection(poisson_input_drive, neuron, connector, synapse_type=synapse_drive, receptor_type=drive_synapses["receptor_type"])
+
     neuron.record(['v', 'spikes', 'w', 'gsyn_exc', 'gsyn_inh'])
 
     sim.run(simulation_time)
@@ -121,93 +134,37 @@ def simulate_adex_neuron_single_point(
 
     return data
 
-def simulate_adex_neuron_full_grid(neuron_name: str, neuron_params: dict, 
-                                exc_rate_grid: np.ndarray, inh_rate_grid: np.ndarray, 
-                                neuron_sim_params: NeuronSimulationConfig) -> SingleNeuronResults:
-    """
-    Simulates a single AdEx neuron across a grid of excitatory and inhibitory input rates.
-    """
-    sim_time = neuron_sim_params.simulation_time
-    dt = neuron_sim_params.time_step
-    avg_window = neuron_sim_params.averaging_window
-    avg_start = sim_time - avg_window  
-    n_bins = int(avg_window / dt)
-    seed = neuron_sim_params.seed
+GRID_METRICS = (
+    "out_rate",
+    "adaptation_mean", "adaptation_std",
+    "voltage_mean", "voltage_std", "voltage_tau",
+    "exc_conductance_mean", "exc_conductance_std",
+    "inh_conductance_mean", "inh_conductance_std",
+)
 
-    exc_n_points, inh_n_points = exc_rate_grid.shape
 
-    # Initialize result arrays
-    out_rate = np.zeros((exc_n_points, inh_n_points, neuron_sim_params.n_runs))
-    adaptation_mean = np.zeros_like(out_rate)
-    adaptation_std = np.zeros_like(out_rate)
-    voltage_mean = np.zeros_like(out_rate)
-    voltage_std = np.zeros_like(out_rate)
-    voltage_tau = np.zeros_like(out_rate)
-    exc_conductance_mean = np.zeros_like(out_rate)
-    exc_conductance_std = np.zeros_like(out_rate)
-    inh_conductance_mean = np.zeros_like(out_rate)
-    inh_conductance_std = np.zeros_like(out_rate)
+def _single_point_sim_params(neuron_sim_params: NeuronSimulationConfig, n_run: int) -> dict:
+    """Picklable simulation parameters of one run (seed shifted by the run index)."""
+    return {
+        "simulator": neuron_sim_params.simulator,
+        "seed": neuron_sim_params.seed + n_run,
+        "simulation_time": neuron_sim_params.simulation_time,
+        "time_step": neuron_sim_params.time_step,
+        "averaging_window": neuron_sim_params.averaging_window,
+    }
 
-    for inh_idx in range(inh_n_points):
-        for exc_idx in range(exc_n_points):
-            exc_rate = exc_rate_grid[exc_idx, inh_idx]
-            inh_rate = inh_rate_grid[exc_idx, inh_idx]
-            
-            print(f"Simulating {neuron_name} [Point {exc_idx},{inh_idx}]: exc_rate={exc_rate:.2f} Hz, inh_rate={inh_rate:.2f} Hz")
 
-            for n_run in range(neuron_sim_params.n_runs):
-                # Run single simulation
-                neuron_sim_params_dict = neuron_sim_params.model_dump()
-                neuron_sim_params_dict['seed'] = seed + n_run
-                sim_data = simulate_adex_neuron_single_point(
-                    exc_rate, inh_rate, **neuron_params, **neuron_sim_params_dict
-                )
+def _grid_tasks(neuron_name: str, neuron_params: dict,
+                exc_rate_grid: np.ndarray, inh_rate_grid: np.ndarray, drive_rate_grid: np.ndarray,
+                neuron_sim_params: NeuronSimulationConfig) -> list:
+    """One task per grid point (exc, inh, drive) and run."""
+    tasks = []
+    for grid_idx in np.ndindex(exc_rate_grid.shape):
+        rates = (exc_rate_grid[grid_idx], inh_rate_grid[grid_idx], drive_rate_grid[grid_idx])
+        for n_run in range(neuron_sim_params.n_runs):
+            tasks.append((rates, grid_idx, n_run, neuron_name, neuron_params, _single_point_sim_params(neuron_sim_params, n_run)))
+    return tasks
 
-                spikes = sim_data['spikes']
-                adaptation = sim_data['w']
-                voltage = sim_data['v']
-                exc_conductance = sim_data['gsyn_exc']
-                inh_conductance = sim_data['gsyn_inh']
-
-                # Compute metrics
-                out_rate[exc_idx,inh_idx,n_run] = spikes[spikes > avg_start].size / (avg_window * 1e-3)
-
-                adaptation_steady = adaptation[-n_bins:]
-                adaptation_mean[exc_idx,inh_idx,n_run] = adaptation_steady.mean()
-                adaptation_std[exc_idx,inh_idx,n_run] = adaptation_steady.std()
-
-                voltage_steady = voltage[-n_bins:]
-                voltage_mean[exc_idx,inh_idx,n_run] = voltage_steady.mean()
-                voltage_std[exc_idx,inh_idx,n_run] = voltage_steady.std()
-
-                exc_conductance_steady = exc_conductance[-n_bins:]
-                exc_conductance_mean[exc_idx,inh_idx,n_run] = exc_conductance_steady.mean()
-                exc_conductance_std[exc_idx,inh_idx,n_run] = exc_conductance_steady.std()
-                
-                inh_conductance_steady = inh_conductance[-n_bins:]
-                inh_conductance_mean[exc_idx,inh_idx,n_run] = inh_conductance_steady.mean()
-                inh_conductance_std[exc_idx,inh_idx,n_run] = inh_conductance_steady.std()
-
-    return SingleNeuronResults(
-        simulator_name=neuron_sim_params.simulator,
-        neuron_name=neuron_name,
-        neuron_params=neuron_params,
-        exc_rate_grid=exc_rate_grid,
-        inh_rate_grid=inh_rate_grid,
-        out_rate_mean=out_rate.mean(axis=2),
-        out_rate_std=out_rate.std(axis=2),
-        adaptation_mean=adaptation_mean.mean(axis=2),
-        adaptation_std=adaptation_std.mean(axis=2),
-        voltage_mean=voltage_mean.mean(axis=2),
-        voltage_std=voltage_std.mean(axis=2),
-        voltage_tau=voltage_tau.mean(axis=2),
-        exc_conductance_mean=exc_conductance_mean.mean(axis=2),
-        exc_conductance_std=exc_conductance_std.mean(axis=2),
-        inh_conductance_mean=inh_conductance_mean.mean(axis=2),
-        inh_conductance_std=inh_conductance_std.mean(axis=2),
-    )
-
-# Multiprocessing 
 
 def _adex_neuron_worker(task_data):
     """Top-level worker to allow pickling across processes.
@@ -220,11 +177,11 @@ def _adex_neuron_worker(task_data):
     for where to store them in the result arrays.
     
     """
-    exc_rate, inh_rate, exc_rate_idx, inh_rate_idx, n_run_idx, neuron_name, neuron_params, neuron_sim_params = task_data
+    (exc_rate, inh_rate, drive_rate), grid_idx, n_run, neuron_name, neuron_params, neuron_sim_params = task_data
     
     # Run simulation
     sim_data = simulate_adex_neuron_single_point(
-        exc_rate, inh_rate, **neuron_params, **neuron_sim_params
+        exc_rate, inh_rate, drive_rate=drive_rate, **neuron_params, **neuron_sim_params
     )
     
     # Extract
@@ -249,94 +206,42 @@ def _adex_neuron_worker(task_data):
     exc_conductance_steady = exc_conductance[-n_bins:]
     inh_conductance_steady = inh_conductance[-n_bins:]
     
-    return (exc_rate_idx, inh_rate_idx, n_run_idx, {
+    return (grid_idx, n_run, {
         'out_rate': out_rate,
         'adaptation_mean': adaptation_steady.mean(),
         'adaptation_std': adaptation_steady.std(),
         'voltage_mean': voltage_steady.mean(),
         'voltage_std': voltage_steady.std(),
-        'voltage_tau': 0,  # TODO: implement tau_V calculation
+        'voltage_tau': 0,  # not computed yet (see todo.md)
         'exc_conductance_mean': exc_conductance_steady.mean(),
         'exc_conductance_std': exc_conductance_steady.std(),
         'inh_conductance_mean': inh_conductance_steady.mean(),
         'inh_conductance_std': inh_conductance_steady.std()
     })
 
-def simulate_adex_neuron_full_grid_multiprocess(neuron_name: str, neuron_params: dict, 
-                                             exc_rate_grid: np.ndarray, inh_rate_grid: np.ndarray, 
-                                             neuron_sim_params: NeuronSimulationConfig) -> SingleNeuronResults:
-    """Parallelized execution of the unified batch runner using an un-ordered Pool."""
-    exc_n_points, inh_n_points = exc_rate_grid.shape
-    seed = neuron_sim_params.seed
-    cpus = neuron_sim_params.cpus
 
-    # Initialize result arrays
-    out_rate = np.zeros((exc_n_points, inh_n_points, neuron_sim_params.n_runs))
-    adaptation_mean = np.zeros_like(out_rate)
-    adaptation_std = np.zeros_like(out_rate)
-    voltage_mean = np.zeros_like(out_rate)
-    voltage_std = np.zeros_like(out_rate)
-    voltage_tau = np.zeros_like(out_rate)  # TODO: implement tau_V calculation
-    exc_conductance_mean = np.zeros_like(out_rate)
-    exc_conductance_std = np.zeros_like(out_rate)
-    inh_conductance_mean = np.zeros_like(out_rate)
-    inh_conductance_std = np.zeros_like(out_rate)
+def _collect_grid_results(neuron_name: str, neuron_params: dict,
+                          exc_rate_grid: np.ndarray, inh_rate_grid: np.ndarray, drive_rate_grid: np.ndarray,
+                          neuron_sim_params: NeuronSimulationConfig, worker_results) -> SingleNeuronResults:
+    """Stores the worker results (in any order) into (exc, inh, drive, run) arrays and averages over runs."""
+    per_run = {metric: np.zeros(exc_rate_grid.shape + (neuron_sim_params.n_runs,)) for metric in GRID_METRICS}
+    for grid_idx, n_run, metrics in worker_results:
+        for metric, value in metrics.items():
+            per_run[metric][grid_idx + (n_run,)] = value
 
-    # 1. Build the Task List
-    tasks = []
-    for inh_rate_idx in range(inh_n_points):
-        for exc_rate_idx in range(exc_n_points):
-            exc_rate = exc_rate_grid[exc_rate_idx, inh_rate_idx]
-            inh_rate = inh_rate_grid[exc_rate_idx, inh_rate_idx]
-            for n_run_idx in range(neuron_sim_params.n_runs):
-                neuron_sim_params_dict = {
-                    "simulator": neuron_sim_params.simulator,
-                    "seed": seed + n_run_idx,
-                    "simulation_time": neuron_sim_params.simulation_time,
-                    "time_step": neuron_sim_params.time_step,
-                    "averaging_window": neuron_sim_params.averaging_window,
-                }
-                tasks.append((exc_rate, inh_rate, exc_rate_idx, inh_rate_idx, n_run_idx, neuron_name, neuron_params, neuron_sim_params_dict))
-
-    print(f"Starting multiprocessing for {neuron_name}: {len(tasks)} tasks across {cpus} CPUs...")
-
-    # 2. Execute via Pool
-    # We use imap_unordered because we don't care about the order they finish, 
-    # we just map them directly into our pre-allocated numpy arrays via their indices (e, i, n).
-    with mp.Pool(processes=cpus) as pool:
-        for result in pool.imap_unordered(_adex_neuron_worker, tasks):
-            exc_rate_idx, inh_rate_idx, n_run_idx, res_dict = result
-            
-            out_rate[exc_rate_idx,inh_rate_idx,n_run_idx] = res_dict['out_rate']
-            adaptation_mean[exc_rate_idx,inh_rate_idx,n_run_idx] = res_dict['adaptation_mean']
-            adaptation_std[exc_rate_idx,inh_rate_idx,n_run_idx] = res_dict['adaptation_std']
-            voltage_mean[exc_rate_idx,inh_rate_idx,n_run_idx] = res_dict['voltage_mean']
-            voltage_std[exc_rate_idx,inh_rate_idx,n_run_idx] = res_dict['voltage_std']
-            exc_conductance_mean[exc_rate_idx,inh_rate_idx,n_run_idx] = res_dict['exc_conductance_mean']
-            exc_conductance_std[exc_rate_idx,inh_rate_idx,n_run_idx] = res_dict['exc_conductance_std']
-            inh_conductance_mean[exc_rate_idx,inh_rate_idx,n_run_idx] = res_dict['inh_conductance_mean']
-            inh_conductance_std[exc_rate_idx,inh_rate_idx,n_run_idx] = res_dict['inh_conductance_std']
-
-    print(f"Finished {neuron_name} multiprocessing batch.")
-
+    run_mean = {metric: values.mean(axis=-1) for metric, values in per_run.items()}
     return SingleNeuronResults(
         simulator_name=neuron_sim_params.simulator,
         neuron_name=neuron_name,
         neuron_params=neuron_params,
         exc_rate_grid=exc_rate_grid,
         inh_rate_grid=inh_rate_grid,
-        out_rate_mean=out_rate.mean(axis=2),
-        out_rate_std=out_rate.std(axis=2),
-        adaptation_mean=adaptation_mean.mean(axis=2),
-        adaptation_std=adaptation_std.mean(axis=2),
-        voltage_mean=voltage_mean.mean(axis=2),
-        voltage_std=voltage_std.mean(axis=2),
-        voltage_tau=voltage_tau.mean(axis=2),
-        exc_conductance_mean=exc_conductance_mean.mean(axis=2),
-        exc_conductance_std=exc_conductance_std.mean(axis=2),
-        inh_conductance_mean=inh_conductance_mean.mean(axis=2),
-        inh_conductance_std=inh_conductance_std.mean(axis=2),
+        drive_rate_grid=drive_rate_grid,
+        out_rate_mean=run_mean["out_rate"],
+        out_rate_std=per_run["out_rate"].std(axis=-1),
+        **{metric: run_mean[metric] for metric in GRID_METRICS if metric != "out_rate"},
         input_units = {
+            # PyNN records conductances in [uS]
             "exc_conductance_mean" : "uS",
             "exc_conductance_std" : "uS",
             "inh_conductance_mean" : "uS",
@@ -344,13 +249,44 @@ def simulate_adex_neuron_full_grid_multiprocess(neuron_name: str, neuron_params:
         },
     )
 
+
+def simulate_adex_neuron_full_grid(neuron_name: str, neuron_params: dict, 
+                                exc_rate_grid: np.ndarray, inh_rate_grid: np.ndarray, drive_rate_grid: np.ndarray,
+                                neuron_sim_params: NeuronSimulationConfig) -> SingleNeuronResults:
+    """
+    Simulates a single AdEx neuron across a 3D grid of excitatory, inhibitory and drive input rates (serially).
+    """
+    tasks = _grid_tasks(neuron_name, neuron_params, exc_rate_grid, inh_rate_grid, drive_rate_grid, neuron_sim_params)
+    print(f"Simulating {neuron_name}: {len(tasks)} tasks serially...")
+    return _collect_grid_results(
+        neuron_name, neuron_params, exc_rate_grid, inh_rate_grid, drive_rate_grid, neuron_sim_params,
+        (_adex_neuron_worker(task) for task in tasks),
+    )
+
+
+def simulate_adex_neuron_full_grid_multiprocess(neuron_name: str, neuron_params: dict, 
+                                             exc_rate_grid: np.ndarray, inh_rate_grid: np.ndarray, drive_rate_grid: np.ndarray,
+                                             neuron_sim_params: NeuronSimulationConfig) -> SingleNeuronResults:
+    """Parallel version of `simulate_adex_neuron_full_grid` (un-ordered Pool; results are placed by index)."""
+    tasks = _grid_tasks(neuron_name, neuron_params, exc_rate_grid, inh_rate_grid, drive_rate_grid, neuron_sim_params)
+    print(f"Starting multiprocessing for {neuron_name}: {len(tasks)} tasks across {neuron_sim_params.cpus} CPUs...")
+
+    with mp.Pool(processes=neuron_sim_params.cpus) as pool:
+        results = _collect_grid_results(
+            neuron_name, neuron_params, exc_rate_grid, inh_rate_grid, drive_rate_grid, neuron_sim_params,
+            pool.imap_unordered(_adex_neuron_worker, tasks),
+        )
+
+    print(f"Finished {neuron_name} multiprocessing batch.")
+    return results
+
 # Dealing with the grid
 
-def find_exc_rate_max_for_out_rate_target(neuron_params, neuron_sim_params_dict, inh_rate, out_rate_target, max_input_rate=500.0, rel_tol=0.1, max_iter=100):
+def find_exc_rate_max_for_out_rate_target(neuron_params, neuron_sim_params_dict, inh_rate, out_rate_target, max_input_rate=500.0, rel_tol=0.1, max_iter=100, drive_rate=0.0):
     """Finds the upper boundary nu_e using a fast geometric expansion and rough bisection."""
     # (Same helper to get the rate)
     def get_rate(exc_rate):
-        data = simulate_adex_neuron_single_point(exc_rate, inh_rate, **neuron_params, **neuron_sim_params_dict)
+        data = simulate_adex_neuron_single_point(exc_rate, inh_rate, drive_rate=drive_rate, **neuron_params, **neuron_sim_params_dict)
         spikes = data['spikes']
         avg_window = neuron_sim_params_dict['averaging_window']
         return spikes[spikes > (neuron_sim_params_dict['simulation_time'] - avg_window)].size / (avg_window * 1e-3)
@@ -383,13 +319,14 @@ def find_exc_rate_max_for_out_rate_target(neuron_params, neuron_sim_params_dict,
 
 def _resolve_adaptive_grid_worker(task_data):
     """Worker function to resolve a single column of the adaptive grid in parallel."""
-    (inh_rate_idx, inh_rate, out_rate_targets, out_rate_max, max_input_rate, skip_zeros, n_coarse_points,
+    (inh_rate_idx, inh_rate, drive_rate_idx, drive_rate, out_rate_targets, out_rate_max, max_input_rate, skip_zeros, n_coarse_points,
      single_neuron_params, neuron_sim_params_dict) = task_data
 
     try:
         # Find the maximum excitatory rate needed to reach out_rate_max
         exc_rate_max = find_exc_rate_max_for_out_rate_target(
-            single_neuron_params, neuron_sim_params_dict, inh_rate, out_rate_max, max_input_rate=max_input_rate
+            single_neuron_params, neuron_sim_params_dict, inh_rate, out_rate_max, max_input_rate=max_input_rate,
+            drive_rate=drive_rate,
         )
 
         exc_rate_grid_coarse = np.linspace(0, exc_rate_max, n_coarse_points)
@@ -400,7 +337,7 @@ def _resolve_adaptive_grid_worker(task_data):
         
         # Run coarse simulations
         for exc_rate_idx, exc_rate_test in enumerate(exc_rate_grid_coarse):
-            data = simulate_adex_neuron_single_point(exc_rate_test, inh_rate, **single_neuron_params, **neuron_sim_params_dict)
+            data = simulate_adex_neuron_single_point(exc_rate_test, inh_rate, drive_rate=drive_rate, **single_neuron_params, **neuron_sim_params_dict)
             spikes = data['spikes']
             out_rate_values_coarse[exc_rate_idx] = spikes[spikes > (sim_time - avg_window)].size / (avg_window * 1e-3)
 
@@ -488,11 +425,11 @@ def _resolve_adaptive_grid_worker(task_data):
                 exc_rate_column[:] = 0.0
         
         inh_rate_column = np.full(out_n_points, inh_rate)
-        
-        return inh_rate_idx, exc_rate_column, inh_rate_column
+
+        return inh_rate_idx, drive_rate_idx, exc_rate_column, inh_rate_column
     except Exception as e:
         import traceback
-        err_msg = f"Error in adaptive grid worker for inh_rate={inh_rate:.2f} Hz: {type(e).__name__}: {e}\n{traceback.format_exc()}"
+        err_msg = f"Error in adaptive grid worker for inh_rate={inh_rate:.2f} Hz, drive_rate={drive_rate:.2f} Hz: {type(e).__name__}: {e}\n{traceback.format_exc()}"
         print(err_msg, flush=True)
         raise RuntimeError(err_msg) from None
 
@@ -513,12 +450,9 @@ def resolve_adaptive_grid(neuron_name, neuron_params, neuron_sim_params):
         Configuration object containing grid specifications and other simulation parameters.
     Returns
     -------
-    exc_rate_grid : np.ndarray
-        2D array of excitatory input rates corresponding to the grid.
-        indexing (exc_rate, inh_rate) with shape (n_exc_rates, n_inh_rates)
-    inh_rate_grid : np.ndarray
-        2D array of inhibitory input rates corresponding to the grid.
-        indexing (exc_rate, inh_rate) with shape (n_exc_rates, n_inh_rates)
+    exc_rate_grid, inh_rate_grid, drive_rate_grid : np.ndarray
+        3D arrays indexed (exc_rate, inh_rate, drive_rate), shape (n_out_rates, n_inh_rates, n_drive_rates).
+        The adaptive exc axis is resolved separately for every (inh_rate, drive_rate) pair.
     """
     grid_params = getattr(neuron_sim_params.grid, neuron_name)
 
@@ -548,6 +482,8 @@ def resolve_adaptive_grid(neuron_name, neuron_params, neuron_sim_params):
 
     inh_rates = np.linspace(inh_rate_min, inh_rate_max, inh_n_points)
     out_rate_targets = np.linspace(out_rate_min, out_rate_max, out_n_points)
+    drive_rate_min, drive_rate_max, drive_n_points = grid_params.drive_rate_grid
+    drive_rates = np.linspace(drive_rate_min, drive_rate_max, int(drive_n_points))
 
 
     # NOTE: once implementing general adaptive grid, this part needs to be refactored
@@ -556,9 +492,10 @@ def resolve_adaptive_grid(neuron_name, neuron_params, neuron_sim_params):
     # be careful with the interpolation and the way we fill the grids, etc.
     # I guess I could keep this and then just transpose or reorder based on the neuron types
 
-    exc_rate_grid = np.zeros((out_n_points, inh_n_points))
-    inh_rate_grid = np.zeros((out_n_points, inh_n_points))
-    
+    exc_rate_grid = np.zeros((out_n_points, inh_n_points, drive_rates.size))
+    inh_rate_grid = np.zeros((out_n_points, inh_n_points, drive_rates.size))
+    drive_rate_grid = np.broadcast_to(drive_rates, exc_rate_grid.shape).copy()
+
     n_coarse_points = grid_params.n_coarse_interpolation_points
     cpus = neuron_sim_params.cpus
     max_input_rate = grid_params.max_input_rate
@@ -574,28 +511,30 @@ def resolve_adaptive_grid(neuron_name, neuron_params, neuron_sim_params):
     print(f"Resolving adaptive grid for {neuron_name} using {cpus} CPUs...")
     # Build tasks
     tasks = []
-    for inh_rate_idx, inh_rate in enumerate(inh_rates):
-        tasks.append((
-            inh_rate_idx, inh_rate, out_rate_targets, out_rate_max, max_input_rate, skip_zeros, n_coarse_points,
-            neuron_params, neuron_sim_params_dict
-        ))
+    for drive_rate_idx, drive_rate in enumerate(drive_rates):
+        for inh_rate_idx, inh_rate in enumerate(inh_rates):
+            tasks.append((
+                inh_rate_idx, inh_rate, drive_rate_idx, drive_rate,
+                out_rate_targets, out_rate_max, max_input_rate, skip_zeros, n_coarse_points,
+                neuron_params, neuron_sim_params_dict
+            ))
 
 
     with mp.Pool(processes=cpus) as pool:
         for result in pool.imap_unordered(_resolve_adaptive_grid_worker, tasks):
-            inh_rate_idx, exc_rate_col, inh_rate_col = result
-            exc_rate_grid[:, inh_rate_idx] = exc_rate_col
-            inh_rate_grid[:, inh_rate_idx] = inh_rate_col
-            print(f"    Finished interpolation for inh_rate = {inh_rate_col[0]:.2f} Hz")
+            inh_rate_idx, drive_rate_idx, exc_rate_col, inh_rate_col = result
+            exc_rate_grid[:, inh_rate_idx, drive_rate_idx] = exc_rate_col
+            inh_rate_grid[:, inh_rate_idx, drive_rate_idx] = inh_rate_col
+            print(f"    Finished interpolation for inh_rate = {inh_rate_col[0]:.2f} Hz, drive_rate = {drive_rates[drive_rate_idx]:.2f} Hz")
 
-    return exc_rate_grid, inh_rate_grid
+    return exc_rate_grid, inh_rate_grid, drive_rate_grid
 
 class PyNNSimulator(BaseNeuronSimulator):
     """PyNN implementation of the single neuron simulator."""
 
 
-    def resolve_grid(self, neuron_name: str, neuron_params: dict, neuron_sim_params: NeuronSimulationConfig) -> tuple[np.ndarray, np.ndarray]:
-        """Resolves the 2D grid for a specific neuron based on the configuration.
+    def resolve_grid(self, neuron_name: str, neuron_params: dict, neuron_sim_params: NeuronSimulationConfig) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """Resolves the 3D input grid for a specific neuron based on the configuration.
         
         Parameters
         ----------
@@ -609,41 +548,33 @@ class PyNNSimulator(BaseNeuronSimulator):
 
         Returns
         -------
-        exc_rate_grid : np.ndarray
-            2D array of excitatory input rates corresponding to the grid.
-            indexing (exc_rate, inh_rate) with shape (n_exc_rates, n_inh_rates)
-        inh_rate_grid : np.ndarray
-            2D array of inhibitory input rates corresponding to the grid.
-            indexing (exc_rate, inh_rate) with shape (n_exc_rates, n_inh_rates)
+        exc_rate_grid, inh_rate_grid, drive_rate_grid : np.ndarray
+            3D arrays of the input rates [Hz], indexed (exc_rate, inh_rate, drive_rate).
         """
         grid_params = getattr(neuron_sim_params.grid, neuron_name)
         
         match grid_params.grid_type:
             case "linear":
-                exc_rate_min, exc_rate_max, exc_n_points = grid_params.exc_rate_grid
-                inh_rate_min, inh_rate_max, inh_n_points = grid_params.inh_rate_grid
-
-                exc_rate_grid = np.linspace(exc_rate_min, exc_rate_max, int(exc_n_points))
-                inh_rate_grid = np.linspace(inh_rate_min, inh_rate_max, int(inh_n_points))
-
-                exc_rate_grid, inh_rate_grid = np.meshgrid(exc_rate_grid, inh_rate_grid, sparse=False, indexing='ij')
+                axes = [
+                    np.linspace(rate_min, rate_max, int(n_points))
+                    for rate_min, rate_max, n_points in (grid_params.exc_rate_grid, grid_params.inh_rate_grid, grid_params.drive_rate_grid)
+                ]
+                exc_rate_grid, inh_rate_grid, drive_rate_grid = np.meshgrid(*axes, sparse=False, indexing='ij')
                 
             case "custom":
-                # NOTE: custom grid is automatically loaded and converted into ndarray
-                # based on the config file, so we just need to check that it is valid
+                # NOTE: the custom grids are loaded and validated (3D, same shape) by the config
                 exc_rate_grid = grid_params.exc_rate_grid
                 inh_rate_grid = grid_params.inh_rate_grid
-                if exc_rate_grid.shape != inh_rate_grid.shape:
-                    raise ValueError("Custom grid exc_rate_grid and inh_rate_grid must have the same shape")
+                drive_rate_grid = grid_params.drive_rate_grid
  
             case "adaptive":
                 print(f"Resolving adaptive grid for {neuron_name}...")
-                exc_rate_grid, inh_rate_grid = resolve_adaptive_grid(neuron_name, neuron_params, neuron_sim_params)
+                exc_rate_grid, inh_rate_grid, drive_rate_grid = resolve_adaptive_grid(neuron_name, neuron_params, neuron_sim_params)
 
             case _:
                 raise ValueError(f"Unknown grid type: {grid_params.grid_type}")
 
-        return exc_rate_grid, inh_rate_grid
+        return exc_rate_grid, inh_rate_grid, drive_rate_grid
 
 
     def simulate(self, network_params: BiologicalParameters, neuron_sim_params: NeuronSimulationConfig) -> dict:
@@ -695,15 +626,29 @@ class PyNNSimulator(BaseNeuronSimulator):
                 },
             }
 
-            exc_rate_grid, inh_rate_grid = self.resolve_grid(neuron_name, legacy_neuron_params, neuron_sim_params)
+            # Drive input (used for drive_rate > 0); its synapses and number of sources are as in the network
+            # NOTE: the drive population is still identified by name (see todo.md, hard-coded population names)
+            drive_conn = network_params.network.connectivity[neuron_name].get("drive_neuron")
+            if drive_conn is not None:
+                drive_synapse_mapping = NEST_TSODYKS_SYNAPSE_MAPPING if drive_conn.syn_type == "tsodyks_synapse" else NEST_STATIC_SYNAPSE_MAPPING
+                legacy_neuron_params['drive_synapses'] = {
+                    'syn_type' : drive_conn.syn_type,
+                    'syn_params' : translate_params(drive_conn.syn_params, drive_synapse_mapping),
+                    'number' : drive_conn.conn_num,
+                    'receptor_type' : network_params.neurons["drive_neuron"].neuron_type,
+                }
+
+            exc_rate_grid, inh_rate_grid, drive_rate_grid = self.resolve_grid(neuron_name, legacy_neuron_params, neuron_sim_params)
+            if drive_conn is None and np.any(drive_rate_grid > 0):
+                raise ValueError(f"The grid of {neuron_name} has drive rates > 0, but {neuron_name} has no drive_neuron connection.")
 
             if neuron_sim_params.cpus > 1:
                 neuron_result = simulate_adex_neuron_full_grid_multiprocess(
-                    neuron_name, legacy_neuron_params, exc_rate_grid, inh_rate_grid, neuron_sim_params
+                    neuron_name, legacy_neuron_params, exc_rate_grid, inh_rate_grid, drive_rate_grid, neuron_sim_params
                 )
             else:
                 neuron_result = simulate_adex_neuron_full_grid(
-                    neuron_name, legacy_neuron_params, exc_rate_grid, inh_rate_grid, neuron_sim_params
+                    neuron_name, legacy_neuron_params, exc_rate_grid, inh_rate_grid, drive_rate_grid, neuron_sim_params
                 )
 
             results[neuron_name] = neuron_result

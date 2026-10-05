@@ -132,13 +132,18 @@ class BaseSingleNeuronPlot(BasePlot, ABC):
     DEFAULT_PARAMS = {
         **BasePlot.DEFAULT_PARAMS,
         'neuron_name' : None,
+        'drive_rate' : None,  # drive rate [Hz] of the (exc, inh) slice to plot; None = first drive value of the grid
     }
+
+    def get_neuron_results(self, neuron_results: Dict[str, BaseSingleNeuronResults]) -> BaseSingleNeuronResults:
+        """The selected neuron's results as a 2D (exc_rate, inh_rate) slice at `drive_rate`."""
+        return neuron_results[self.full_params['neuron_name']].at_drive(self.full_params['drive_rate'])
 
     @abstractmethod
     def _draw(
-            self, 
-            ax, 
-            neuron_results: Dict[str, BaseSingleNeuronResults], 
+            self,
+            ax,
+            neuron_results: Dict[str, BaseSingleNeuronResults],
             ) -> None:
         pass
 
@@ -151,7 +156,12 @@ class BaseTransferFunctionPlot(BasePlot, ABC):
         'labels' : None,
         'linestyles' : None,
         'neuron_name' : None,
+        'drive_rate' : None,  # drive rate [Hz] of the (exc, inh) slice to plot; None = first drive value of the grid
     }
+
+    def get_neuron_results(self, neuron_results: Dict[str, BaseSingleNeuronResults]) -> BaseSingleNeuronResults:
+        """The selected neuron's results as a 2D (exc_rate, inh_rate) slice at `drive_rate`."""
+        return neuron_results[self.full_params['neuron_name']].at_drive(self.full_params['drive_rate'])
 
     @abstractmethod
     def _draw(

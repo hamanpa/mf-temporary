@@ -52,26 +52,46 @@ class NeuroPSICustomTF(BaseTransferFunction):
         self.g_L = network_params.neurons[neuron_name].neuron_params.g_L
 
     def required_inputs(self) -> list[str]:
-        """Dynamically declares required inputs based on the configuration."""
+        """
+        Dynamically declares required inputs based on the configuration.
+        `drive_rate` [Hz] is an optional input (omitted or 0: no drive), see `evaluate`.
+        """
         inputs = ["exc_rate", "inh_rate"]
         if self.tf_params.tf_model.adaptation:
             inputs.append("adaptation")
         return inputs
 
+    def _input_rates(self, exc_rate, inh_rate, drive_rate=None) -> dict:
+        """
+        Input rates [Hz] per source population for the membrane potential fluctuations.
+        The drive is a separate source (its own synapses and number of sources, see `connectivity`);
+        it is only included when some drive rate is > 0, so drive-free inputs are evaluated exactly as before.
+        """
+        rates = {
+            self.network_params.exc_neuron_name: exc_rate,
+            self.network_params.inh_neuron_name: inh_rate,
+        }
+        if drive_rate is not None and np.any(np.asarray(drive_rate) > 0):
+            # NOTE: the drive population is still identified by name (see todo.md, hard-coded population names)
+            if "drive_neuron" not in self.mpf.synapse_params:
+                raise ValueError(f"drive_rate > 0, but {self.neuron_name} has no drive_neuron connection.")
+            # A writable float array of the input shape (MembranePotentialFluctuations may modify its inputs)
+            rates["drive_neuron"] = np.array(np.broadcast_to(drive_rate, np.shape(exc_rate)), dtype=float)
+        return rates
+
     def evaluate(self, **kwargs) -> np.ndarray:
         """
-        The core mapping function: F(v_e, v_i, [w]) -> v_out.
+        The core mapping function: F(v_e, v_i, [w], [v_drive]) -> v_out.
+        Optional `drive_rate` [Hz]: rate of each drive source (scalar or array like `exc_rate`).
         """
         exc_rate = kwargs["exc_rate"]
         inh_rate = kwargs["inh_rate"]
         adaptation = kwargs.get("adaptation", None)
+        drive_rate = kwargs.get("drive_rate", None)
 
         # 1. Compute theoretical subthreshold fluctuations
         mu_V, sigma_V, tau_V, tau_VN, mu_G = self.mpf.evaluate(
-            rates={
-                "exc_neuron": exc_rate,
-                "inh_neuron": inh_rate
-            },
+            rates=self._input_rates(exc_rate, inh_rate, drive_rate),
             adaptation=adaptation
         )
 
@@ -155,14 +175,12 @@ class NeuroPSICustomTF(BaseTransferFunction):
         out_rate_min = self.tf_params.out_rate_min
         out_rate_max = self.tf_params.out_rate_max
 
-        # 1. Extract and flatten SNN data
+        # 1. Extract and flatten SNN data (grids are indexed (exc, inh, drive); all drive values are fitted together)
         exc_rates = single_neuron_results.exc_rate_grid("Hz").flatten()
         inh_rates = single_neuron_results.inh_rate_grid("Hz").flatten()
+        drive_rates = single_neuron_results.drive_rate_grid("Hz").flatten()
         out_rates = single_neuron_results.out_rate_mean("Hz").flatten()
-        rates = {
-            "exc_neuron" : exc_rates,
-            "inh_neuron" : inh_rates
-        }
+        rates = self._input_rates(exc_rates, inh_rates, drive_rates)
 
         if tf_model_params.adaptation:
             adaptation = single_neuron_results.adaptation_mean("nA").flatten()
@@ -228,8 +246,9 @@ class NeuroPSICustomTF(BaseTransferFunction):
             self.fitted_params = array_to_dict(x)
             
             out_rate_pred = self.evaluate(
-                exc_rate=exc_rates[mask2], 
-                inh_rate=inh_rates[mask2], 
+                exc_rate=exc_rates[mask2],
+                inh_rate=inh_rates[mask2],
+                drive_rate=drive_rates[mask2],
                 adaptation=adaptation[mask2] if adaptation is not None else None
             )
             return np.mean((out_rates[mask2] - out_rate_pred) ** 2)

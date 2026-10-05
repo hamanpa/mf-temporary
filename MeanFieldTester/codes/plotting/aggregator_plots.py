@@ -8,7 +8,22 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 from .base import BasePlot, EXC_COLOR, INH_COLOR, LINESTYLES
-from ..data_structures.neuron_simulation import SingleNeuronResults
+from ..data_structures.neuron_simulation import SingleNeuronResults, drive_index
+
+
+def load_neuron_grid_slice(aggregator, sim_id: str, model: str, stim_name: str, variables: List[str], drive_rate: float | None = None) -> Dict[str, np.ndarray]:
+    """
+    Loads single-neuron grid arrays of a run as 2D (exc_rate, inh_rate) slices at `drive_rate` [Hz]
+    (None: the first drive value), plus the "drive_rate_grid" slice itself.
+    Files saved before the drive axis existed are 2D (drive = 0) and returned as they are, without "drive_rate_grid".
+    """
+    arrays = {variable: aggregator._load_variable(sim_id, model, stim_name, variable) for variable in variables}
+    try:
+        arrays["drive_rate_grid"] = aggregator._load_variable(sim_id, model, stim_name, "drive_rate_grid")
+    except KeyError:
+        return arrays  # older 2D data (drive = 0)
+    index = drive_index(arrays["drive_rate_grid"], drive_rate)
+    return {variable: values[..., index] for variable, values in arrays.items()}
 from ..network_params.translators import get_unit_multiplier
 from ..transfer_function import get_transfer_function
 from ..transfer_function.base import BaseTransferFunction
@@ -309,6 +324,7 @@ class AggregatorHeatmapPlotter(BaseAggregatorPlot):
         "cmap": "viridis",
         "extend": "max",
         "colorbar_label": r"$\nu_{out}$",
+        "drive_rate": None,  # drive rate [Hz] of the (exc, inh) slice; None = first drive value of the grid
     }
 
     def __init__(
@@ -329,10 +345,12 @@ class AggregatorHeatmapPlotter(BaseAggregatorPlot):
         var_name = self.variables[0] if self.variables else "out_rate_mean"
 
         try:
-            exc_grid = aggregator._load_variable(sim_id, self.model, self.stim_name, "exc_rate_grid")
-            inh_grid = aggregator._load_variable(sim_id, self.model, self.stim_name, "inh_rate_grid")
-            data = aggregator._load_variable(sim_id, self.model, self.stim_name, var_name)
-        except Exception:
+            arrays = load_neuron_grid_slice(
+                aggregator, sim_id, self.model, self.stim_name,
+                ["exc_rate_grid", "inh_rate_grid", var_name], self.full_params["drive_rate"],
+            )
+            exc_grid, inh_grid, data = arrays["exc_rate_grid"], arrays["inh_rate_grid"], arrays[var_name]
+        except (FileNotFoundError, KeyError):
             ax.text(0.5, 0.5, f"No Data\n({sim_id})", ha="center", va="center", transform=ax.transAxes, color="gray")
             return None
 
@@ -459,6 +477,7 @@ class AggregatorNeuronIOCurvePlotter(BaseAggregatorPlot):
         "tf_funcs": None,
         "tf_labels": None,
         "tf_linestyles": LINESTYLES,
+        "drive_rate": None,  # drive rate [Hz] of the (exc, inh) slice; None = first drive value of the grid
     }
 
     def __init__(
@@ -511,7 +530,7 @@ class AggregatorNeuronIOCurvePlotter(BaseAggregatorPlot):
 
     def _load_neuron_results(self, aggregator, sim_id: str) -> SingleNeuronResults:
         fields = [
-            "exc_rate_grid", "inh_rate_grid", "out_rate_mean", "out_rate_std",
+            "exc_rate_grid", "inh_rate_grid", "drive_rate_grid", "out_rate_mean", "out_rate_std",
             "adaptation_mean", "adaptation_std", "voltage_mean", "voltage_std",
             "voltage_tau", "exc_conductance_mean", "exc_conductance_std",
             "inh_conductance_mean", "inh_conductance_std",
@@ -570,14 +589,14 @@ class AggregatorNeuronIOCurvePlotter(BaseAggregatorPlot):
         if aggregator is None or sim_id is None:
             return None
 
+        variables = ["exc_rate_grid", "inh_rate_grid", "out_rate_mean"] + (["out_rate_std"] if self.full_params["yerrorbar"] else [])
         try:
-            exc_grid = aggregator._load_variable(sim_id, self.model, self.stim_name, "exc_rate_grid")
-            inh_grid = aggregator._load_variable(sim_id, self.model, self.stim_name, "inh_rate_grid")
-            out_mean = aggregator._load_variable(sim_id, self.model, self.stim_name, "out_rate_mean")
-            out_std = aggregator._load_variable(sim_id, self.model, self.stim_name, "out_rate_std") if self.full_params["yerrorbar"] else None
-        except Exception:
+            arrays = load_neuron_grid_slice(aggregator, sim_id, self.model, self.stim_name, variables, self.full_params["drive_rate"])
+        except (FileNotFoundError, KeyError):
             ax.text(0.5, 0.5, f"No Data\n({sim_id})", ha="center", va="center", transform=ax.transAxes, color="gray")
             return None
+        exc_grid, inh_grid, out_mean = arrays["exc_rate_grid"], arrays["inh_rate_grid"], arrays["out_rate_mean"]
+        out_std = arrays.get("out_rate_std")
 
         inh_values = np.asarray(inh_grid[0, :] if inh_grid.ndim == 2 else inh_grid)
         requested_indices = self.full_params["inh_rate_indices"]
@@ -648,9 +667,9 @@ class AggregatorNeuronIOCurvePlotter(BaseAggregatorPlot):
                 adaptation = None
                 if any("adaptation" in tf.required_inputs() for tf in fit_funcs):
                     try:
-                        adaptation = aggregator._load_variable(
-                            sim_id, self.model, self.stim_name, "adaptation_mean"
-                        )[:, nu_i_idx]
+                        adaptation = load_neuron_grid_slice(
+                            aggregator, sim_id, self.model, self.stim_name, ["adaptation_mean"], self.full_params["drive_rate"]
+                        )["adaptation_mean"][:, nu_i_idx]
                     except (FileNotFoundError, KeyError):
                         raise ValueError(
                             "Transfer-function fits require 'adaptation_mean', "
@@ -658,9 +677,11 @@ class AggregatorNeuronIOCurvePlotter(BaseAggregatorPlot):
                         ) from None
 
                 for tf, linestyle in zip(fit_funcs, fit_linestyles, strict=True):
+                    drive_grid = arrays.get("drive_rate_grid")
                     nu_out_fit = tf(
                         exc_rate=exc_grid[:, nu_i_idx],
                         inh_rate=inh_grid[:, nu_i_idx],
+                        drive_rate=None if drive_grid is None else drive_grid[:, nu_i_idx],  # the plotted drive slice
                         adaptation=adaptation,
                     ) * get_unit_multiplier("Hz", self.full_params["y_unit"])
                     ax.plot(

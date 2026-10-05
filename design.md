@@ -158,16 +158,22 @@ Sweeps add `inspected_params.yaml` (§7.1).
 - **Persistence:** `BaseResults.save()` pickles. The sweep path saves plain `.npz` instead (§7.1).
 
 ### 6.2 Single neuron and TF fitting
-- **The neuron grid** is 2D, indexed (exc_rate, inh_rate). It can be:
+- **The neuron grid** is 3D, indexed (exc_rate, inh_rate, drive_rate).
+  - The drive axis feeds the neuron through its own Poisson population: `conn_num` sources of the target's `drive_neuron` connection, at `drive_rate` each, with the drive's synapse parameters. The "exc" input reuses the ee/ie projection, which may have STP, while the drive does not, so the two must be separate inputs.
+  - `drive_rate_grid` is optional (`[min, max, n]`, default `[0, 0, 1]` meaning no drive) for linear and adaptive grids, and explicit for custom grids.
+  - Its conductance is recorded in `gsyn_exc` together with the exc input.
+  - `SingleNeuronResults` gives 2D input (older 2D arrays or pickles) a drive = 0 axis. `at_drive(drive_rate)` returns a 2D (exc, inh) slice; plots use it, selecting the first drive value by default and raising on unknown values.
+  - Grid types:
   - `linear` (meshgrid);
-  - `custom` (array or `.npy`);
-  - `adaptive`: for each inh rate, choose exc rates so the output rates land on `out_rate_grid`. The upper exc bound is found by doubling and bisection. A coarse scan is then simulated, and PCHIP interpolation gives the exc rates. Only an adaptive *exc* axis is implemented.
+  - `custom` (3D arrays or `.npy`, same shape);
+  - `adaptive`: for each (inh, drive) pair, choose exc rates so the output rates land on `out_rate_grid`. The upper exc bound is found by doubling and bisection. A coarse scan is then simulated, and PCHIP interpolation gives the exc rates. Only an adaptive *exc* axis is implemented.
 - **Multiprocessing:** the PyNN neuron simulator runs with `cpus > 1` as a process pool. Parameters are passed as plain dicts (`translate_params` output) so they pickle.
 - **`NeuroPSICustomTF`** fits in two steps:
   1. Fit V_eff with SLSQP against the V_eff obtained by inverting erfc on the data.
   2. Fit the full TF output rate with Nelder–Mead.
 
   Step 1 uses only points with `out_rate_min < out_rate < out_rate_max`. Step 2 uses points with `out_rate < out_rate_max`.
+- **Drive:** all drive values of the grid are fitted together. The drive enters `MembranePotentialFluctuations` as its own source (`drive_neuron` connection), so μV, σV and τV include it, just as in the TVB models (`K_ed`, `Q_ed`). `evaluate(..., drive_rate=...)` takes it as an optional input.
 - **Flags:** `square_terms`, `log_term`, `adaptation` (pass the measured adaptation to μV), and `static_synapses` (ignore STP when computing effective weights).
 - **Expansion:** the polynomial is expanded around `expansion_point` and scaled by `expansion_norm`.
 - **STP in the TF:** handled through effective weights (`utils.stp_helpers.calculate_effective_synapse_weight`, the steady-state u·x at the presynaptic rate).

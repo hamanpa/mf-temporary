@@ -28,7 +28,7 @@ class SingleNeuronActivityPlot(BaseSingleNeuronPlot):
             ax, 
             neuron_results: Dict[str, BaseSingleNeuronResults], 
             ) -> None:
-        single_neuron_result = neuron_results[self.full_params['neuron_name']]
+        single_neuron_result = self.get_neuron_results(neuron_results)
         plt.gca().set_prop_cycle(None)
 
         x_unit = self.full_params.get('x_unit', None)
@@ -78,7 +78,7 @@ class SingleNeuronAdaptationPlot(BaseSingleNeuronPlot):
             ax, 
             neuron_results: Dict[str, BaseSingleNeuronResults], 
             ) -> None:
-        single_neuron_result = neuron_results[self.full_params['neuron_name']]
+        single_neuron_result = self.get_neuron_results(neuron_results)
         plt.gca().set_prop_cycle(None)
 
         x_unit = self.full_params.get('x_unit', None)
@@ -127,7 +127,7 @@ class SingleNeuronAdaptationHeatmapPlot(BaseSingleNeuronPlot):
             ax, 
             neuron_results: Dict[str, BaseSingleNeuronResults], 
             ) -> None:
-        single_neuron_result = neuron_results[self.full_params['neuron_name']]
+        single_neuron_result = self.get_neuron_results(neuron_results)
 
         x_unit = self.full_params.get('x_unit', None)
         y_unit = self.full_params.get('y_unit', None)
@@ -168,7 +168,7 @@ class SingleNeuronActivityHeatmapPlot(BaseSingleNeuronPlot):
             ax, 
             neuron_results: Dict[str, BaseSingleNeuronResults], 
             ) -> None:
-        single_neuron_result = neuron_results[self.full_params['neuron_name']]
+        single_neuron_result = self.get_neuron_results(neuron_results)
 
         x_unit = self.full_params.get('x_unit', None)
         y_unit = self.full_params.get('y_unit', None)
