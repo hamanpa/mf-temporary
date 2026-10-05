@@ -145,56 +145,99 @@ def spike_counts(spikes, start_time=0, end_time=None):
     spike_counts = np.array([((spike_train >= start_time) & (spike_train <= end_time)).sum() for spike_train in spikes])
     return spike_counts
 
-def reconstruct_stp_dynamics(spike_times:list[list], U, tau_rec, tau_fac, times: np.ndarray):
-    """
-    Reconstructs the Tsodyks-Markram variables u and x offline.
-    """
-    
-    neurons_num=len(spike_times)
+def _decay(h, tau: float):
+    """exp(-h / tau); tau == 0 means instantaneous decay (returns 0)."""
+    h = np.asarray(h, dtype=float)
+    if tau == 0:
+        return np.zeros_like(h)
+    return np.exp(-h / tau)
 
-    u_all = np.zeros((times.size, neurons_num))
-    x_all = np.ones((times.size, neurons_num))
 
-    
+def _tsodyks_propagators(h, tau_rec: float, tau_fac: float, tau_psc: float):
+    """Exact propagators of NEST's `tsodyks_synapse` over an interval h (same formulas as NEST)."""
+    Puu = _decay(h, tau_fac)
+    Pyy = _decay(h, tau_psc)
+    Pzz = _decay(h, tau_rec)
+    Pxy = ((Pzz - 1.0) * tau_rec - (Pyy - 1.0) * tau_psc) / (tau_psc - tau_rec)
+    Pxz = 1.0 - Pzz
+    return Puu, Pyy, Pxy, Pxz
+
+
+def reconstruct_stp_dynamics(spike_times: list, U: float, tau_rec: float, tau_fac: float, tau_psc: float, times: np.ndarray):
+    """
+    Reconstructs offline the state of NEST's `tsodyks_synapse` driven by presynaptic spike trains.
+
+    Follows NEST's update exactly (Tsodyks et al. 1998 three-state model; resources x -> y -> z -> x).
+    At each spike, after propagating the state over the inter-spike interval h:
+
+        z = 1 - x - y
+        u <- u * exp(-h/tau_fac)          (u decays to 0; tau_fac = 0 means u = 0 before the jump)
+        x <- x + Pxy*y + Pxz*z
+        y <- y * exp(-h/tau_psc)
+        u <- u + U*(1 - u)
+        x <- x - u*x ;  y <- y + u*x
+
+    The initial state is u = 0, x = 1, y = 0 (NEST defaults, last spike at t = 0).
+
+    Parameters
+    ----------
+    spike_times : list of array-like
+        Presynaptic spike times [ms], one array per presynaptic neuron.
+    U, tau_rec, tau_fac, tau_psc : float
+        `tsodyks_synapse` parameters (times in [ms]); tau_rec must differ from tau_psc (as in NEST).
+    times : np.ndarray
+        Time grid [ms] on which the state is returned.
+
+    Returns
+    -------
+    u, x, y : np.ndarray
+        Arrays of shape (len(times), len(spike_times)):
+        - u(t): utilisation a spike at time t would use, u_dec(t) + U*(1 - u_dec(t)), with u_dec
+          decaying from the last post-spike value. u(t)*x(t)*weight is the efficacy of a spike at t,
+          which corresponds to the MF models' X * u.
+        - x(t): available resources; y(t): active (released) resources.
+    """
+    if tau_rec == tau_psc:
+        raise ValueError("tsodyks_synapse requires tau_rec != tau_psc (singular propagator, as in NEST).")
+
+    times = np.asarray(times, dtype=float)
+    neurons_num = len(spike_times)
+    u_all = np.empty((times.size, neurons_num))
+    x_all = np.empty((times.size, neurons_num))
+    y_all = np.empty((times.size, neurons_num))
+
     for neuron_idx, neuron_spike_times in enumerate(spike_times):
-        n_spikes = len(neuron_spike_times)
-        if n_spikes == 0:
-            u_all[:, neuron_idx] = U
-            x_all[:, neuron_idx] = 1.0
-            continue
+        neuron_spike_times = np.asarray(neuron_spike_times, dtype=float)
+        n_spikes = neuron_spike_times.size
 
-        t_spikes = np.insert(neuron_spike_times, 0, 0.0)
-        u_spikes = np.zeros(n_spikes + 1)
-        x_spikes = np.ones(n_spikes + 1)
-        u_spikes[0] = U
-        x_spikes[0] = 1.0
-        
+        # Post-spike states; index 0 is the initial state at t = 0.
+        t_states = np.insert(neuron_spike_times, 0, 0.0)
+        u_states = np.zeros(n_spikes + 1)
+        x_states = np.ones(n_spikes + 1)
+        y_states = np.zeros(n_spikes + 1)
 
-        # First computes the values of u and x at each spike time, 
-        # then maps them to the continuous time grid
         for k in range(1, n_spikes + 1):
-            dt_spike = t_spikes[k] - t_spikes[k-1]
-            
-            u_pre = U - (U - u_spikes[k-1]) * np.exp(-dt_spike / tau_fac) if tau_fac > 0 else U
-            x_pre = 1.0 - (1.0 - x_spikes[k-1]) * np.exp(-dt_spike / tau_rec) if tau_rec > 0 else 1.0
-            
-            u_post = u_pre + U * (1.0 - u_pre)
-            x_post = x_pre - u_post * x_pre
-            
-            u_spikes[k] = u_post
-            x_spikes[k] = x_post
-            
-        idx = np.searchsorted(t_spikes, times, side='right') - 1
-        delta_t = times - t_spikes[idx]
-        
-        if tau_fac > 0:
-            u_all[:, neuron_idx] = U - (U - u_spikes[idx]) * np.exp(-delta_t / tau_fac)
-        else:
-            u_all[:, neuron_idx] = U
-            
-        if tau_rec > 0:
-            x_all[:, neuron_idx] = 1.0 - (1.0 - x_spikes[idx]) * np.exp(-delta_t / tau_rec)
-        else:
-            x_all[:, neuron_idx] = 1.0
+            h = t_states[k] - t_states[k - 1]
+            Puu, Pyy, Pxy, Pxz = _tsodyks_propagators(h, tau_rec, tau_fac, tau_psc)
+            u, x, y = u_states[k - 1], x_states[k - 1], y_states[k - 1]
+            z = 1.0 - x - y
 
-    return u_all, x_all
+            u = u * Puu
+            x = x + Pxy * y + Pxz * z
+            y = y * Pyy
+            u = u + U * (1.0 - u)
+            delta = u * x
+            u_states[k], x_states[k], y_states[k] = u, x - delta, y + delta
+
+        # Propagate the last post-spike state to every point of the time grid.
+        idx = np.clip(np.searchsorted(t_states, times, side="right") - 1, 0, None)
+        h = times - t_states[idx]
+        Puu, Pyy, Pxy, Pxz = _tsodyks_propagators(h, tau_rec, tau_fac, tau_psc)
+        x_last, y_last = x_states[idx], y_states[idx]
+
+        u_decayed = u_states[idx] * Puu
+        u_all[:, neuron_idx] = u_decayed + U * (1.0 - u_decayed)
+        x_all[:, neuron_idx] = x_last + Pxy * y_last + Pxz * (1.0 - x_last - y_last)
+        y_all[:, neuron_idx] = y_last * Pyy
+
+    return u_all, x_all, y_all

@@ -22,11 +22,9 @@ from codes.controller.workflows import (run_basic_workflow,
                                          run_snn_simulation_workflow,
                                          run_unified_batch_parallel)
 
-from codes.controller.config import load_workflow_config
-from codes.stimuli.loader import load_stimuli_config
-from codes.network_params.loader import load_network_parameters
-from codes.network_params.models import StaticSynapseParams
-from codes.controller.inspectors import inject_pydantic_param, ParameterInspector, ModelSummaryExtractor
+from codes.controller.run_params import materialize_run_params, save_run_params
+from codes.controller.inspectors import ParameterInspector, ModelSummaryExtractor
+from codes.utils.file_helpers import encode_npz_units, NPZ_UNITS_KEY
 import codes.plotting.hooks as plt_hooks
 
 DELIMETER = ';'
@@ -46,64 +44,6 @@ def parse_val(val_str: str):
         return val_float
     except ValueError:
         return val_str
-
-
-def convert_zero_recovery_connections(network_params):
-    """Convert zero-recovery Tsodyks connections to equivalent static synapses."""
-    for target_name, sources in network_params.network.connectivity.items():
-        for source_name, connection in sources.items():
-            if connection.syn_type != "tsodyks_synapse":
-                continue
-
-            syn_params = connection.syn_params
-            if float(syn_params.tau_rec) != 0.0:
-                continue
-
-            connection.syn_type = "static_synapse"
-            connection.syn_params = StaticSynapseParams(
-                weight=syn_params.weight * syn_params.U,
-                delay=syn_params.delay,
-            )
-            print(
-                f"Converted connection '{source_name} -> {target_name}' to "
-                f"static_synapse (weight={syn_params.weight * syn_params.U:.4f}, "
-                f"delay={syn_params.delay:.2f}) because tau_rec = 0."
-            )
-
-def apply_parameter_update(network_params, sim_params, stimuli_config, param_path: str, value):
-    """
-    Updates configuration objects based on dot-separated parameter path.
-    Supported prefixes:
-    - 'network.': updates network_params
-    - 'workflow.' or 'sim.': updates sim_params
-    - 'stimulus.' or 'stimuli.': updates stimuli_config
-    """
-    if param_path.startswith("network."):
-        path = param_path[len("network."):]
-        network_params = inject_pydantic_param(network_params, path, value)
-    elif param_path.startswith("workflow."):
-        path = param_path[len("workflow."):]
-        sim_params = inject_pydantic_param(sim_params, path, value)
-    elif param_path.startswith("sim."):
-        path = param_path[len("sim."):]
-        sim_params = inject_pydantic_param(sim_params, path, value)
-    elif param_path.startswith("stimulus.") or param_path.startswith("stimuli."):
-        prefix = "stimulus." if param_path.startswith("stimulus.") else "stimuli."
-        path = param_path[len(prefix):]
-        # If path starts with stimulus key e.g. 'SpontActivity.drive_rate'
-        parts = path.split('.', 1)
-        if len(parts) == 2 and parts[0] in stimuli_config:
-            stim_name, subpath = parts[0], parts[1]
-            stimuli_config[stim_name] = inject_pydantic_param(stimuli_config[stim_name], subpath, value)
-        else:
-            # Apply to all stimuli in dict if specific stimulus name not matched
-            for stim_name in stimuli_config:
-                stimuli_config[stim_name] = inject_pydantic_param(stimuli_config[stim_name], path, value)
-    else:
-        # Default fallback to network_params
-        network_params = inject_pydantic_param(network_params, param_path, value)
-
-    return network_params, sim_params, stimuli_config
 
 
 def run_worker_workflow(network_params, sim_params, stimuli_config, sim_id: str, results_dir: Path, cpus: int = 1):
@@ -152,6 +92,9 @@ def run_worker_workflow(network_params, sim_params, stimuli_config, sim_id: str,
         if "out_rate_mean" in save_dict:
             save_dict["out_rate"] = save_dict["out_rate_mean"]
 
+        units = {key: neuron_result.default_unit("out_rate_mean" if key == "out_rate" else key) for key in save_dict}
+        save_dict[NPZ_UNITS_KEY] = encode_npz_units(units)
+
         npz_path = sim_id_dir / f"{neuron_name}_results_steady_state.npz"
         np.savez_compressed(npz_path, **save_dict)
 
@@ -178,6 +121,10 @@ def run_worker_workflow(network_params, sim_params, stimuli_config, sim_id: str,
         tf_results = run_tf_fitting_workflow(mf_sim_params.transfer_function, network_params, neuron_results)
         for neuron_name in tf_results:
             tf_results_dict[neuron_name].append(tf_results[neuron_name])
+
+    # The fitted coefficients now live in sim_params (mf_models.*.transfer_function.tf_fits):
+    # re-save the run's workflow params so later analysis can load the fits instead of refitting.
+    save_run_params(sim_id_dir / "params", workflow_params=sim_params)
 
     tf_plotter = plt_hooks.TransferFunctionPlottingHook(
         savefig_dir=worker_imgs_dir,
@@ -306,7 +253,7 @@ def main():
     parser.add_argument("--cpus", type=int, default=1, help="Number of worker CPU processes")
     args = parser.parse_args()
 
-    project_path = Path(args.project_dir)
+    project_path = Path(args.project_dir).resolve()
     params_dir = project_path / "params"
 
     if not params_dir.exists():
@@ -336,23 +283,14 @@ def main():
 
     print(f"[{args.id}] Loaded parameters: {param_dict}")
 
-    # Load base parameters
-    if args.test:
-        network_params = load_network_parameters(params_dir / "test_network_params.yaml")
-        sim_params = load_workflow_config(params_dir / "test_workflow_params.yaml")
-        stimuli_config = load_stimuli_config(params_dir / "test_stimuli.yaml")
-    else:
-        network_params = load_network_parameters(params_dir / "network_params.yaml")
-        sim_params = load_workflow_config(params_dir / "workflow_params.yaml")
-        stimuli_config = load_stimuli_config(params_dir / "default_stimuli.yaml")
-
-    # Apply updates
-    for p_name, p_val in param_dict.items():
-        network_params, sim_params, stimuli_config = apply_parameter_update(
-            network_params, sim_params, stimuli_config, p_name, p_val
-        )
-
-    convert_zero_recovery_connections(network_params)
+    # Build this run's configs from the base configs + the CSV row (values applied to the raw YAML,
+    # synapse types normalised, then validated), save them to data/<id>/params/ and load them back.
+    network_params, sim_params, stimuli_config = materialize_run_params(
+        params_dir=params_dir,
+        updates=param_dict,
+        run_params_dir=project_path / "data" / args.id / "params",
+        test=args.test,
+    )
 
     # Run workflow
     run_worker_workflow(network_params, sim_params, stimuli_config, args.id, project_path, args.cpus)

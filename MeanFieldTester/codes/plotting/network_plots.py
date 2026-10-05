@@ -237,7 +237,12 @@ class VoltagePlot(BaseNetworkPlot):
             )
 
 class STPVariableXPlot(BaseNetworkPlot):
-    """Plot the STP variable x of excitatory and inhibitory neurons over time."""
+    """
+    Plot the mean STP variable x of two projections over time.
+    `projections` (target-source codes) default to ('ee', 'ei'): synapses onto E from E (exc color)
+    and from I (inh color).
+    """
+    STP_VARIABLE = 'x'
     DEFAULT_PARAMS = {
         **BaseNetworkPlot.DEFAULT_PARAMS,
         'title': 'Mean STP Variable x',
@@ -245,15 +250,18 @@ class STPVariableXPlot(BaseNetworkPlot):
         'y_unit': None,
         'xlabel': 'Time',
         'ylabel': 'STP variable x',
+        'projections': ('ee', 'ei'),
     }
 
     def _draw(
-            self, 
-            ax, 
+            self,
+            ax,
             network_results_list: List[BaseSNNResults | BaseMFResults],
             ) -> None:
 
         y_unit = self.full_params['y_unit']
+        first_projection, second_projection = self.full_params['projections']
+        variable = self.STP_VARIABLE
 
         for results, ls, label in self.iter_results(network_results_list):
             self.plot_pair_series(
@@ -261,42 +269,20 @@ class STPVariableXPlot(BaseNetworkPlot):
                 results,
                 ls,
                 label,
-                exc_getter=lambda result: result.exc_x_mean(y_unit),
-                inh_getter=lambda result: result.inh_x_mean(y_unit),
+                exc_getter=lambda result: result.stp_mean(first_projection, variable, y_unit),
+                inh_getter=lambda result: result.stp_mean(second_projection, variable, y_unit),
                 exc_color=self.full_params['exc_color'],
                 inh_color=self.full_params['inh_color'],
             )
 
-class STPVariableUPlot(BaseNetworkPlot):
-    """Plot the STP variable u of excitatory and inhibitory neurons over time."""
+class STPVariableUPlot(STPVariableXPlot):
+    """Plot the mean STP variable u of two projections over time (see STPVariableXPlot)."""
+    STP_VARIABLE = 'u'
     DEFAULT_PARAMS = {
-        **BaseNetworkPlot.DEFAULT_PARAMS,
+        **STPVariableXPlot.DEFAULT_PARAMS,
         'title': 'Mean STP Variable u',
-        'x_unit': 'ms',
-        'y_unit': None,
-        'xlabel': 'Time',
         'ylabel': 'STP variable u',
     }
-
-    def _draw(
-            self, 
-            ax, 
-            network_results_list: List[BaseSNNResults | BaseMFResults],
-            ) -> None:
-
-        y_unit = self.full_params['y_unit']
-
-        for results, ls, label in self.iter_results(network_results_list):
-            self.plot_pair_series(
-                ax,
-                results,
-                ls,
-                label,
-                exc_getter=lambda result: result.exc_u_mean(y_unit),
-                inh_getter=lambda result: result.inh_u_mean(y_unit),
-                exc_color=self.full_params['exc_color'],
-                inh_color=self.full_params['inh_color'],
-            )
 
 
 
@@ -573,36 +559,40 @@ class InhibitoryNeuronConductanceHistogramPlot(BaseNetworkHistogramPlot):
                 )
 
 class STPVariableXHistogramPlot(BaseNetworkHistogramPlot):
-    """Plot the STP variable x histogram of excitatory and inhibitory neurons."""
+    """
+    Histogram (over presynaptic neurons, SNN) / mean line (MF) of the time-averaged STP variable x
+    of two projections. `projections` (target-source codes) default to ('ee', 'ei').
+    """
+    STP_VARIABLE = 'x'
     DEFAULT_PARAMS = {
         **BaseNetworkHistogramPlot.DEFAULT_PARAMS,
         'title': 'STP Variable x Histogram',
         'xlabel': 'STP variable x',
         'x_unit': None,
+        'projections': ('ee', 'ei'),
     }
 
     def _draw(
-            self, 
-            ax, 
+            self,
+            ax,
             network_results_list: List[BaseSNNResults | BaseMFResults],
             ) -> None:
 
         x_unit = self.full_params['x_unit']
         time_unit = self.full_params['time_unit']
+        first_projection, second_projection = self.full_params['projections']
+        variable = self.STP_VARIABLE
 
         for results, ls, label in self.iter_results(network_results_list):
             if results.stim_params.pattern != 'NoStimulus':
-                raise ValueError("STPVariableXHistogramPlot only works for no stimulus simulations.")
+                raise ValueError(f"{self.__class__.__name__} only works for no stimulus simulations.")
+            mask = (results.times(time_unit) >= self.full_params['start_time']) & (results.times(time_unit) <= self.full_params['end_time'])
+
             if isinstance(results, BaseSNNResults):
-                mask = (results.times(time_unit) >= self.full_params['start_time']) & (results.times(time_unit) <= self.full_params['end_time'])
-
-                exc_x = results.exc_x_all(x_unit)[mask].mean(axis=0)
-                inh_x = results.inh_x_all(x_unit)[mask].mean(axis=0)
-
                 self.plot_hist_pair(
                     ax,
-                    exc_x,
-                    inh_x,
+                    results.stp_all(first_projection, variable, x_unit)[mask].mean(axis=0),
+                    results.stp_all(second_projection, variable, x_unit)[mask].mean(axis=0),
                     label,
                     ls,
                     exc_color=self.full_params['exc_color'],
@@ -610,65 +600,21 @@ class STPVariableXHistogramPlot(BaseNetworkHistogramPlot):
                 )
 
             elif isinstance(results, BaseMFResults):
-                mask = (results.times(time_unit) >= self.full_params['start_time']) & (results.times(time_unit) <= self.full_params['end_time'])
-                exc_mean = np.mean(results.exc_x_mean(x_unit)[mask])
-                inh_mean = np.mean(results.inh_x_mean(x_unit)[mask])
                 self.plot_hist_lines(
                     ax,
-                    exc_mean,
-                    inh_mean,
+                    np.mean(results.stp_mean(first_projection, variable, x_unit)[mask]),
+                    np.mean(results.stp_mean(second_projection, variable, x_unit)[mask]),
                     label,
                     ls,
                     exc_color=self.full_params['exc_color'],
                     inh_color=self.full_params['inh_color'],
                 )
-class STPVariableUHistogramPlot(BaseNetworkHistogramPlot):
-    """Plot the STP variable u histogram of excitatory and inhibitory neurons."""
+
+class STPVariableUHistogramPlot(STPVariableXHistogramPlot):
+    """Histogram / mean line of the time-averaged STP variable u of two projections (see STPVariableXHistogramPlot)."""
+    STP_VARIABLE = 'u'
     DEFAULT_PARAMS = {
-        **BaseNetworkHistogramPlot.DEFAULT_PARAMS,
+        **STPVariableXHistogramPlot.DEFAULT_PARAMS,
         'title': 'STP Variable u Histogram',
         'xlabel': 'STP variable u',
-        'x_unit': None,
     }
-
-    def _draw(
-            self, 
-            ax, 
-            network_results_list: List[BaseSNNResults | BaseMFResults],
-            ) -> None:
-
-        x_unit = self.full_params['x_unit']
-        time_unit = self.full_params['time_unit']
-
-        for results, ls, label in self.iter_results(network_results_list):
-            if results.stim_params.pattern != 'NoStimulus':
-                raise ValueError("STPVariableUHistogramPlot only works for no stimulus simulations.")
-            if isinstance(results, BaseSNNResults):
-                mask = (results.times(time_unit) >= self.full_params['start_time']) & (results.times(time_unit) <= self.full_params['end_time'])
-
-
-                exc_u = results.exc_u_all(x_unit)[mask].mean(axis=0)
-                inh_u = results.inh_u_all(x_unit)[mask].mean(axis=0)
-
-                self.plot_hist_pair(
-                    ax,
-                    exc_u,
-                    inh_u,
-                    label,
-                    ls,
-                    exc_color=self.full_params['exc_color'],
-                    inh_color=self.full_params['inh_color'],
-                )
-            elif isinstance(results, BaseMFResults):
-                mask = (results.times(time_unit) >= self.full_params['start_time']) & (results.times(time_unit) <= self.full_params['end_time'])
-                exc_mean = np.mean(results.exc_u_mean(x_unit)[mask])
-                inh_mean = np.mean(results.inh_u_mean(x_unit)[mask])
-                self.plot_hist_lines(
-                    ax,
-                    exc_mean,
-                    inh_mean,
-                    label,
-                    ls,
-                    exc_color=self.full_params['exc_color'],
-                    inh_color=self.full_params['inh_color'],
-                )

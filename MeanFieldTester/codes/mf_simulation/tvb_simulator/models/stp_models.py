@@ -458,6 +458,14 @@ class BaseNeuroPSI_STP(Model):
         return flat_stp.reshape(rate.shape)
 
     @staticmethod
+    def _utilization(U_dyn, U, tau_fac):
+        """
+        Utilisation u used at a spike (as in NEST tsodyks_synapse): U without facilitation (tau_fac == 0),
+        otherwise U_dyn*(1-U) + U, where U_dyn is the facilitation variable (0 at rest).
+        """
+        return numpy.where(tau_fac > 0, U_dyn * (1 - U) + U, U)
+
+    @staticmethod
     def get_fluct_regime_vars(inputs_exc, inputs_inh, W, weights_exc, taus_exc, conns_exc, weights_inh, taus_inh, conns_inh, E_e, E_i, g_L, C_m, E_L):
         """
         Compute the mean characteristic of neurons.
@@ -860,16 +868,16 @@ class NeuroPSI_STP_dynamic_first_order(BaseNeuroPSI_STP):
             "W_i": numpy.array([0.0, 0.0]),
             "X_ee": numpy.array([1.0, 1.0]),
             "Y_ee": numpy.array([0.0, 0.0]),
-            "U_dyn_ee": numpy.array([1.0, 1.0]),
+            "U_dyn_ee": numpy.array([0.0, 0.0]),
             "X_ei": numpy.array([1.0, 1.0]),
             "Y_ei": numpy.array([0.0, 0.0]),
-            "U_dyn_ei": numpy.array([1.0, 1.0]),
+            "U_dyn_ei": numpy.array([0.0, 0.0]),
             "X_ie": numpy.array([1.0, 1.0]),
             "Y_ie": numpy.array([0.0, 0.0]),
-            "U_dyn_ie": numpy.array([1.0, 1.0]),
+            "U_dyn_ie": numpy.array([0.0, 0.0]),
             "X_ii": numpy.array([1.0, 1.0]),
             "Y_ii": numpy.array([0.0, 0.0]),
-            "U_dyn_ii": numpy.array([1.0, 1.0]),
+            "U_dyn_ii": numpy.array([0.0, 0.0]),
             "noise": numpy.array([0.0, 0.0]),
             "stimulus": numpy.array([0.0, 0.0]),
         },
@@ -900,7 +908,7 @@ class NeuroPSI_STP_dynamic_first_order(BaseNeuroPSI_STP):
     def tsodyks_markram_stp(self, X, Y, U_dyn, rate, tau_rec, tau_fac, tau_syn, U):
         """Tsodyks-Markram short-term plasticity model."""
         if tau_rec:
-            u = U_dyn * (1 - U) + U
+            u = self._utilization(U_dyn, U, tau_fac)
             dX = (1 - X) / tau_rec - u * X * rate
             dY = -Y / tau_syn + u * X * rate
         else:
@@ -937,10 +945,10 @@ class NeuroPSI_STP_dynamic_first_order(BaseNeuroPSI_STP):
 
         c_0 = coupling[0, :]
 
-        stp_ee_custom = [X_ee * (U_dyn_ee*(1-self.U_ee) + self.U_ee), 1., 1., 1., 1.]
-        stp_ei_custom = [X_ei * (U_dyn_ei*(1-self.U_ei) + self.U_ei), 1., 1.]
-        stp_ie_custom = [X_ie * (U_dyn_ie*(1-self.U_ie) + self.U_ie), 1., 1., 1., 1.]
-        stp_ii_custom = [X_ii * (U_dyn_ii*(1-self.U_ii) + self.U_ii), 1., 1.]
+        stp_ee_custom = [X_ee * self._utilization(U_dyn_ee, self.U_ee, self.tau_fac_ee), 1., 1., 1., 1.]
+        stp_ei_custom = [X_ei * self._utilization(U_dyn_ei, self.U_ei, self.tau_fac_ei), 1., 1.]
+        stp_ie_custom = [X_ie * self._utilization(U_dyn_ie, self.U_ie, self.tau_fac_ie), 1., 1., 1., 1.]
+        stp_ii_custom = [X_ii * self._utilization(U_dyn_ii, self.U_ii, self.tau_fac_ii), 1., 1.]
 
         (input_ee, input_ei, input_ie, input_ii, 
         weights_ee, conns_ee, weights_ei, conns_ei, weights_ie, conns_ie, weights_ii, conns_ii,
@@ -973,13 +981,13 @@ class NeuroPSI_STP_dynamic_first_order(BaseNeuroPSI_STP):
         derivative[6] = dU_dyn_ee
         
         # Dynamic Synaptic Plasticity ODEs (inh -> exc)
-        dX_ei, dY_ei, dU_dyn_ei = self.tsodyks_markram_stp(X_ei, Y_ei, U_dyn_ei, I, self.tau_rec_ei, self.tau_fac_ei, self.tau_e, self.U_ei)
+        dX_ei, dY_ei, dU_dyn_ei = self.tsodyks_markram_stp(X_ei, Y_ei, U_dyn_ei, I, self.tau_rec_ei, self.tau_fac_ei, self.tau_i, self.U_ei)
         derivative[7] = dX_ei
         derivative[8] = dY_ei
         derivative[9] = dU_dyn_ei
 
         # Dynamic Synaptic Plasticity ODEs (exc -> inh)
-        dX_ie, dY_ie, dU_dyn_ie = self.tsodyks_markram_stp(X_ie, Y_ie, U_dyn_ie, E, self.tau_rec_ie, self.tau_fac_ie, self.tau_i, self.U_ie)
+        dX_ie, dY_ie, dU_dyn_ie = self.tsodyks_markram_stp(X_ie, Y_ie, U_dyn_ie, E, self.tau_rec_ie, self.tau_fac_ie, self.tau_e, self.U_ie)
         derivative[10] = dX_ie
         derivative[11] = dY_ie
         derivative[12] = dU_dyn_ie
@@ -1016,16 +1024,16 @@ class NeuroPSI_STP_dynamic_second_order(NeuroPSI_STP_dynamic_first_order):
             "W_i": numpy.array([0.0, 0.0]),
             "X_ee": numpy.array([1.0, 1.0]),
             "Y_ee": numpy.array([0.0, 0.0]),
-            "U_dyn_ee": numpy.array([1.0, 1.0]),
+            "U_dyn_ee": numpy.array([0.0, 0.0]),
             "X_ei": numpy.array([1.0, 1.0]),
             "Y_ei": numpy.array([0.0, 0.0]),
-            "U_dyn_ei": numpy.array([1.0, 1.0]),
+            "U_dyn_ei": numpy.array([0.0, 0.0]),
             "X_ie": numpy.array([1.0, 1.0]),
             "Y_ie": numpy.array([0.0, 0.0]),
-            "U_dyn_ie": numpy.array([1.0, 1.0]),
+            "U_dyn_ie": numpy.array([0.0, 0.0]),
             "X_ii": numpy.array([1.0, 1.0]),
             "Y_ii": numpy.array([0.0, 0.0]),
-            "U_dyn_ii": numpy.array([1.0, 1.0]),
+            "U_dyn_ii": numpy.array([0.0, 0.0]),
             "noise": numpy.array([0.0, 0.0]),
             "stimulus": numpy.array([0.0, 0.0]),
         },
@@ -1072,10 +1080,10 @@ class NeuroPSI_STP_dynamic_second_order(NeuroPSI_STP_dynamic_first_order):
 
         c_0 = coupling[0, :]
 
-        stp_ee_custom = [X_ee * (U_dyn_ee*(1-self.U_ee) + self.U_ee), 1., 1., 1., 1.]
-        stp_ei_custom = [X_ei * (U_dyn_ei*(1-self.U_ei) + self.U_ei), 1., 1.]
-        stp_ie_custom = [X_ie * (U_dyn_ie*(1-self.U_ie) + self.U_ie), 1., 1., 1., 1.]
-        stp_ii_custom = [X_ii * (U_dyn_ii*(1-self.U_ii) + self.U_ii), 1., 1.]
+        stp_ee_custom = [X_ee * self._utilization(U_dyn_ee, self.U_ee, self.tau_fac_ee), 1., 1., 1., 1.]
+        stp_ei_custom = [X_ei * self._utilization(U_dyn_ei, self.U_ei, self.tau_fac_ei), 1., 1.]
+        stp_ie_custom = [X_ie * self._utilization(U_dyn_ie, self.U_ie, self.tau_fac_ie), 1., 1., 1., 1.]
+        stp_ii_custom = [X_ii * self._utilization(U_dyn_ii, self.U_ii, self.tau_fac_ii), 1., 1.]
 
         (input_ee, input_ei, input_ie, input_ii, 
         weights_ee, conns_ee, weights_ei, conns_ei, weights_ie, conns_ie, weights_ii, conns_ii,
@@ -1118,13 +1126,13 @@ class NeuroPSI_STP_dynamic_second_order(NeuroPSI_STP_dynamic_first_order):
         derivative[9] = dU_dyn_ee
         
         # Dynamic Synaptic Plasticity ODEs (inh -> exc)
-        dX_ei, dY_ei, dU_dyn_ei = self.tsodyks_markram_stp(X_ei, Y_ei, U_dyn_ei, I, self.tau_rec_ei, self.tau_fac_ei, self.tau_e, self.U_ei)
+        dX_ei, dY_ei, dU_dyn_ei = self.tsodyks_markram_stp(X_ei, Y_ei, U_dyn_ei, I, self.tau_rec_ei, self.tau_fac_ei, self.tau_i, self.U_ei)
         derivative[10] = dX_ei
         derivative[11] = dY_ei
         derivative[12] = dU_dyn_ei
 
         # Dynamic Synaptic Plasticity ODEs (exc -> inh)
-        dX_ie, dY_ie, dU_dyn_ie = self.tsodyks_markram_stp(X_ie, Y_ie, U_dyn_ie, E, self.tau_rec_ie, self.tau_fac_ie, self.tau_i, self.U_ie)
+        dX_ie, dY_ie, dU_dyn_ie = self.tsodyks_markram_stp(X_ie, Y_ie, U_dyn_ie, E, self.tau_rec_ie, self.tau_fac_ie, self.tau_e, self.U_ie)
         derivative[13] = dX_ie
         derivative[14] = dY_ie
         derivative[15] = dU_dyn_ie

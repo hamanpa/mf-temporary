@@ -32,9 +32,13 @@ class SingleNeuronCustomGrid(BaseModel):
         )
     )
 
-    @field_validator('exc_rate_grid', 'inh_rate_grid')
+    @field_validator('exc_rate_grid', 'inh_rate_grid', mode='before')
     @classmethod
     def load_mesh_if_path(cls, value: Any) -> np.ndarray:
+        if isinstance(value, list):
+            # e.g. a grid reloaded from a saved run-params YAML
+            value = np.asarray(value, dtype=float)
+
         if isinstance(value, (str, Path)):
             file_path = Path(value)
             if not file_path.exists():

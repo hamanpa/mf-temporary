@@ -8,6 +8,7 @@ from .tvb_simulator.simulator import TVBMFSimulator
 from .config import MeanFieldSimulationConfig
 from ..stimuli.config import BaseStimulusConfig
 from ..network_params.models import BiologicalParameters
+from ..utils.file_helpers import NPZ_UNITS_KEY, encode_npz_units
 
 
 def _mf_simulation_worker(task_tuple: tuple) -> Dict[str, Any]:
@@ -62,7 +63,12 @@ def _mf_simulation_worker(task_tuple: tuple) -> Dict[str, Any]:
             "drive_rate": results.drive_rate_mean(),
             "stim_rate": results.stim_rate_mean(),
         }
-        
+        units = {
+            "times": results.default_unit("times"),
+            "drive_rate": results.default_unit("drive_rate_mean"),
+            "stim_rate": results.default_unit("stim_rate_mean"),
+        }
+
         # Save optional fields if present
         measurement_fields = {
             "exc_rate_mean": "exc_rate_pop_mean",
@@ -72,12 +78,6 @@ def _mf_simulation_worker(task_tuple: tuple) -> Dict[str, Any]:
             "exc_adaptation_mean": "exc_adaptation_pop_mean",
             "inh_adaptation_mean": "inh_adaptation_pop_mean",
             "rate_cov": "rate_cov",
-            "exc_x_mean": "exc_x_pop_mean",
-            "exc_y_mean": "exc_y_pop_mean",
-            "exc_u_mean": "exc_u_pop_mean",
-            "inh_x_mean": "inh_x_pop_mean",
-            "inh_y_mean": "inh_y_pop_mean",
-            "inh_u_mean": "inh_u_pop_mean",
             "exc_voltage_mean": "exc_voltage_pop_mean",
             "inh_voltage_mean": "inh_voltage_pop_mean",
         }
@@ -87,10 +87,19 @@ def _mf_simulation_worker(task_tuple: tuple) -> Dict[str, Any]:
                 arr = val()
                 if arr is not None:
                     save_dict[save_name] = arr
+                    units[save_name] = results.default_unit(field_name)
             elif val is None:
                 save_dict[save_name] = np.full((len(save_dict["times"]),), np.nan)
             else:
                 raise ValueError(f"Unexpected type for {field_name}: {type(val)}")
+
+        # STP variables per projection, e.g. "ee_x" -> "ee_x_pop_mean"
+        for name in results.stp_variables:
+            projection, variable = name.split("_")
+            save_dict[f"{name}_pop_mean"] = results.stp_mean(projection, variable)
+            units[f"{name}_pop_mean"] = results.default_unit(f"{name}_mean")
+
+        save_dict[NPZ_UNITS_KEY] = encode_npz_units(units)
 
         np.savez_compressed(file_path, **save_dict)
 

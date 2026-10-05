@@ -1,19 +1,27 @@
 import yaml
 from pathlib import Path
 from typing import Dict, Literal, Annotated, Union
-from pydantic import BaseModel, Field, PrivateAttr, computed_field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, computed_field, model_validator
 
 # ==========================================
 # SYNAPSE MODELS
 # ==========================================
 
+# NOTE: extra="forbid" is essential. `ConnectionDefinition.syn_params` is a plain Union,
+# and without it a Tsodyks parameter dict could validate as StaticSynapseParams
+# (extra keys silently ignored), dropping U/tau_rec/tau_fac and switching STP off.
+
 class StaticSynapseParams(BaseModel):
     """Requirements for a static synapse."""
+    model_config = ConfigDict(extra="forbid")
+
     weight: float = Field(..., description="Synaptic weight [nS]")
     delay: float = Field(..., description="Synaptic delay [ms]")
 
 class TsodyksSynapseParams(BaseModel):
-    """Requirements for a Tsodyks-Markram STP synapse."""
+    """Requirements for a Tsodyks-Markram STP synapse (NEST `tsodyks_synapse`, which requires tau_rec > 0)."""
+    model_config = ConfigDict(extra="forbid")
+
     weight: float = Field(..., description="Synaptic weight [nS]")
     delay: float = Field(..., description="Synaptic delay [ms]")
     U: float = Field(..., ge=0.0, le=1.0, description="Utilization of synaptic efficacy")
@@ -54,6 +62,16 @@ class ConnectionDefinition(BaseModel):
     _target_size: int | None = PrivateAttr(default=None)
     _source_name: str | None = PrivateAttr(default=None)
     _target_name: str | None = PrivateAttr(default=None)
+
+    @model_validator(mode="after")
+    def _check_syn_params_match_type(self):
+        expected = {"static_synapse": StaticSynapseParams, "tsodyks_synapse": TsodyksSynapseParams}[self.syn_type]
+        if not isinstance(self.syn_params, expected):
+            raise ValueError(
+                f"syn_type '{self.syn_type}' requires {expected.__name__}, "
+                f"but syn_params validated as {type(self.syn_params).__name__}: {self.syn_params}"
+            )
+        return self
 
     @property
     def conn_num(self) -> int:
@@ -228,3 +246,30 @@ class BiologicalParameters(BaseModel):
         if len(inh_neurons) != 1:
             raise ValueError(f"Expected exactly one inhibitory population, but found {len(inh_neurons)}: {inh_neurons}")
         return inh_neurons[0]
+
+    def projection_populations(self, projection: str) -> tuple[str, str]:
+        """
+        Maps a target-source projection code to (target_name, source_name).
+
+        E.g. 'ei' -> (exc_neuron_name, inh_neuron_name), i.e. the projection onto E from I.
+        """
+        names = {"e": self.exc_neuron_name, "i": self.inh_neuron_name}
+        if len(projection) != 2 or any(code not in names for code in projection):
+            raise ValueError(f"Invalid projection code '{projection}'. Expected one of {INTERNAL_PROJECTIONS}.")
+        return names[projection[0]], names[projection[1]]
+
+    def projection_code(self, target_name: str, source_name: str) -> str:
+        """Inverse of `projection_populations`: (target_name, source_name) -> e.g. 'ei'."""
+        codes = {self.exc_neuron_name: "e", self.inh_neuron_name: "i"}
+        if target_name not in codes or source_name not in codes:
+            raise ValueError(f"No internal projection code for {source_name} -> {target_name}.")
+        return codes[target_name] + codes[source_name]
+
+    def connection(self, projection: str) -> "ConnectionDefinition | None":
+        """Returns the ConnectionDefinition of an internal projection code (e.g. 'ee'), or None if absent."""
+        target_name, source_name = self.projection_populations(projection)
+        return self.network.connectivity.get(target_name, {}).get(source_name)
+
+
+# Target-source codes of the internal projections (first letter = target, second = source).
+INTERNAL_PROJECTIONS = ("ee", "ei", "ie", "ii")

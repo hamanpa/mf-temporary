@@ -1,11 +1,26 @@
-from .base import BaseSNNResults
+from .base import BaseSNNResults, STP_VARIABLES, parse_stp_variable
 from ..utils import snn_helpers
+from ..network_params.models import INTERNAL_PROJECTIONS
 from pydantic import BaseModel
 import numpy as np
 from functools import partial
 
 class SNNResults(BaseSNNResults):
+    # STP variables per projection, e.g. "ee_x" (target-source code + variable), are unitless.
+    _STP_UNITS = {f"{projection}_{variable}": "" for projection in INTERNAL_PROJECTIONS for variable in STP_VARIABLES}
+
+    # Physical variables that can be requested in `snn_simulation.saved_variables`.
+    SAVEABLE_VARIABLES = (
+        "spikes", "exc_spikes", "inh_spikes",
+        "exc_rate", "inh_rate",
+        "exc_voltage", "inh_voltage",
+        "exc_adaptation", "inh_adaptation",
+        "ee_conductance", "ei_conductance", "ie_conductance", "ii_conductance",
+        *_STP_UNITS.keys(),
+    )
+
     DEFAULT_UNITS = {
+        **_STP_UNITS,
         "exc_spikes_all" : "ms",
         "inh_spikes_all" : "ms",
         "times" : "ms",
@@ -313,119 +328,60 @@ class SNNResults(BaseSNNResults):
         target_unit = default_unit if unit is None else unit
         return self._get_scaled(self._ii_conductance_all.std(axis=1), default_unit, target_unit)
 
-    def _compute_stp_variables(self, neuron_name):
-        """Internal method to lazily evaluate and cache STP variables."""
-        syn_params = self.network_params.synapses[neuron_name].syn_params
-        # NOTE: in case of static synapses, U, tau_rec, and tau_fac will 
-        # default to 1.0, 0.0, and 0.0 respectively
-        U = getattr(syn_params, "U", 1.0)
-        tau_rec = getattr(syn_params, "tau_rec", 0.0)
-        tau_fac = getattr(syn_params, "tau_fac", 0.0)
+    # --- Short-term plasticity (reconstructed offline from recorded presynaptic spikes) ---
+    def _source_spikes(self, source_name: str) -> list:
+        if source_name == self.network_params.exc_neuron_name:
+            return self._exc_spikes_all
+        if source_name == self.network_params.inh_neuron_name:
+            return self._inh_spikes_all
+        raise ValueError(f"No recorded spikes for source population '{source_name}'.")
 
-        if neuron_name == "exc_neuron":
-            u,x = snn_helpers.reconstruct_stp_dynamics(
-                self._exc_spikes_all, 
-                U, 
-                tau_rec, 
-                tau_fac, 
-                self.times()
+    def stp_all(self, projection: str, variable: str, unit=None) -> np.ndarray | None:
+        """
+        STP variable of a projection for each recorded presynaptic neuron, shape (T, N_source).
+
+        Parameters
+        ----------
+        projection : str
+            Target-source code, e.g. 'ei' = synapses onto E from I.
+        variable : str
+            'x', 'u' or 'y' (see `data_structures.base.STP_VARIABLES`).
+
+        Reconstructed from the recorded presynaptic spikes with NEST's `tsodyks_synapse` rules
+        (`utils.snn_helpers.reconstruct_stp_dynamics`). Static synapses give x = 1, u = 1, y = 0.
+        Returns None if the projection does not exist. Not cached (the arrays are large).
+        """
+        if variable not in STP_VARIABLES:
+            raise ValueError(f"Unknown STP variable '{variable}'. Expected one of {STP_VARIABLES}.")
+        conn = self.network_params.connection(projection)
+        if conn is None:
+            return None
+
+        _, source_name = self.network_params.projection_populations(projection)
+        spikes = self._source_spikes(source_name)
+
+        if conn.syn_type == "tsodyks_synapse":
+            syn = conn.syn_params
+            u, x, y = snn_helpers.reconstruct_stp_dynamics(
+                spikes, syn.U, syn.tau_rec, syn.tau_fac, syn.tau_psc, self.times()
             )
-            self._exc_u_all = u
-            self._exc_x_all = x
-        elif neuron_name == "inh_neuron":
-            u,x = snn_helpers.reconstruct_stp_dynamics(
-                self._inh_spikes_all, 
-                U, 
-                tau_rec, 
-                tau_fac, 
-                self.times()
-            )
-            self._inh_u_all = u
-            self._inh_x_all = x
+            values = {"u": u, "x": x, "y": y}[variable]
+        else:
+            values = np.full((len(self.times()), len(spikes)), 0.0 if variable == "y" else 1.0)
 
-    def exc_u_all(self, unit=None):
-        if not hasattr(self, '_exc_u_all'):
-            self._compute_stp_variables("exc_neuron")
-        default_unit = ""
+        default_unit = self.DEFAULT_UNITS[f"{projection}_{variable}"]
         target_unit = default_unit if unit is None else unit
-        return self._get_scaled(self._exc_u_all, default_unit, target_unit)
+        return self._get_scaled(values, default_unit, target_unit)
 
-    def exc_u_mean(self, unit=None):
-        if not hasattr(self, '_exc_u_all'):
-            self._compute_stp_variables("exc_neuron")
-        default_unit = ""
-        target_unit = default_unit if unit is None else unit
-        return self._get_scaled(self._exc_u_all.mean(axis=1), default_unit, target_unit)
+    def stp_mean(self, projection: str, variable: str, unit=None) -> np.ndarray | None:
+        """Population mean over presynaptic neurons of an STP variable, shape (T,). See `stp_all`."""
+        values = self.stp_all(projection, variable, unit)
+        return None if values is None else values.mean(axis=1)
 
-    def exc_u_std(self, unit=None):
-        if not hasattr(self, '_exc_u_all'):
-            self._compute_stp_variables("exc_neuron")
-        default_unit = ""
-        target_unit = default_unit if unit is None else unit
-        return self._get_scaled(self._exc_u_all.std(axis=1), default_unit, target_unit)
-
-    def exc_x_all(self, unit=None):
-        if not hasattr(self, '_exc_x_all'):
-            self._compute_stp_variables("exc_neuron")
-        default_unit = ""
-        target_unit = default_unit if unit is None else unit
-        return self._get_scaled(self._exc_x_all, default_unit, target_unit)
-
-    def exc_x_mean(self, unit=None):
-        if not hasattr(self, '_exc_x_all'):
-            self._compute_stp_variables("exc_neuron")
-        default_unit = ""
-        target_unit = default_unit if unit is None else unit
-        return self._get_scaled(self._exc_x_all.mean(axis=1), default_unit, target_unit)
-
-    def exc_x_std(self, unit=None):
-        if not hasattr(self, '_exc_x_all'):
-            self._compute_stp_variables("exc_neuron")
-        default_unit = ""
-        target_unit = default_unit if unit is None else unit
-        return self._get_scaled(self._exc_x_all.std(axis=1), default_unit, target_unit)
-
-    def inh_u_all(self, unit=None):
-        if not hasattr(self, '_inh_u_all'):
-            self._compute_stp_variables("inh_neuron")
-        default_unit = ""
-        target_unit = default_unit if unit is None else unit
-        return self._get_scaled(self._inh_u_all, default_unit, target_unit)
-
-    def inh_u_mean(self, unit=None):
-        if not hasattr(self, '_inh_u_all'):
-            self._compute_stp_variables("inh_neuron")
-        default_unit = ""
-        target_unit = default_unit if unit is None else unit
-        return self._get_scaled(self._inh_u_all.mean(axis=1), default_unit, target_unit)
-
-    def inh_u_std(self, unit=None):
-        if not hasattr(self, '_inh_u_all'):
-            self._compute_stp_variables("inh_neuron")
-        default_unit = ""
-        target_unit = default_unit if unit is None else unit
-        return self._get_scaled(self._inh_u_all.std(axis=1), default_unit, target_unit)
-
-    def inh_x_all(self, unit=None):
-        if not hasattr(self, '_inh_x_all'):
-            self._compute_stp_variables("inh_neuron")
-        default_unit = ""
-        target_unit = default_unit if unit is None else unit
-        return self._get_scaled(self._inh_x_all, default_unit, target_unit)
-
-    def inh_x_mean(self, unit=None):
-        if not hasattr(self, '_inh_x_all'):
-            self._compute_stp_variables("inh_neuron")
-        default_unit = ""
-        target_unit = default_unit if unit is None else unit
-        return self._get_scaled(self._inh_x_all.mean(axis=1), default_unit, target_unit)
-
-    def inh_x_std(self, unit=None):
-        if not hasattr(self, '_inh_x_all'):
-            self._compute_stp_variables("inh_neuron")
-        default_unit = ""
-        target_unit = default_unit if unit is None else unit
-        return self._get_scaled(self._inh_x_all.std(axis=1), default_unit, target_unit)
+    def stp_std(self, projection: str, variable: str, unit=None) -> np.ndarray | None:
+        """Population std over presynaptic neurons of an STP variable, shape (T,). See `stp_all`."""
+        values = self.stp_all(projection, variable, unit)
+        return None if values is None else values.std(axis=1)
 
     # --- Generic Metric Methods for Output Extraction & Savings ---
     def _get_n_neurons(self, variable: str) -> int:
@@ -436,23 +392,23 @@ class SNNResults(BaseSNNResults):
             return len(self._exc_spikes_all)
         return 1
 
-    def _get_raw_all(self, variable: str) -> np.ndarray:
-        """Retrieves raw (T, N) spatio-temporal data array for any variable name."""
+    def _get_raw_all(self, variable: str) -> np.ndarray | None:
+        """
+        Retrieves the raw (T, N) array of a variable (see SAVEABLE_VARIABLES).
+        Returns None if the variable was not recorded; raises ValueError for unknown variables.
+        """
+        stp = parse_stp_variable(variable)
+        if stp is not None:
+            return self.stp_all(*stp)
+
         attr_name = f"_{variable}_all"
         if hasattr(self, attr_name):
             raw = getattr(self, attr_name)
-            if raw is None and hasattr(self, f"{variable}_all"):
-                raw = getattr(self, f"{variable}_all")()
+            if raw is None and callable(getattr(self, f"{variable}_all", None)):
+                raw = getattr(self, f"{variable}_all")()  # lazily computed (e.g. rates from spikes)
             return raw
-        
-        # Try method lookups
-        for candidate in [f"{variable}_all", f"{variable}_mean", variable]:
-            if hasattr(self, candidate) and callable(getattr(self, candidate)):
-                try:
-                    return getattr(self, candidate)()
-                except Exception:
-                    pass
-        return None
+
+        raise ValueError(f"Unknown SNN variable '{variable}'. Known variables: {self.SAVEABLE_VARIABLES}")
 
     def get_all(self, variable: str, unit=None) -> np.ndarray:
         """Returns full (T, N) spatio-temporal matrix for variable."""
@@ -465,13 +421,12 @@ class SNNResults(BaseSNNResults):
 
     def get_pop_mean(self, variable: str, unit=None) -> np.ndarray:
         """Computes population mean time-series of shape (T,). Returns np.nan array if unrecorded."""
-        if hasattr(self, f"{variable}_mean") and callable(getattr(self, f"{variable}_mean")):
-            try:
-                res = getattr(self, f"{variable}_mean")(unit=unit)
-                if res is not None:
-                    return res
-            except Exception:
-                pass
+        # NOTE: errors are deliberately NOT swallowed here (doing so used to turn bugs into silent NaN data).
+        method = getattr(self, f"{variable}_mean", None)
+        if callable(method):
+            res = method(unit=unit)
+            if res is not None:
+                return res
 
         raw = self._get_raw_all(variable)
         if raw is None:
@@ -485,13 +440,11 @@ class SNNResults(BaseSNNResults):
 
     def get_pop_std(self, variable: str, unit=None) -> np.ndarray:
         """Computes population standard deviation time-series of shape (T,). Returns np.nan array if unrecorded."""
-        if hasattr(self, f"{variable}_std") and callable(getattr(self, f"{variable}_std")):
-            try:
-                res = getattr(self, f"{variable}_std")(unit=unit)
-                if res is not None:
-                    return res
-            except Exception:
-                pass
+        method = getattr(self, f"{variable}_std", None)
+        if callable(method):
+            res = method(unit=unit)
+            if res is not None:
+                return res
 
         raw = self._get_raw_all(variable)
         if raw is None:

@@ -85,37 +85,69 @@ class Divolo2019InitialValuesConfig(Zerlaut2018InitialValuesConfig):
         description="Initial mean adaptation current for the inhibitory population in [nA]."
     )
 
+_STP_INIT_DESCRIPTIONS = {
+    "X": "available resources x",
+    "Y": "active resources y",
+    "U_dyn": "facilitation variable U_dyn (efficacy u = U_dyn*(1-U) + U)",
+}
+
+
+# Older population-based init names refer to the SOURCE population (e.g. X_e = synapses from E)
+# and are expanded to both projections from that source (X_e -> X_ee and X_ie).
+_STP_SOURCE_BASED_INIT_NAMES = {
+    "X_e": ("X", "e"), "exc_stp_x_mean": ("X", "e"),
+    "Y_e": ("Y", "e"), "exc_stp_y_mean": ("Y", "e"),
+    "U_e": ("U_dyn", "e"), "U_dyn_e": ("U_dyn", "e"), "exc_stp_u_mean": ("U_dyn", "e"),
+    "X_i": ("X", "i"), "inh_stp_x_mean": ("X", "i"),
+    "Y_i": ("Y", "i"), "inh_stp_y_mean": ("Y", "i"),
+    "U_i": ("U_dyn", "i"), "U_dyn_i": ("U_dyn", "i"), "inh_stp_u_mean": ("U_dyn", "i"),
+}
+
+
+def _stp_init_field(state: str, projection: str):
+    """Initial value field of a dynamic-STP state variable; accepts the TVB name (e.g. 'X_ei') or the field name."""
+    field_name = f"{projection}_{state.lower()}_mean"
+    return Field(
+        validation_alias=AliasChoices(f"{state}_{projection}", field_name),
+        serialization_alias=field_name,
+        description=f"Initial mean of the STP {_STP_INIT_DESCRIPTIONS[state]} of projection '{projection}' (target-source).",
+    )
+
+
 class CustomNeuroPSIInitialValuesConfig(Divolo2019InitialValuesConfig):
-    exc_stp_x_mean: List[float] = Field(
-        validation_alias=AliasChoices('X_e', 'exc_stp_x_mean'),
-        serialization_alias='exc_stp_x_mean',
-        description="Initial mean of the STP variable X for the excitatory population."
-    )
-    exc_stp_y_mean: List[float] = Field(
-        validation_alias=AliasChoices('Y_e', 'exc_stp_y_mean'),
-        serialization_alias='exc_stp_y_mean',
-        description="Initial mean of the STP variable Y for the excitatory population."
-    )
-    exc_stp_u_mean: List[float] = Field(
-        validation_alias=AliasChoices('U_dyn_e', 'U_e', 'exc_stp_u_mean'),
-        serialization_alias='exc_stp_u_mean',
-        description="Initial mean of the STP variable U for the excitatory population."
-    )
-    inh_stp_x_mean: List[float] = Field(
-        validation_alias=AliasChoices('X_i', 'inh_stp_x_mean'),
-        serialization_alias='inh_stp_x_mean',
-        description="Initial mean of the STP variable X for the inhibitory population."
-    )
-    inh_stp_y_mean: List[float] = Field(
-        validation_alias=AliasChoices('Y_i', 'inh_stp_y_mean'),
-        serialization_alias='inh_stp_y_mean',
-        description="Initial mean of the STP variable Y for the inhibitory population."
-    )
-    inh_stp_u_mean: List[float] = Field(
-        validation_alias=AliasChoices('U_dyn_i', 'U_i', 'inh_stp_u_mean'),
-        serialization_alias='inh_stp_u_mean',
-        description="Initial mean of the STP variable U for the inhibitory population."
-    )
+    """
+    Initial values for the dynamic STP models: one X, Y, U_dyn per projection (target-source code,
+    'ei' = onto E from I), matching the TVB state variables X_ee, Y_ee, U_dyn_ee, ...
+    """
+    ee_x_mean: List[float] = _stp_init_field("X", "ee")
+    ee_y_mean: List[float] = _stp_init_field("Y", "ee")
+    ee_u_dyn_mean: List[float] = _stp_init_field("U_dyn", "ee")
+    ei_x_mean: List[float] = _stp_init_field("X", "ei")
+    ei_y_mean: List[float] = _stp_init_field("Y", "ei")
+    ei_u_dyn_mean: List[float] = _stp_init_field("U_dyn", "ei")
+    ie_x_mean: List[float] = _stp_init_field("X", "ie")
+    ie_y_mean: List[float] = _stp_init_field("Y", "ie")
+    ie_u_dyn_mean: List[float] = _stp_init_field("U_dyn", "ie")
+    ii_x_mean: List[float] = _stp_init_field("X", "ii")
+    ii_y_mean: List[float] = _stp_init_field("Y", "ii")
+    ii_u_dyn_mean: List[float] = _stp_init_field("U_dyn", "ii")
+
+    @model_validator(mode="before")
+    @classmethod
+    def _expand_source_based_names(cls, data: Any) -> Any:
+        if not isinstance(data, dict):
+            return data
+        data = dict(data)
+        for old_name, (state, source) in _STP_SOURCE_BASED_INIT_NAMES.items():
+            if old_name not in data:
+                continue
+            value = data.pop(old_name)
+            for target in ("e", "i"):
+                projection = f"{target}{source}"
+                names = (f"{state}_{projection}", f"{projection}_{state.lower()}_mean")
+                if not any(name in data for name in names):
+                    data[names[0]] = value
+        return data
 
 
 

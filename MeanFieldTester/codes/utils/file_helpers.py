@@ -4,8 +4,61 @@ Module containing utility functions for file and directory handling
 
 import json
 import pickle
+from enum import Enum
 from pathlib import Path
 import time
+
+import numpy as np
+import yaml
+from pydantic import BaseModel
+
+
+def to_builtin(obj):
+    """
+    Recursively converts pydantic models, numpy objects, Paths and Enums into plain
+    Python types (dict, list, str, float, ...) so they can be written to YAML/JSON.
+    """
+    if isinstance(obj, BaseModel):
+        return to_builtin(obj.model_dump())
+    if isinstance(obj, dict):
+        return {to_builtin(key): to_builtin(value) for key, value in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [to_builtin(value) for value in obj]
+    if isinstance(obj, np.ndarray):
+        return obj.tolist()
+    if isinstance(obj, np.generic):
+        return obj.item()
+    if isinstance(obj, Enum):
+        return obj.value
+    if isinstance(obj, Path):
+        return str(obj)
+    return obj
+
+
+# Units of the arrays in a results .npz file are stored inside the same file, under this key,
+# as a JSON string {array_key: unit}. (Per-file, because files are written by parallel workers.)
+NPZ_UNITS_KEY = "units"
+
+
+def encode_npz_units(units: dict[str, str]) -> np.ndarray:
+    """Encodes a {array_key: unit} dict as a 0-d string array storable in an .npz file."""
+    return np.array(json.dumps(units))
+
+
+def decode_npz_units(npz_data) -> dict[str, str]:
+    """Returns the {array_key: unit} dict of a loaded .npz file ({} for files saved without units)."""
+    if NPZ_UNITS_KEY not in npz_data:
+        return {}
+    return json.loads(str(npz_data[NPZ_UNITS_KEY]))
+
+
+def save_yaml(data, filepath: str | Path):
+    """Writes `data` (pydantic models, dicts of models, numpy values, ...) to a YAML file."""
+    filepath = Path(filepath)
+    filepath.parent.mkdir(parents=True, exist_ok=True)
+    with open(filepath, "w") as f:
+        yaml.safe_dump(to_builtin(data), f, sort_keys=False)
+
 
 def save_to_pickle(filepath : str | Path, **kwargs):
     """Save multiple objects to a pickle file as a dictionary.

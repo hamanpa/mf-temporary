@@ -1,8 +1,8 @@
-from .base import BaseMFResults
+from .base import BaseMFResults, STP_VARIABLES, parse_stp_variable
+from ..network_params.models import INTERNAL_PROJECTIONS
 from ..transfer_function.neuropsi_tf import MembranePotentialFluctuations
 from pydantic import BaseModel
 import numpy as np
-from ..utils.stp_helpers import calculate_steady_state_stp_variables
 
 
 class MFResults(BaseMFResults):
@@ -17,12 +17,8 @@ class MFResults(BaseMFResults):
         "exc_adaptation_mean" : "nA",
         "inh_adaptation_mean" : "nA",
         "rate_cov" : "Hz^2",
-        "exc_x_mean" : "",
-        "exc_y_mean" : "",
-        "exc_u_mean" : "",
-        "inh_x_mean" : "",
-        "inh_y_mean" : "",
-        "inh_u_mean" : "",
+        # STP variables per projection (target-source code), e.g. "ei_x_mean"; unitless
+        **{f"{projection}_{variable}_mean": "" for projection in INTERNAL_PROJECTIONS for variable in STP_VARIABLES},
         "exc_voltage_mean" : "mV",
         "inh_voltage_mean" : "mV",
         "ee_conductance_mean" : "nS",
@@ -47,14 +43,17 @@ class MFResults(BaseMFResults):
                  exc_adaptation_mean: np.ndarray = None,
                  inh_adaptation_mean: np.ndarray = None,
                  rate_cov: np.ndarray = None,
-                 exc_x_mean: np.ndarray = None,
-                 exc_y_mean: np.ndarray = None,
-                 exc_u_mean: np.ndarray = None,
-                 inh_x_mean: np.ndarray = None,
-                 inh_y_mean: np.ndarray = None,
-                 inh_u_mean: np.ndarray = None,
+                 stp_means: dict[str, np.ndarray] = None,
                  input_units: dict = None,
                  ):
+        """
+        Parameters
+        ----------
+        stp_means : dict, optional
+            STP time courses per projection, keyed "<projection>_<variable>" (e.g. "ee_x", "ei_u"),
+            as provided by the MF simulator for its model (dynamic state, steady state, or static).
+            The efficacy factor of a projection is u * x (see `data_structures.base.STP_VARIABLES`).
+        """
 
         # --- Public Metadata (No units required) ---
         self.label_name = label_name
@@ -64,9 +63,9 @@ class MFResults(BaseMFResults):
         self.stim_params = stim_params
 
         self.ignore_stp = mf_sim_params.transfer_function.tf_model.static_synapses
-        
+
         input_units = input_units or {}
-        
+
         # --- Protected Physical Data (Stored in Default Units) ---
         self._times = self._ingest(times, "times", input_units)
         self._exc_rate_mean = self._ingest(exc_rate_mean, "exc_rate_mean", input_units)
@@ -78,12 +77,12 @@ class MFResults(BaseMFResults):
         self._exc_adaptation_mean = self._ingest(exc_adaptation_mean, "exc_adaptation_mean", input_units)
         self._inh_adaptation_mean = self._ingest(inh_adaptation_mean, "inh_adaptation_mean", input_units)
         self._rate_cov = self._ingest(rate_cov, "rate_cov", input_units)
-        self._exc_x_mean = self._ingest(exc_x_mean, "exc_x_mean", input_units)
-        self._exc_y_mean = self._ingest(exc_y_mean, "exc_y_mean", input_units)
-        self._exc_u_mean = self._ingest(exc_u_mean, "exc_u_mean", input_units)
-        self._inh_x_mean = self._ingest(inh_x_mean, "inh_x_mean", input_units)
-        self._inh_y_mean = self._ingest(inh_y_mean, "inh_y_mean", input_units)
-        self._inh_u_mean = self._ingest(inh_u_mean, "inh_u_mean", input_units)
+
+        self._stp_means = {}
+        for name, values in (stp_means or {}).items():
+            if parse_stp_variable(name) is None:
+                raise ValueError(f"Invalid STP variable name '{name}'. Expected '<projection>_<variable>', e.g. 'ee_x'.")
+            self._stp_means[name] = self._ingest(values, f"{name}_mean", input_units)
 
         self._exc_neuron_mpf = MembranePotentialFluctuations(
             neuron_name = network_params.exc_neuron_name,
@@ -96,9 +95,6 @@ class MFResults(BaseMFResults):
             network_params = network_params,
             ignore_stp = self.ignore_stp,
         )
-
-        self._update_exc_stp_variables()
-        self._update_inh_stp_variables()
 
         # Freeze the object to prevent accidental attribute creation or modification
         self._finalized = True
@@ -153,183 +149,101 @@ class MFResults(BaseMFResults):
         target_unit = default_unit if unit is None else unit
         return self._get_scaled(self._rate_cov, default_unit, target_unit)
 
-    def _update_exc_stp_variables(self):
-        if self._exc_x_mean is not None and self._exc_y_mean is not None and self._exc_u_mean is not None:
-            return  # Already updated
+    # --- Short-term plasticity ---
+    @property
+    def stp_variables(self) -> tuple[str, ...]:
+        """Names of the available STP time courses, e.g. ('ee_x', 'ee_u', ...)."""
+        return tuple(self._stp_means)
 
-        exc_name = self.network_params.exc_neuron_name
-        synapse_params = self.network_params.network.connectivity[exc_name][exc_name].syn_params
-        if self.ignore_stp:
-            self._exc_x_mean = np.ones_like(self.exc_rate_mean("Hz"))
-            self._exc_y_mean = np.zeros_like(self.exc_rate_mean("Hz"))
-            self._exc_u_mean = np.ones_like(self.exc_rate_mean("Hz"))
-        else:
-            u = getattr(synapse_params, "U", 1.0)
-            tau_rec = getattr(synapse_params, "tau_rec", 0.0)
-            tau_fac = getattr(synapse_params, "tau_fac", 0.0)
+    def stp_mean(self, projection: str, variable: str, unit=None) -> np.ndarray | None:
+        """
+        STP variable of a projection, shape (T,), or None if the model does not provide it.
 
-            x_steady, u_steady = calculate_steady_state_stp_variables(
-                rate=self.exc_rate_mean("Hz"),
-                u=u,
-                tau_rec=tau_rec,
-                tau_fac=tau_fac
-            )
-
-            self._exc_x_mean = x_steady
-            self._exc_y_mean = 1 - x_steady
-            self._exc_u_mean = u_steady
-
-
-    def _update_inh_stp_variables(self):
-        if self._inh_x_mean is not None and self._inh_y_mean is not None and self._inh_u_mean is not None:
-            return  # Already updated
-
-        exc_name = self.network_params.exc_neuron_name
-        inh_name = self.network_params.inh_neuron_name
-        target_name = inh_name if inh_name in self.network_params.network.connectivity else exc_name
-        synapse_params = self.network_params.network.connectivity[target_name][inh_name].syn_params
-        if self.ignore_stp:
-            self._inh_x_mean = np.ones_like(self.inh_rate_mean("Hz"))
-            self._inh_y_mean = np.zeros_like(self.inh_rate_mean("Hz"))
-            self._inh_u_mean = np.ones_like(self.inh_rate_mean("Hz"))
-        else:
-            u = getattr(synapse_params, "U", 1.0)
-            tau_rec = getattr(synapse_params, "tau_rec", 0.0)
-            tau_fac = getattr(synapse_params, "tau_fac", 0.0)
-
-            x_steady, u_steady = calculate_steady_state_stp_variables(
-                rate=self.inh_rate_mean("Hz"),
-                u=u,
-                tau_rec=tau_rec,
-                tau_fac=tau_fac
-            )
-
-            self._inh_x_mean = x_steady
-            self._inh_y_mean = 1 - x_steady
-            self._inh_u_mean = u_steady
-
-    def exc_x_mean(self, unit=None):
-        default_unit = self.DEFAULT_UNITS["exc_x_mean"]
+        Parameters
+        ----------
+        projection : str
+            Target-source code, e.g. 'ei' = synapses onto E from I.
+        variable : str
+            'x', 'u' or 'y' (see `data_structures.base.STP_VARIABLES`).
+        """
+        if variable not in STP_VARIABLES:
+            raise ValueError(f"Unknown STP variable '{variable}'. Expected one of {STP_VARIABLES}.")
+        name = f"{projection}_{variable}"
+        default_unit = self.DEFAULT_UNITS[f"{name}_mean"]
         target_unit = default_unit if unit is None else unit
-        return self._get_scaled(self._exc_x_mean, default_unit, target_unit)
+        return self._get_scaled(self._stp_means.get(name), default_unit, target_unit)
 
-    def exc_y_mean(self, unit=None):
-        default_unit = self.DEFAULT_UNITS["exc_y_mean"]
-        target_unit = default_unit if unit is None else unit
-        return self._get_scaled(self._exc_y_mean, default_unit, target_unit)
+    # --- Derived quantities (membrane potential fluctuation formulas applied to the MF rates) ---
+    def _mpf(self, target_name: str) -> MembranePotentialFluctuations:
+        if target_name == self.network_params.exc_neuron_name:
+            return self._exc_neuron_mpf
+        if target_name == self.network_params.inh_neuron_name:
+            return self._inh_neuron_mpf
+        raise ValueError(f"Unknown target neuron name: {target_name}")
 
-    def exc_u_mean(self, unit=None):
-        default_unit = self.DEFAULT_UNITS["exc_u_mean"]
-        target_unit = default_unit if unit is None else unit
-        return self._get_scaled(self._exc_u_mean, default_unit, target_unit)
+    def _source_rates(self, target_name: str) -> dict[str, np.ndarray]:
+        """Rates [Hz] of all sources projecting onto `target_name`."""
+        # NOTE: external populations are still identified by name here (see todo.md, hard-coded population names)
+        all_rates = {
+            self.network_params.exc_neuron_name: self.exc_rate_mean("Hz"),
+            self.network_params.inh_neuron_name: self.inh_rate_mean("Hz"),
+            "stim_neuron": self.stim_rate_mean("Hz"),
+            "drive_neuron": self.drive_rate_mean("Hz"),
+        }
+        return {source: all_rates[source] for source in self._mpf(target_name).synapse_params}
 
-    def inh_x_mean(self, unit=None):
-        default_unit = self.DEFAULT_UNITS["inh_x_mean"]
-        target_unit = default_unit if unit is None else unit
-        return self._get_scaled(self._inh_x_mean, default_unit, target_unit)
+    def _effective_weight(self, target_name: str, source_name: str, rate: np.ndarray) -> np.ndarray:
+        """
+        Effective synaptic weight [nS] of source -> target: weight * u * x.
+        Uses the model's STP time courses for internal projections when available,
+        otherwise the steady-state STP at the source rate (static synapses: weight).
+        """
+        internal = (self.network_params.exc_neuron_name, self.network_params.inh_neuron_name)
+        if source_name in internal:
+            projection = self.network_params.projection_code(target_name, source_name)
+            x = self.stp_mean(projection, "x")
+            u = self.stp_mean(projection, "u")
+            if x is not None and u is not None:
+                return x * u * self.network_params.network.connectivity[target_name][source_name].syn_params.weight
 
-    def inh_y_mean(self, unit=None):
-        default_unit = self.DEFAULT_UNITS["inh_y_mean"]
-        target_unit = default_unit if unit is None else unit
-        return self._get_scaled(self._inh_y_mean, default_unit, target_unit)
+        mpf = self._mpf(target_name)
+        return mpf._weight_effective(rate, **mpf.synapse_params[source_name])
 
-    def inh_u_mean(self, unit=None):
-        default_unit = self.DEFAULT_UNITS["inh_u_mean"]
-        target_unit = default_unit if unit is None else unit
-        return self._get_scaled(self._inh_u_mean, default_unit, target_unit)
+    def _voltage_mean(self, target_name: str, adaptation: np.ndarray) -> np.ndarray:
+        rates = self._source_rates(target_name)
+        effective_weights = {source: self._effective_weight(target_name, source, rate) for source, rate in rates.items()}
+        return self._mpf(target_name).voltage_mean(
+            rates=rates,
+            effective_weights=effective_weights,
+            adaptation=adaptation,
+        )
 
     def exc_voltage_mean(self, unit=None):
-        rates={
-            "exc_neuron": self.exc_rate_mean("Hz"),
-            "inh_neuron": self.inh_rate_mean("Hz"),
-            "stim_neuron": self.stim_rate_mean("Hz"),
-            "drive_neuron": self.drive_rate_mean("Hz"),
-        }
-
-        effective_weights={}
-        exc_name = self.network_params.exc_neuron_name
-        inh_name = self.network_params.inh_neuron_name
-        if self._exc_x_mean is not None:
-            effective_weights["exc_neuron"] = self.exc_x_mean()*self.exc_u_mean()*self.network_params.network.connectivity[exc_name]["exc_neuron"].syn_params.weight
-        if self._inh_x_mean is not None:
-            effective_weights["inh_neuron"] = self.inh_x_mean()*self.inh_u_mean()*self.network_params.network.connectivity[exc_name]["inh_neuron"].syn_params.weight
-        for source_neuron_name in rates:
-            if source_neuron_name not in effective_weights:
-                effective_weights[source_neuron_name] = self._exc_neuron_mpf._weight_effective(rates[source_neuron_name], **self._exc_neuron_mpf.synapse_params[source_neuron_name])
-
-        return self._exc_neuron_mpf.voltage_mean(
-            rates=rates,
-            effective_weights=effective_weights,
-            adaptation=self.exc_adaptation_mean("nA"),
-        )
-
+        default_unit = self.DEFAULT_UNITS["exc_voltage_mean"]
+        target_unit = default_unit if unit is None else unit
+        voltage = self._voltage_mean(self.network_params.exc_neuron_name, self.exc_adaptation_mean("nA"))
+        return self._get_scaled(voltage, default_unit, target_unit)
 
     def inh_voltage_mean(self, unit=None):
-        rates={
-            "exc_neuron": self.exc_rate_mean("Hz"),
-            "inh_neuron": self.inh_rate_mean("Hz"),
-            "stim_neuron": self.stim_rate_mean("Hz"),
-            "drive_neuron": self.drive_rate_mean("Hz"),
-        }
-
-        effective_weights={}
-        exc_name = self.network_params.exc_neuron_name
-        inh_name = self.network_params.inh_neuron_name
-        target_name = inh_name if inh_name in self.network_params.network.connectivity else exc_name
-        if self._exc_x_mean is not None:
-            effective_weights["exc_neuron"] = self.exc_x_mean()*self.exc_u_mean()*self.network_params.network.connectivity[target_name]["exc_neuron"].syn_params.weight
-        if self._inh_x_mean is not None:
-            effective_weights["inh_neuron"] = self.inh_x_mean()*self.inh_u_mean()*self.network_params.network.connectivity[target_name]["inh_neuron"].syn_params.weight
-        for source_neuron_name in rates:
-            if source_neuron_name not in effective_weights:
-                effective_weights[source_neuron_name] = self._inh_neuron_mpf._weight_effective(rates[source_neuron_name], **self._inh_neuron_mpf.synapse_params[source_neuron_name])
-
-        return self._inh_neuron_mpf.voltage_mean(
-            rates=rates,
-            effective_weights=effective_weights,
-            adaptation=self.inh_adaptation_mean("nA"),
-        )
+        default_unit = self.DEFAULT_UNITS["inh_voltage_mean"]
+        target_unit = default_unit if unit is None else unit
+        voltage = self._voltage_mean(self.network_params.inh_neuron_name, self.inh_adaptation_mean("nA"))
+        return self._get_scaled(voltage, default_unit, target_unit)
 
     def _conductance_mean(self, source_neuron_name, target_neuron_name, unit=None):
         print(f"WARNING: _conductance_mean is a draft implementation and unit conversion may not work properly.")
 
-        if target_neuron_name == self.network_params.exc_neuron_name:
-            mpf = self._exc_neuron_mpf
-        elif target_neuron_name == self.network_params.inh_neuron_name:
-            mpf = self._inh_neuron_mpf
-        else:
-            raise ValueError(f"Unknown target neuron name: {target_neuron_name}")
-
-        synapse_params = mpf.synapse_params[source_neuron_name]
-
-        if source_neuron_name == self.network_params.exc_neuron_name:
-            rate = self.exc_rate_mean("Hz")
-            if self._exc_x_mean is not None:
-                effective_weight = self.exc_x_mean()*self.exc_u_mean()*self.network_params.network.connectivity[target_neuron_name][source_neuron_name].syn_params.weight
-            else:
-                effective_weight = mpf._weight_effective(rate, **synapse_params)
-        elif source_neuron_name == self.network_params.inh_neuron_name:
-            rate = self.inh_rate_mean("Hz")
-            if self._inh_x_mean is not None:
-                effective_weight = self.inh_x_mean()*self.inh_u_mean()*self.network_params.network.connectivity[target_neuron_name][source_neuron_name].syn_params.weight
-            else:
-                effective_weight = mpf._weight_effective(rate, **synapse_params)
-        elif source_neuron_name == "stim_neuron":
-            rate = self.stim_rate_mean("Hz")
-            effective_weight = mpf._weight_effective(rate, **synapse_params)
-        elif source_neuron_name == "drive_neuron":
-            rate = self.drive_rate_mean("Hz")
-            effective_weight = mpf._weight_effective(rate, **synapse_params)
-        else:
-            raise ValueError(f"Unknown source neuron name: {source_neuron_name}")
+        mpf = self._mpf(target_neuron_name)
+        rate = self._source_rates(target_neuron_name)[source_neuron_name]
+        effective_weight = self._effective_weight(target_neuron_name, source_neuron_name, rate)
 
         conductance =  mpf._conductance_mean(
             rate=rate,
             effective_weight=effective_weight,
-            **synapse_params
+            **mpf.synapse_params[source_neuron_name]
         )
 
-        # WARNING: This is a temporary solution to handle the unit conversion. 
+        # WARNING: This is a temporary solution to handle the unit conversion.
         # The proper way would be to implement unit handling in the MembranePotentialFluctuations class.
         # and also to implement default units for the conductance in the DEFAULT_UNITS dictionary.
         default_unit = self.DEFAULT_UNITS["ee_conductance_mean"]
@@ -338,27 +252,15 @@ class MFResults(BaseMFResults):
 
 
     def ee_conductance_mean(self, unit=None):
-
-        # following is draft and ideas 
-        # target neuron is exc_neuron (the first letter)
-        # what is source?
-        #   - either exc neuron
-        #   - or all excitatory sources (exc, stim, drive)?
-
-        # Also this should be possible to make more generic, so that we can have a method for any source-target pair, e.g. ee, ei, ie, ii.
-
-        # so far exc_neuron -> exc_neuron
-
+        # onto exc from exc
         return self._conductance_mean(
             source_neuron_name=self.network_params.exc_neuron_name,
             target_neuron_name=self.network_params.exc_neuron_name,
             unit=unit
         )
 
-    
     def ei_conductance_mean(self, unit=None):
-        #  from inh to exc 
-        
+        # onto exc from inh
         return self._conductance_mean(
             source_neuron_name=self.network_params.inh_neuron_name,
             target_neuron_name=self.network_params.exc_neuron_name,
@@ -366,7 +268,7 @@ class MFResults(BaseMFResults):
         )
 
     def ie_conductance_mean(self, unit=None):
-        # from exc to inh
+        # onto inh from exc
         return self._conductance_mean(
             source_neuron_name=self.network_params.exc_neuron_name,
             target_neuron_name=self.network_params.inh_neuron_name,
@@ -374,7 +276,7 @@ class MFResults(BaseMFResults):
         )
 
     def ii_conductance_mean(self, unit=None):
-        # from inh to inh
+        # onto inh from inh
         return self._conductance_mean(
             source_neuron_name=self.network_params.inh_neuron_name,
             target_neuron_name=self.network_params.inh_neuron_name,

@@ -273,7 +273,8 @@ class AggregatorVoltageTracePlotter(AggregatorTracePlot):
 
 
 class AggregatorSTPTracePlotter(AggregatorTracePlot):
-    DEFAULT_VARIABLES = ["exc_x_mean", "exc_u_mean"]
+    # STP variables per projection (target-source code), e.g. "ee_x" = x of the synapses onto E from E
+    DEFAULT_VARIABLES = ["ee_x_pop_mean", "ee_u_pop_mean"]
     DEFAULT_PARAMS = {
         **AggregatorTracePlot.DEFAULT_PARAMS,
         "title": "STP Adaptation Variables",
@@ -282,10 +283,10 @@ class AggregatorSTPTracePlotter(AggregatorTracePlot):
         "ylabel": "STP Adaptation Variables",
         "y_unit": None,
         "colors": {
-            "exc_x_mean": "blue",
-            "exc_u_mean": "purple",
-            "inh_x_mean": "cyan",
-            "inh_u_mean": "magenta",
+            "ee_x_pop_mean": "blue",
+            "ee_u_pop_mean": "purple",
+            "ei_x_pop_mean": "cyan",
+            "ei_u_pop_mean": "magenta",
         },
     }
 

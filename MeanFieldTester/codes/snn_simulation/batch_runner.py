@@ -1,4 +1,5 @@
 import os
+import traceback
 import multiprocessing as mp
 import numpy as np
 from typing import List, Dict, Any, Union
@@ -7,6 +8,7 @@ from .pynn_simulator import PyNNSNNSimulator
 from .config import SpikingNeuralNetworkSimulationConfig
 from ..stimuli.config import BaseStimulusConfig
 from ..network_params.models import BiologicalParameters
+from ..utils.file_helpers import NPZ_UNITS_KEY, encode_npz_units
 
 
 def _snn_simulation_worker(task_tuple: tuple) -> Dict[str, Any]:
@@ -114,6 +116,9 @@ def _snn_simulation_worker(task_tuple: tuple) -> Dict[str, Any]:
                 if not found_override and extra_key not in save_dict:
                     raise KeyError(f"Could not resolve extra_key '{extra_key}' on SNNResults.")
 
+        # 5. Units of every saved array (stored in the same file)
+        save_dict[NPZ_UNITS_KEY] = encode_npz_units({key: results.default_unit(key) for key in save_dict})
+
         np.savez_compressed(file_path, **save_dict)
 
         metadata["status"] = "SUCCESS"
@@ -121,6 +126,7 @@ def _snn_simulation_worker(task_tuple: tuple) -> Dict[str, Any]:
 
     except Exception as e:
         metadata["error"] = str(e)
+        metadata["traceback"] = traceback.format_exc()
     finally:
         try:
             simulator.end()

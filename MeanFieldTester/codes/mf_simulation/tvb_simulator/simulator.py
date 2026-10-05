@@ -4,11 +4,12 @@ from typing import Any
 
 from ..base import BaseMFSimulator
 from ..config import MeanFieldSimulationConfig
-from ...network_params.models import BiologicalParameters
+from ...network_params.models import BiologicalParameters, INTERNAL_PROJECTIONS
 from ...stimuli.config import BaseStimulusConfig
-from .models.factory import setup_tvb_model
+from .models.factory import setup_tvb_model, MODEL_STP_MODES
 from .stimuli import prepare_stimulus
 from ...utils.array_helpers import convert_to_array
+from ...utils.stp_helpers import calculate_steady_state_stp_variables
 from ...data_structures.mf_simulation import MFResults
 
 
@@ -199,7 +200,11 @@ class TVBMFSimulator(BaseMFSimulator):
         keys = self.model.state_variables
         results_dict = {key: results_raw[:, i] for i, key in enumerate(keys)}
 
-        result = MFResults( 
+        # First-order models have no covariances (C_ee, C_ii, C_ei)
+        exc_rate_var = results_dict.get("C_ee")
+        inh_rate_var = results_dict.get("C_ii")
+
+        result = MFResults(
             label_name = "MFResults",
             mf_sim_params = self.mf_sim_params,
             network_params = self.network_params,
@@ -207,20 +212,15 @@ class TVBMFSimulator(BaseMFSimulator):
             stim_params = stim_params,
             times = times,
             exc_rate_mean = results_dict.get("E", None),
-            exc_rate_std = np.sqrt(results_dict.get("C_ee", None)),
+            exc_rate_std = None if exc_rate_var is None else np.sqrt(exc_rate_var),
             inh_rate_mean = results_dict.get("I", None),
-            inh_rate_std = np.sqrt(results_dict.get("C_ii", None)),
+            inh_rate_std = None if inh_rate_var is None else np.sqrt(inh_rate_var),
             stim_rate_mean = results_dict.get("stimulus", None),
             drive_rate_mean = np.ones_like(times.astype(float))*stim_params.drive_rate,
             exc_adaptation_mean = results_dict.get("W_e", None),
             inh_adaptation_mean = results_dict.get("W_i", None),
             rate_cov = results_dict.get("C_ei", None),
-            exc_x_mean = results_dict.get("X_e", None),
-            exc_y_mean = results_dict.get("Y_e", None),
-            exc_u_mean = results_dict.get("U_dyn_e", None),
-            inh_x_mean = results_dict.get("X_i", None),
-            inh_y_mean = results_dict.get("Y_i", None),
-            inh_u_mean = results_dict.get("U_dyn_i", None),
+            stp_means = self._stp_means(results_dict),
             input_units = {
                 "times" : "ms",
                 "exc_rate_mean" : "kHz",
@@ -231,11 +231,65 @@ class TVBMFSimulator(BaseMFSimulator):
                 "drive_rate_mean" : "Hz",  # this is not typo! we compute drive_rate_mean above directly in MFT units, not TVB units
                 "exc_adaptation_mean" : "pA",
                 "inh_adaptation_mean" : "pA",
-                "rate_cov" : "Hz^2",
+                "rate_cov" : "kHz^2",  # TVB C_ei is in kHz^2 (see TVB_STATE_VARIABLES_MAPPING)
             },
         )
 
         return result
+
+    def _stp_means(self, results_dict: dict) -> dict[str, np.ndarray]:
+        """
+        STP time courses per internal projection ("ee_x", "ee_u", ...), consistent with how the
+        current model treats the synapses (see MODEL_STP_MODES):
+
+        - dynamic:       x = X, y = Y, u = the model's utilisation (U if tau_fac == 0, else U_dyn*(1-U) + U);
+                         the efficacy factor used by the model is u*x
+        - asymptotic:    steady-state x, u at the source rate (y not modelled)
+        - static_weight: x = 1, u = U of the projection onto E from the same source (legacy models use
+                         static weights weight*U and the projections onto E for both targets)
+        """
+        model_name = getattr(self.mf_sim_params.model, "value", self.mf_sim_params.model)
+        mode = MODEL_STP_MODES[model_name]
+        network = self.network_params
+        exc_name = network.exc_neuron_name
+        rates_hz = {
+            exc_name: results_dict["E"] * 1e3,  # TVB rates are in kHz
+            network.inh_neuron_name: results_dict["I"] * 1e3,
+        }
+
+        stp_means = {}
+        for projection in INTERNAL_PROJECTIONS:
+            _, source_name = network.projection_populations(projection)
+            if mode == "static_weight":
+                conn = network.network.connectivity[exc_name].get(source_name)
+            else:
+                conn = network.connection(projection)
+            if conn is None:
+                continue
+
+            U = getattr(conn.syn_params, "U", 1.0)
+            if mode == "dynamic":
+                stp_means[f"{projection}_x"] = results_dict[f"X_{projection}"]
+                stp_means[f"{projection}_y"] = results_dict[f"Y_{projection}"]
+                stp_means[f"{projection}_u"] = self.model._utilization(
+                    results_dict[f"U_dyn_{projection}"], U, getattr(conn.syn_params, "tau_fac", 0.0)
+                )
+            elif mode == "asymptotic":
+                x_steady, u_steady = calculate_steady_state_stp_variables(
+                    rate=rates_hz[source_name],
+                    u=U,
+                    tau_rec=getattr(conn.syn_params, "tau_rec", 0.0),
+                    tau_fac=getattr(conn.syn_params, "tau_fac", 0.0),
+                )
+                stp_means[f"{projection}_x"] = x_steady
+                stp_means[f"{projection}_u"] = u_steady
+            elif mode == "static_weight":
+                stp_means[f"{projection}_x"] = np.ones_like(rates_hz[source_name])
+                stp_means[f"{projection}_u"] = np.full_like(rates_hz[source_name], U)
+            else:
+                raise ValueError(f"Unknown STP mode '{mode}' for model '{model_name}'.")
+
+        return stp_means
 
     def setup_stimulus(self, stim_params: BaseStimulusConfig) -> None:
 

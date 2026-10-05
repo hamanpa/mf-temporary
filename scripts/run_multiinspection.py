@@ -21,6 +21,7 @@ if str(mean_field_path) not in sys.path:
     sys.path.append(str(mean_field_path))
 
 from codes.controller.config import load_workflow_config
+from codes.controller.run_params import base_config_paths, load_raw_configs, get_by_path, build_run_params
 from codes.stimuli.loader import load_stimuli_config
 from codes.network_params.loader import load_network_parameters
 
@@ -70,38 +71,14 @@ def generate_unique_sim_id(combination, existing_ids, length=8) -> str:
     raise ValueError("Unable to generate a unique simulation ID. Consider increasing hash length.")
 
 
-def get_default_param_value(network_params, sim_params, stimuli_config, param_path: str):
-    """Extracts default value for a parameter path from default config objects."""
-    subpath = param_path
-    if param_path.startswith("network."):
-        subpath = param_path[len("network."):]
-        obj = network_params
-    elif param_path.startswith("workflow.") or param_path.startswith("sim."):
-        prefix = "workflow." if param_path.startswith("workflow.") else "sim."
-        subpath = param_path[len(prefix):]
-        obj = sim_params
-    elif param_path.startswith("stimulus.") or param_path.startswith("stimuli."):
-        prefix = "stimulus." if param_path.startswith("stimulus.") else "stimuli."
-        subpath = param_path[len(prefix):]
-        parts = subpath.split('.', 1)
-        if len(parts) == 2 and parts[0] in stimuli_config:
-            obj = stimuli_config[parts[0]]
-            subpath = parts[1]
-        else:
-            obj = stimuli_config[list(stimuli_config.keys())[0]]
-    else:
-        obj = network_params
-
-    keys = subpath.split('.')
-    curr = obj
-    for k in keys:
-        if isinstance(curr, dict):
-            curr = curr[k]
-        elif hasattr(curr, k):
-            curr = getattr(curr, k)
-        else:
-            raise AttributeError(f"Could not find default parameter '{k}' in path '{param_path}'")
-    return curr
+def get_default_param_value(raw_configs, param_path: str):
+    """
+    Base value of a parameter path, resolved on the raw YAML configs exactly as the worker resolves it.
+    Returns "" for a value that is absent in the base config (e.g. `U` of a static synapse), meaning
+    "not set": the worker then keeps the base configuration for that row.
+    """
+    value = get_by_path(raw_configs, param_path)
+    return "" if value is None else value
 
 
 def parse_val(val_str: str):
@@ -130,7 +107,7 @@ def normalize_val(val):
     return val
 
 
-def sync_param_combinations_csv(csv_path: Path, inspected_params, network_params, sim_params, stimuli_config, override=False):
+def sync_param_combinations_csv(csv_path: Path, inspected_params, raw_configs, override=False):
     """
     Syncs param_combinations.csv:
     1. If CSV doesn't exist or override mode is active, generates/updates rows.
@@ -187,7 +164,7 @@ def sync_param_combinations_csv(csv_path: Path, inspected_params, network_params
         updated_header = existing_header + new_params_to_add
         updated_existing_rows = []
         for row in existing_rows:
-            new_defaults = [str(get_default_param_value(network_params, sim_params, stimuli_config, p)) for p in new_params_to_add]
+            new_defaults = [str(get_default_param_value(raw_configs, p)) for p in new_params_to_add]
             updated_existing_rows.append(row + new_defaults)
         existing_header = updated_header
         existing_rows = updated_existing_rows
@@ -218,7 +195,7 @@ def sync_param_combinations_csv(csv_path: Path, inspected_params, network_params
 
         # New combination not present in CSV
         sim_id = generate_unique_sim_id(combo, existing_ids)
-        row_dict = {p: get_default_param_value(network_params, sim_params, stimuli_config, p) for p in existing_params}
+        row_dict = {p: get_default_param_value(raw_configs, p) for p in existing_params}
         for p_name, p_val in zip(param_names, combo):
             row_dict[p_name] = p_val
 
@@ -313,7 +290,7 @@ def main():
 
     args = parser.parse_args()
 
-    project_dir = Path(args.project_dir)
+    project_dir = Path(args.project_dir).resolve()  # resolve before chdir, so relative paths work too
     results_path = project_dir
     os.chdir(results_path)
 
@@ -326,15 +303,12 @@ def main():
     imgs_save_dir = project_dir / "imgs"
     imgs_save_dir.mkdir(parents=True, exist_ok=True)
 
-    # Load base parameters
-    if args.test:
-        network_params = load_network_parameters(params_save_dir / "test_network_params.yaml")
-        sim_params = load_workflow_config(params_save_dir / "test_workflow_params.yaml")
-        stimuli_config = load_stimuli_config(params_save_dir / "test_stimuli.yaml")
-    else:
-        network_params = load_network_parameters(params_save_dir / "network_params.yaml")
-        sim_params = load_workflow_config(params_save_dir / "workflow_params.yaml")
-        stimuli_config = load_stimuli_config(params_save_dir / "default_stimuli.yaml")
+    # Load base parameters (validated) and their raw YAML form (used to resolve parameter paths)
+    config_paths = base_config_paths(params_save_dir, test=args.test)
+    network_params = load_network_parameters(config_paths["network"])
+    sim_params = load_workflow_config(config_paths["workflow"])
+    stimuli_config = load_stimuli_config(config_paths["stimuli"])
+    raw_configs = load_raw_configs(params_save_dir, test=args.test)
 
     # Define inspected parameters dictionary
     inspected_params = load_inspected_params(params_save_dir / "inspected_params.yaml")
@@ -346,14 +320,24 @@ def main():
     new_jobs, header, all_rows = sync_param_combinations_csv(
         csv_path=csv_path,
         inspected_params=inspected_params,
-        network_params=network_params,
-        sim_params=sim_params,
-        stimuli_config=stimuli_config,
+        raw_configs=raw_configs,
         override=args.override
     )
 
     print(f"Total parameter combinations in CSV: {len(all_rows)}")
     print(f"New combinations to submit: {len(new_jobs)}")
+
+    # Validate every combination BEFORE submitting anything (same build as in the worker, nothing saved)
+    invalid = {}
+    for sim_id, p_dict in new_jobs:
+        updates = {path: (parse_val(value) if isinstance(value, str) else value) for path, value in p_dict.items()}
+        try:
+            build_run_params(raw_configs, updates)
+        except Exception as e:
+            invalid[sim_id] = f"{type(e).__name__}: {e}"
+    if invalid:
+        details = "\n".join(f"  - {sim_id}: {error}" for sim_id, error in invalid.items())
+        raise ValueError(f"{len(invalid)} parameter combination(s) are invalid; nothing was submitted:\n{details}")
 
     if sim_params.neuron_simulation.cpus > args.cpus:
         raise ValueError(f"Workflow config specifies {sim_params.neuron_simulation.cpus} CPUs, but only {args.cpus} CPUs are available. Please adjust the workflow config or provide more CPUs.")

@@ -63,6 +63,8 @@ These are the rules the code follows. Known places where it doesn't are in §10.
 | `plotting/` | Plot classes and figure "hooks" (§8). |
 | `utils/` | Array, dict, file, spike→rate and STP helpers. |
 
+**API vs scripts.** `MeanFieldTester/codes` provides the API. `scripts/` is the collection of runnable entry points built on it (for `sbatch`), reusable across projects; a setup too specific or too tweaked for `controller/` belongs there. Simulations run from scripts; notebooks are for small tests and for exploring results.
+
 Outside the package:
 - `scripts/` holds the cluster entry points (§7.1).
 - `params/` holds template configs.
@@ -106,7 +108,12 @@ There are three YAML files per project, all validated by pydantic. YAML anchors 
   - `network.size`: population sizes, including external sources.
   - `network.connectivity`: nested **`{target: {source: ConnectionDefinition}}`**. Each `ConnectionDefinition` has `rule` (`fixed_prob`/`fixed_in`/`fixed_out`), `val`, and `syn_type` (`static_synapse` | `tsodyks_synapse`) with `syn_params`. Only internal populations can be targets.
   - The root validator attaches population sizes to each connection, so `conn_num` (K) and `conn_prob` (p) are both available whichever rule was used.
-  - Derived properties: `internal_neurons`, `exc_neuron_name`, `inh_neuron_name`, `internal_size`, `g`.
+  - Derived properties: `internal_neurons`, `exc_neuron_name`, `inh_neuron_name`, `internal_size`, `g`. Projection helpers: `projection_populations('ei')`, `projection_code(target, source)`, `connection('ee')`.
+  - **Synapse parameter models use `extra="forbid"`, and `syn_params` must match `syn_type`.** `syn_params` is a plain Union, so without this a Tsodyks dict could validate as static and silently drop STP.
+  - **Synapse normalisation** (`network_params/normalization.py`) runs on the raw dict before validation, in `load_network_parameters` and in sweeps alike:
+    - **Demotion:** `tsodyks_synapse` with `tau_rec == 0` becomes static with weight·U. NEST requires `tau_rec > 0`, so `TsodyksSynapseParams.tau_rec` is `gt=0`.
+    - **Promotion:** a static synapse given STP keys with `tau_rec > 0` becomes Tsodyks with weight/U, so the efficacy is unchanged (the inverse of demotion). `U` and `tau_rec` are required, `tau_fac` defaults to 0, and `tau_psc` is the target's `tau_syn_E`/`tau_syn_I` according to the source type.
+  - YAML anchors are un-shared after loading (`unshare`). PyYAML returns one object per anchor, so otherwise changing `ee` would also change `ie` when both use `*conn_ee`.
 - **`workflow_params.yaml` → `WorkflowConfig`**: `neuron_simulation`, `snn_simulation`, and `mf_models: {name: MeanFieldSimulationConfig}`. Each MF model carries its own `transfer_function` config, so models can differ in their TF.
 - **`stimuli.yaml` → `{name: StimulusConfig}`**: discriminated on `pattern` (`NoStimulus`, `PulseTrain`, `Sinusoidal`, `TwoSidedGaussian`). Uses `extra="forbid"`, so typos are errors.
 
@@ -117,11 +124,13 @@ Sweeps add `inspected_params.yaml` (§7.1).
 - **Units live in the schema.** Every physical `Field` states its unit in its description, e.g. `description="Synaptic weight [nS]"`. `translate_params(model, mapping)` parses the `[unit]`, so a field with no unit cannot be converted.
 - **Mappings** are dicts of `TranslationRule(mft_name, sim_unit)` per simulator. PyNN/NEST mappings are in `network_params/mappings.py`; TVB mappings are in `mf_simulation/tvb_simulator/models/factory.py`. Conversion happens only when building a simulator.
 - **`get_unit_multiplier`** handles SI prefixes (k, m, u, n, p) over the bases V, A, F, S, s, Hz, rad, and powers like `Hz^2`. An empty string means unitless.
-- **Results**: each results class stores data in its `DEFAULT_UNITS`. Backends declare non-default input units through `input_units={...}`; `_ingest` converts them on construction. Getters take an optional unit: `res.exc_rate_mean("kHz")`.
+- **Results**: each results class stores data in its `DEFAULT_UNITS`. Backends declare non-default input units through `input_units={...}`; `_ingest` converts them on construction. Getters take an optional unit: `res.exc_rate_mean("kHz")`. `default_unit(name)` resolves the unit of any variable or saved key (`exc_rate_pop_mean` → Hz).
+- **Saved results carry their units.** Every results `.npz` stores a `units` entry, a JSON `{array_key: unit}` (`utils.file_helpers.encode_npz_units`/`decode_npz_units`). It lives in each file rather than in one shared file because files are written by parallel workers. `ResultsAggregator.get_units(...)` reads it.
 
 ### 5.3 Naming conventions
 - `rate`, not nu/activity/fr. `params`, not pars. `mean`/`std`, not mu/sigma, in the public API. Greek-letter names (`mu_V`, `sigma_V`, `T_V`) appear only inside formula code.
 - **Two-letter projection codes are target-source.** `ei` is the projection *onto E from I* (I→E). This matches `W @ rate` and is used throughout: `ee/ei/ie/ii_conductance`, TVB `K_ei`, `Q_ei`, `X_ei`. The external sources are `d` (drive) and `s` (stimulus), e.g. `K_ed`.
+- **STP variables are per projection:** `<projection>_<variable>`, with variable `x` (available resources), `u` (utilisation a spike would use) or `y` (active resources). Examples: `ee_x`, `ei_u`; saved as `ee_x_pop_mean`. The efficacy factor is u·x (times the weight). They are accessed with `stp_mean(projection, variable)` on both SNN and MF results, and `stp_all(...)` on SNN results. See `data_structures.base.STP_VARIABLES`.
 - Population prefixes: `exc_` and `inh_`. Population names in configs: `exc_neuron`, `inh_neuron`, `drive_neuron`, `stim_neuron`.
 - Variable/metric keys: `{variable}_{metric}`, e.g. `exc_rate_pop_mean` or `exc_voltage_time_std`.
   - `_all` means the raw per-neuron array, shape (time, neuron).
@@ -139,10 +148,13 @@ Sweeps add `inspected_params.yaml` (§7.1).
 - **Storage:** data is stored in private attributes (`_exc_rate_mean`) in default units and read through getter methods. Setting a field listed in `DEFAULT_UNITS` after construction raises an error (instances are frozen).
 - **Derived quantities are computed lazily inside results objects:**
   - **SNN rates** are computed from spikes using the smoothing function configured in `snn_simulation.smoothing` (`histogram`, `sliding_window`, `alpha_window`).
-  - **SNN STP variables** (`exc_x`, `exc_u`, …) are reconstructed from spike trains (`utils.snn_helpers.reconstruct_stp_dynamics`).
-  - **SNN statistics** come from generic accessors `get_all`, `get_pop_mean`, `get_pop_std`, `get_time_mean`, `get_time_std`, `get_full_mean`. Workers rely on these.
-  - **MF voltage and conductance** come from `transfer_function.MembranePotentialFluctuations`, applied to the simulated rates. This means `data_structures` depends on `transfer_function`.
-  - **MF STP variables** fall back to the steady-state values for the current rate when the model has no dynamic STP state.
+  - **SNN STP variables** (per projection) are reconstructed offline from the recorded *presynaptic* spikes, using NEST's exact `tsodyks_synapse` update (three-state x/y/z, `u` decaying to 0 between spikes; `utils.snn_helpers.reconstruct_stp_dynamics`). Static synapses give x = 1, u = 1, y = 0. They are not cached, because the (T, N) arrays are large.
+  - **SNN statistics** come from generic accessors `get_all`, `get_pop_mean`, `get_pop_std`, `get_time_mean`, `get_time_std`, `get_full_mean`. Workers rely on these. Unknown variables raise an error; only a variable that was not recorded gives NaN. Errors are not swallowed.
+  - **MF voltage and conductance** come from `transfer_function.MembranePotentialFluctuations`, applied to the simulated rates, with effective weights weight·u·x from the model's STP. This means `data_structures` depends on `transfer_function`.
+  - **MF STP variables** are provided by the simulator according to how the model treats synapses (`MODEL_STP_MODES` in the TVB factory):
+    - `dynamic`: the state variables, with u from the model's `_utilization()`: U without facilitation (τ_fac = 0), otherwise U_dyn·(1−U) + U, where U_dyn is the facilitation variable, 0 at rest;
+    - `asymptotic`: steady state at the source rate;
+    - `static_weight` (legacy): x = 1, u = U.
 - **Persistence:** `BaseResults.save()` pickles. The sweep path saves plain `.npz` instead (§7.1).
 
 ### 6.2 Single neuron and TF fitting
@@ -164,6 +176,8 @@ Sweeps add `inspected_params.yaml` (§7.1).
 `run_tf_fitting_workflow` writes the fitted coefficients into `mf_sim_params.transfer_function.tf_fits[neuron_name]`. In other words, it mutates the config object. The TVB factory then reads `tf_fits` and passes `P_e`/`P_i` to the model, converting to TVB units (×1e-3, mV→V).
 
 Because of this, the TF must be fitted, or `tf_fits` loaded, **before** the same config object is sent to the MF simulation.
+
+In sweeps, the worker then re-saves `data/<id>/params/workflow_params.yaml` with `tf_fits` filled in. `ResultsAggregator.load_transfer_functions(sim_id, mf_model)` rebuilds the fitted TFs from it, with no refitting.
 
 The TF formula exists **twice**: in `NeuroPSICustomTF` (used for fitting and plots) and inside each TVB model's `TF`/`threshold_func` (used during integration). The TVB copy hard-codes the expansion point/norm and the 10 polynomial coefficients without `P_log`.
 
@@ -209,20 +223,29 @@ The TF formula exists **twice**: in `NeuroPSICustomTF` (used for fitting and plo
    - Syncs `P/param_combinations.csv` (`;`-separated, columns `id` + full dotted paths, 8-character md5 IDs):
      - new parameter columns are backfilled with defaults;
      - existing combinations are skipped unless `--override`.
+   - New CSV columns are backfilled with the base value resolved on the raw YAML (`get_by_path`). A value absent in the base config, e.g. `U` of a static synapse, becomes empty, meaning "not set".
+   - **Builds and validates every new combination before submitting anything** (`controller.run_params.build_run_params`). An invalid row stops the submission with a list of errors.
    - Submits one `sbatch` job per new combination. It prints instead when `sbatch` is missing.
 2. **`scripts/inspection_worker.py --id ID --project_dir P --cpus N`**
-   - Loads the base configs and applies the row's values. Prefixes: `network.`, `workflow.`/`sim.`, `stimulus.`/`stimuli.`.
-   - Converts any `tsodyks_synapse` with `tau_rec == 0` to a static synapse with `weight·U`.
+   - **Materialises the run's configs** (`controller.run_params.materialize_run_params`):
+     1. Load the base YAMLs as raw dicts, with anchors un-shared.
+     2. Apply the row's values by dotted path (YAML keys; prefixes `network.`, `workflow.`/`sim.`, `stimulus.`/`stimuli.`; empty values skipped; a missing key is an error, except a new `syn_params` key).
+     3. Normalise the synapses (§5.1) and validate all three configs.
+     4. Save them to `data/ID/params/` and **run from the saved files**.
    - Runs the neuron simulation (`try_load` caches it as `.pkl` in `data/`), saves `data/ID/{neuron}_results_steady_state.npz`, and plots it.
-   - Fits the TFs for every MF model and plots them.
-   - Calls `controller.run_unified_batch_parallel`: an `mp.Pool(cpus, maxtasksperchild=1)` over [stimuli] × [SNN + MF models], with BLAS threads pinned to 1. Each task writes `data/ID/{model}_results_{stim}.npz` with `{variable}_{metric}` keys, chosen by `snn_simulation.saved_variables/saved_metrics/saved_extra_keys`. Each task returns status metadata; a failed task is recorded, it does not crash the batch. A `manifest.json` is written.
+   - Fits the TFs for every MF model, re-saves `data/ID/params/workflow_params.yaml` with `tf_fits`, and plots them.
+   - Calls `controller.run_unified_batch_parallel`: an `mp.Pool(cpus, maxtasksperchild=1)` over [stimuli] × [SNN + MF models], with BLAS threads pinned to 1.
+     - Each task writes `data/ID/{model}_results_{stim}.npz` with `{variable}_{metric}` keys plus `units`. The keys are chosen by `snn_simulation.saved_variables/saved_metrics/saved_extra_keys`; `saved_variables` is validated against `SNNResults.SAVEABLE_VARIABLES` when the config is loaded.
+     - Each task returns status metadata including a traceback; a failed task is recorded, it does not crash the batch.
+     - The manifest is written to `data/ID/manifest.json`.
 3. **`controller.ResultsAggregator(P)`**
    - Loads the CSV into a parameter matrix.
    - Resolves short parameter aliases: any ordered sub-sequence of the dotted path, e.g. `exc_neuron.b`. An ambiguous alias is an error.
    - `get_results(variable, sim_name, stim_name, **filters)` stacks arrays across matching runs, with lazy cached `.npz` loading.
    - `analyze_parameter_grid` finds the varying parameters.
+   - `get_units`, `load_run_params(sim_id)` and `load_transfer_functions(sim_id, mf_model)` read the per-run artefacts.
 
-Project folder layout: `params/`, `param_combinations.csv`, `data/<id>/`, `imgs/<id>/`, `logs/`, `explore_results.ipynb`.
+Project folder layout: `params/`, `param_combinations.csv`, `data/<id>/` (`params/`, `*.npz`, `manifest.json`), `imgs/<id>/`, `logs/`, `explore_results.ipynb`.
 
 ### 7.2 Other entry points
 - **`controller.run_basic_workflow(network_params, stimuli, workflow_config)`**: an in-memory, single-process pipeline. It runs neuron simulation → TF fit per MF model → SNN per stimulus → each MF model per stimulus, and returns a dict of results objects. It writes nothing to disk. Useful in notebooks; the sweep path does not use it.

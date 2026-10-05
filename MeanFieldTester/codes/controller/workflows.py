@@ -153,8 +153,10 @@ def run_unified_batch_parallel(
         for res in iterator:
             all_metadata.append(res)
 
-    # 6. Write execution manifest
-    manifest_path = os.path.join(output_dir, "manifest.json")
+    # 6. Write execution manifest (next to the run's results; with net_idx, each sweep run has its own folder)
+    manifest_dir = os.path.join(output_dir, str(net_idx)) if net_idx else output_dir
+    os.makedirs(manifest_dir, exist_ok=True)
+    manifest_path = os.path.join(manifest_dir, "manifest.json")
     manifest_data = {
         "output_dir": output_dir,
         "total_tasks": len(all_metadata),

@@ -1,7 +1,8 @@
 from enum import Enum
 from typing import Literal, Dict, Any, List
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from ..neuron_simulation.config import NeuronInitialValuesConfig
+from ..data_structures.snn_simulation import SNNResults
 
 
 class SmoothingConfig(BaseModel):
@@ -52,3 +53,14 @@ class SpikingNeuralNetworkSimulationConfig(BaseModel):
         default_factory=list,
         description="Explicit individual array keys to save on top of saved_metrics (e.g. 'exc_rate_all')."
     )
+
+    @field_validator("saved_variables")
+    @classmethod
+    def _check_saved_variables(cls, value: List[str]) -> List[str]:
+        unknown = [variable for variable in value if variable not in SNNResults.SAVEABLE_VARIABLES]
+        if unknown:
+            raise ValueError(
+                f"Unknown saved_variables {unknown}. Allowed: {list(SNNResults.SAVEABLE_VARIABLES)}. "
+                "STP variables are per projection (target-source), e.g. 'ee_x', 'ei_u', 'ie_y'."
+            )
+        return value

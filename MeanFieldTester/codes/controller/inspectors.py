@@ -9,6 +9,9 @@ import pickle
 
 from .workflows import run_basic_workflow
 from .interfaces import BasicWorkflowHook
+from .run_params import load_run_params
+from ..transfer_function import get_transfer_function
+from ..utils.file_helpers import NPZ_UNITS_KEY, decode_npz_units
 
 from ..data_structures.base import BaseResults, BaseMFResults, BaseSNNResults, BaseInspectionResults
 from ..data_structures.inspection import ModelSummaryInspectionResults, ModelComparisonInspectionResults
@@ -560,9 +563,53 @@ class ResultsAggregator:
 
 
                 with np.load(npz_file, allow_pickle=True) as data:
-                    available_models[model_name]["variables"].update(data.keys())
+                    available_models[model_name]["variables"].update(key for key in data.keys() if key != NPZ_UNITS_KEY)
 
         return available_models
+
+    def get_units(self, sim_id: str, sim_name: str = "SNN", stim_name: str = "SpontActivity") -> Dict[str, str]:
+        """
+        Units {array_key: unit} stored in a run's results file ({} for files saved before units were stored).
+        Arguments as in `get_results`; for neuron grids use sim_name='exc_neuron', stim_name='steady_state'.
+        """
+        file_path = self._resolve_file(sim_id, sim_name, stim_name)
+        with np.load(file_path, allow_pickle=True) as data:
+            return decode_npz_units(data)
+
+    def run_params_dir(self, sim_id: str) -> Path:
+        """Folder with the validated configs a run was simulated with (`data/<sim_id>/params/`)."""
+        return self.data_dir / sim_id / "params"
+
+    def load_run_params(self, sim_id: str):
+        """
+        Loads the configs a run was simulated with: (network_params, workflow_params, stimuli).
+        The workflow params contain the fitted TF coefficients (`mf_models.*.transfer_function.tf_fits`).
+        """
+        params_dir = self.run_params_dir(sim_id)
+        if not params_dir.exists():
+            raise FileNotFoundError(
+                f"No saved run params for '{sim_id}' ({params_dir}). Runs made before run params were saved cannot be reloaded."
+            )
+        return load_run_params(params_dir)
+
+    def load_transfer_functions(self, sim_id: str, mf_model_name: str) -> Dict[str, Any]:
+        """
+        Transfer functions of one MF model of a run, with the coefficients fitted during the run
+        (no refitting): {neuron_name: BaseTransferFunction}.
+        """
+        network_params, workflow_params, _ = self.load_run_params(sim_id)
+        if mf_model_name not in workflow_params.mf_models:
+            raise KeyError(f"MF model '{mf_model_name}' not in run '{sim_id}'. Available: {list(workflow_params.mf_models)}")
+        tf_params = workflow_params.mf_models[mf_model_name].transfer_function
+
+        transfer_functions = {}
+        for neuron_name in network_params.internal_neurons:
+            if neuron_name not in tf_params.tf_fits:
+                raise KeyError(f"Run '{sim_id}', model '{mf_model_name}': no fitted TF coefficients for '{neuron_name}'.")
+            tf = get_transfer_function(tf_params.tf_model.model_name, neuron_name, network_params, tf_params)
+            tf.set_fitted_parameters(tf_params.tf_fits[neuron_name].model_dump())
+            transfer_functions[neuron_name] = tf
+        return transfer_functions
 
     def analyze_parameter_grid(self, params_matrix: np.ndarray, param_names: List[str] = None) -> Dict[str, Any]:
         """
@@ -677,11 +724,8 @@ class ResultsAggregator:
 
         return data_array, filtered_params, self.param_names, filtered_sim_ids
 
-    def _load_variable(self, sim_id: str, sim_name: str, stim_name: str, variable: str) -> np.ndarray:
-        cache_key = (sim_id, sim_name.lower(), stim_name, variable)
-        if cache_key in self._cache:
-            return self._cache[cache_key]
-
+    def _resolve_file(self, sim_id: str, sim_name: str, stim_name: str) -> Path:
+        """Path of the results .npz of (sim_id, model, stimulus)."""
         sim_dir = self.data_dir / sim_id
         safe_stim_name = str(stim_name).replace(" ", "_")
         file_name = f"{sim_name.lower()}_results_{safe_stim_name}.npz"
@@ -697,6 +741,14 @@ class ResultsAggregator:
                     file_path = candidates[0]
                 else:
                     raise FileNotFoundError(f"Result file '{file_name}' not found in '{sim_dir}'")
+        return file_path
+
+    def _load_variable(self, sim_id: str, sim_name: str, stim_name: str, variable: str) -> np.ndarray:
+        cache_key = (sim_id, sim_name.lower(), stim_name, variable)
+        if cache_key in self._cache:
+            return self._cache[cache_key]
+
+        file_path = self._resolve_file(sim_id, sim_name, stim_name)
 
         npz_data = np.load(file_path, allow_pickle=True)
         target_key = variable

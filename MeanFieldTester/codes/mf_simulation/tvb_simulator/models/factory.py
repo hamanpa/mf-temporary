@@ -38,6 +38,21 @@ STP_MODELS_REGISTRY = {
     "stp_dynamic.second_order",
 }
 
+# How each model treats short-term plasticity (used to report STP variables consistently with the model):
+# - "static_weight": legacy models, static weights weight*U, using the projections onto E for both targets
+# - "asymptotic":    weights scaled by the steady-state u*x at the current source rate
+# - "dynamic":       X, Y, U_dyn per projection integrated as state variables
+MODEL_STP_MODES = {
+    "zerlaut2018.first_order": "static_weight",
+    "zerlaut2018.second_order": "static_weight",
+    "divolo2019.first_order": "static_weight",
+    "divolo2019.second_order": "static_weight",
+    "stp_asymptotic.first_order": "asymptotic",
+    "stp_asymptotic.second_order": "asymptotic",
+    "stp_dynamic.first_order": "dynamic",
+    "stp_dynamic.second_order": "dynamic",
+}
+
 
 TVB_NEUROPSI_LEGACY_EXC_NEURON_MAPPING = {
     "g_L": TranslationRule("g_L", sim_unit="nS"),
@@ -127,18 +142,12 @@ TVB_STATE_VARIABLES_MAPPING = {
     "W_i": TranslationRule("inh_adaptation_mean", sim_unit="pA"),
     "noise": TranslationRule("noise_rate", sim_unit="kHz"),
     "stimulus": TranslationRule("stim_rate_mean", sim_unit="kHz"),
-    "X_ee": TranslationRule("exc_stp_x_mean", sim_unit=""),
-    "Y_ee": TranslationRule("exc_stp_y_mean", sim_unit=""),
-    "U_dyn_ee": TranslationRule("exc_stp_u_mean", sim_unit=""),
-    "X_ei": TranslationRule("inh_stp_x_mean", sim_unit=""),
-    "Y_ei": TranslationRule("inh_stp_y_mean", sim_unit=""),
-    "U_dyn_ei": TranslationRule("inh_stp_u_mean", sim_unit=""),
-    "X_ie": TranslationRule("exc_stp_x_mean", sim_unit=""),
-    "Y_ie": TranslationRule("exc_stp_y_mean", sim_unit=""),
-    "U_dyn_ie": TranslationRule("exc_stp_u_mean", sim_unit=""),
-    "X_ii": TranslationRule("inh_stp_x_mean", sim_unit=""),
-    "Y_ii": TranslationRule("inh_stp_y_mean", sim_unit=""),
-    "U_dyn_ii": TranslationRule("inh_stp_u_mean", sim_unit=""),
+    # STP state per projection (target-source code)
+    **{
+        f"{state}_{projection}": TranslationRule(f"{projection}_{field}_mean", sim_unit="")
+        for projection in ("ee", "ei", "ie", "ii")
+        for state, field in (("X", "x"), ("Y", "y"), ("U_dyn", "u_dyn"))
+    },
 }
 
 

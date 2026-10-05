@@ -20,7 +20,8 @@ Last full review against the code: 2026-10-04.
 # ACTIVE
 
 - [ ] (3) **docs**: *Rewrite the documentation set*
-  - Done: `design.md`, `todo.md`, `README.md`. `MeanFieldTester/README.md` was deleted; its content was migrated.
+  - Done: `design.md`, `todo.md`, `README.md`, `CLAUDE.md`. `MeanFieldTester/README.md` was deleted; its content was migrated.
+  - When `workflow.md` exists, update `CLAUDE.md` (Quick facts → point to it) and `README.md` (quick start).
   - Next: `units.md` (include the PyNN `EIF_cond_exp_isfa_ista` units reference: https://pynn.readthedocs.io/en/latest/reference/neuronmodels.html), `workflow.md` (how to run things, and what can be run), `notes.md`.
 
 ---
@@ -60,18 +61,19 @@ Last full review against the code: 2026-10-04.
 
 ## Blockers / wrong results
 
-- [ ] (1) **network_params**: *Finish the migration to the `connectivity` format*
-  - These still read the removed `network_params.synapses`, so they crash:
-    - `SNNResults._compute_stp_variables` (data_structures/snn_simulation.py:318), which breaks the SNN `exc_x`/`exc_u` getters;
-    - `Zerlaut2018TF` and `DiVolo2019TF` (`_get_legacy_params_dict`).
-  - The commented examples in each project's `inspected_params.yaml` still use `network.synapses.*`.
-- [ ] (1) **mf_simulation.tvb_simulator**: *`stp_dynamic` STP state is not passed to MFResults*
-  - The model has `X_ee, Y_ee, U_dyn_ee, X_ei, …`, but `run_stimulus` reads `X_e` / `U_dyn_e`. Those are missing, so `MFResults` silently falls back to steady-state STP. x/u plots for the dynamic model show the asymptotic values.
-  - The `X_e/U_e/X_i/…` aliases in `CustomNeuroPSIInitialValuesConfig` and the workflow YAMLs are left over from the old model.
-- [ ] (1) **data_structures**: *Store STP variables per projection (ee, ei, ie, ii)*
-  - STP is a property of a projection, not of a population. Since the connectivity refactor, ee and ie can have different τ_rec.
-  - `SNNResults` (one `syn_params` per neuron) and `MFResults` (`exc_x`, `inh_u`, …) both assume one STP per population.
-  - Do this together with the fix above. Rename the keys to target-source codes (`ee_x`, …), and update the npz keys and plots.
+- [ ] (1) **projects**: *Update the project YAMLs to the iteration-1 conventions (user)*
+  - `snn_simulation.saved_variables`: `exc_x/exc_u/inh_x/inh_u` are now rejected at load. Use per-projection names `ee_x, ee_u, ei_x, ei_u, ie_x, ie_u, ii_x, ii_u` (and `*_y` if wanted). Affects projects 05 and 06.
+  - `stp_dynamic` `init_values`: set `U_e`/`U_i` (U_dyn) to `[0.0, 0.0]`. The model now uses u = U when τ_fac = 0 regardless, but the init still matters when τ_fac > 0.
+  - The commented examples in `inspected_params.yaml` still use `network.synapses.*`.
+- [ ] (2) **research.stp**: *Re-run the `stp_dynamic` results with τ_rec > 0 (projects 05, 07)*
+  - Until iteration 1, `stp_dynamic` used u = 1 instead of U whenever τ_fac = 0 (U_dyn initialised to 1 and never decaying). The efficacy was too strong: +17% to +67% depending on rate and τ_rec, with too much depletion.
+  - Unaffected: SNN, `divolo2019`, `stp_asymptotic`, TF fits, τ_rec = 0 combinations, fully static networks.
+  - Also unaffected by the fix, but missing in old data: SNN STP variables (they were NaN), `stp_dynamic` x/u (they were steady-state values), and per-run params, `tf_fits` and units (not saved before).
+- [ ] (3) **research.stp**: *Check the effective-synapse steady state at r·τ_rec ≈ 1 (a few Hz)*
+  - `stp_asymptotic` and the TF effective weights (`utils.stp_helpers`) use the regular-spike-train steady state, x* = (1 − e)/(1 − (1 − U)e) with e = exp(−1/(r·τ_rec)).
+  - This is validated for many Poisson synapses at 15/30/80 Hz, τ_rec = 450 ms (projects/09 `tsodyks_inspection_notebook.ipynb`), i.e. r·τ_rec ≈ 7–36.
+  - For one Poisson synapse the exact mean is x* = 1/(1 + U·r·τ_rec) (averaging e^(−Δ/τ_rec) over exponential intervals). The two converge for r·τ_rec ≫ 1, but differ by up to ~20% at r·τ_rec ≈ 0.5–2 (U = 0.6). That is ~1–10 Hz for τ_rec 200–600 ms, the spontaneous regime.
+  - Open question: does the mean over many i.i.d. Poisson synapses approach the regular-train value? Check: repeat the notebook comparison at 1–10 Hz.
 
 ## mf_simulation
 
@@ -84,7 +86,9 @@ Last full review against the code: 2026-10-04.
   - This affects comparisons that include the first ~400 ms (the default `time_average_window` starts at 0).
   - Avoid packing the drive into the `stimulus` state variable: drive and stimulus can have different targets once there is a grid.
 - [ ] (2) **mf_simulation**: *Test the first-order models*
+  - First-order models are used in analyses, so they must be maintained, not just second order.
   - Only `stp_*.first_order` was run, once, in projects/04. `divolo2019.first_order` has never been run.
+  - Iteration 1 fixed a crash when building results (`np.sqrt(None)` on the missing `C_ee`/`C_ii`), so they can't have worked in the sweep path before. Still untested on the cluster.
 - [ ] (3) **mf_simulation**: *Single source of truth for the TF formula*
   - It is implemented twice: `NeuroPSICustomTF`/`MembranePotentialFluctuations`, and `get_fluct_regime_vars`/`TF` in the TVB models.
   - At least add a test that evaluates both with the same coefficients.
@@ -93,6 +97,7 @@ Last full review against the code: 2026-10-04.
 - [ ] (4) **mf_simulation.tvb_simulator**: *Make connectivity/coupling/integrator/monitors configurable*
   - All four are hard-coded: single node, `Linear(a=0.3)`, Heun stochastic, Raw monitor.
   - A multi-node grid (`grid_size > 1`) is a prerequisite for CSNG non-homogeneous connectivity.
+  - Long-term goal: one MF node per spatial tile of a spatially distributed SNN (TVB nodes). This will need non-trivial extensions to `data_structures` (a node dimension in results and npz files).
 - [ ] (4) **mf_simulation.config**: *Remove or implement the `load` mode and the `custom.neuropsi` ModelType*
   - `load` raises `NotImplementedError`. `custom.neuropsi` is in the enum but has no registry entry.
 
@@ -133,14 +138,18 @@ Last full review against the code: 2026-10-04.
   - `rates[neuron_name][~mask] = 1e-9` writes into the caller's arrays.
 - [ ] (3) **transfer_function**: *Make the TF → MF hand-off explicit*
   - `run_tf_fitting_workflow` writes the coefficients into `mf_sim_params.transfer_function.tf_fits` as a hidden side effect.
-  - Return the coefficients instead, and have the caller put them into the MF config.
+  - Return the coefficients instead, and have the caller put them into the MF config. (Since iteration 1 the worker also saves them in `data/<id>/params/workflow_params.yaml`.)
+- [ ] (4) **transfer_function**: *Update the Zerlaut2018/DiVolo2019 TF ports to the `connectivity` format*
+  - `_get_legacy_params_dict` reads the removed `network_params.synapses`, so they crash.
+  - They are comparison references (projects/01 validated our implementation against them, and that check may need repeating), so keep them close to the original code. Same treatment as the legacy MF models. Not urgent.
+  - Once the TF input grid has a drive axis: these ports (and the `zerlaut2018` neuron simulator) only support drive = 0. Their wrapper should take the drive = 0 slice of the 3-D grid, and raise if the grid has no drive = 0 value (the Zerlaut simulator should raise if a non-zero drive grid is requested).
 - [ ] (4) **transfer_function**: *Rename `run_tf_fitting_workflow` or the module*
   - The workflow function also loads fits; it doesn't only fit.
 
 ## data_structures / storage
 
-- [ ] (2) **storage**: *Store units with the saved results*
-  - The `.npz` files hold arrays in default units with no unit metadata. Save a `units` entry, e.g. from `DEFAULT_UNITS`.
+- [ ] (3) **data_structures**: *Unit rescaling for all results*
+  - Unit-aware ingestion and getters exist for some results and simulators only. Elsewhere the units are hard-coded (e.g. the TVB `run_stimulus` `input_units`, `MFResults._conductance_mean` "draft" warning, the plot-side assumptions). Make every results class and backend go through `DEFAULT_UNITS` + `input_units`, consistent with `units.md`.
 - [ ] (3) **storage**: *Stop using pickle for the neuron-results cache*
   - `try_load` caches `SingleNeuronResults` as `.pkl`, which is brittle when classes are renamed. The worker already writes `{neuron}_results_steady_state.npz`, so load from that instead.
 - [ ] (4) **data_structures**: *Rename `_mean`/`_std` getters to `_pop_mean`/`_pop_std`*
@@ -155,8 +164,6 @@ Last full review against the code: 2026-10-04.
   - Flag runaway activity (e.g. high rate in the first 1000 ms) and check whether a steady state was reached before time averaging.
 - [ ] (3) **controller**: *Move `ResultsAggregator` into its own module*
   - It currently lives in `controller/inspectors.py` next to obsolete code.
-- [ ] (3) **scripts.run_multiinspection**: *Relative `--project_dir` breaks*
-  - `main()` does `os.chdir(project_dir)` and then builds `project_dir / "params"` again, so a relative path resolves twice. Resolve the path before the `chdir` (`Path(...).resolve()`), or drop the `chdir`.
 - [ ] (3) **scripts**: *Remove duplicated helpers*
   - `parse_val`, `normalize_val` and `DELIMETER` (sic) are copied in `run_multiinspection.py`, `inspection_worker.py` and `ResultsAggregator`.
 - [ ] (4) **controller.config**: *Template and schema generation*
@@ -165,7 +172,8 @@ Last full review against the code: 2026-10-04.
 ## plotting
 
 - [ ] (3) **plotting**: *No computation inside plots*
-  - `AggregatorNeuronIOCurvePlotter` can fit a TF itself (`_fit_tf_funcs`). Fit outside the plot and pass the fitted TFs in.
+  - `AggregatorNeuronIOCurvePlotter` can fit a TF itself (`_fit_tf_funcs`), and it refits from the project's *base* YAMLs, not from the run's parameters (wrong for swept τ_rec with STP TFs).
+  - Use `ResultsAggregator.load_transfer_functions(sim_id, mf_model)` instead: the run's own fitted TFs, no refitting. This only works for runs made after iteration 1.
 - [ ] (3) **plotting**: *Handle missing data gracefully*
   - `None` when a variable wasn't measured, `None` instead of a results object when a run was skipped, and NaN arrays when an MF field is missing. See `.notes/none_data_handling.md`.
 - [ ] (3) **plotting**: *Diagnostic plots for the TF approach*
@@ -201,7 +209,12 @@ Last full review against the code: 2026-10-04.
 - [ ] (4) **codebase**: *Packaging*
   - Add a `pyproject.toml` and install with `pip install -e`, so the `sys.path.append` hacks in scripts and notebooks can go.
 - [ ] (3) **codebase**: *Make the repo presentable for NeuroPSI*
-  - Commit or ignore projects 04–09; clean the stale config comments (e.g. `zerlaut2018_simulator`/`divolo2019_simulator` in `workflow_params.yaml`).
+  - Commit projects 04–09: params, notebooks, scripts.
+  - Never commit generated results. `.gitignore` currently covers `*data/`, `logs/` and `*.png`; add `projects/*/imgs/`. Note that `*.sbatch` is ignored, so the project launchers are not in git — decide whether that is intended.
+  - Clean the stale config comments (e.g. `zerlaut2018_simulator`/`divolo2019_simulator` in `workflow_params.yaml`).
+- [ ] (3) **params**: *Make root `params/` the home of standard configs*
+  - It should hold a small, fast standard test network (move the `test_*` variants here from the projects) and the configs behind stable/published results.
+  - `projects/*/params` stay as work in progress. Broader test setups go in `MeanFieldTester/tests/` once testing exists.
 - [ ] (4) **codebase**: *Logging instead of `print`*
 - [ ] (4) **codebase**: *Unify docstrings (NumPy style)*
   - Priority: the workflow functions, `run_unified_batch_parallel`, the workers, and `ResultsAggregator`.
@@ -224,6 +237,8 @@ Last full review against the code: 2026-10-04.
 - [ ] **snn_simulation**: *Continuous-epoch stimulation*
   - Only if sequence effects become a topic. See the "clean slate" decision in `design.md` §6.5.
 - [ ] **research**: *QIF neuron models with STP* (Montbrió-type / Helmut Schmidt)
+- [ ] **controller**: *Seed strategy for sweeps*
+  - Currently the same seed is used for every combination (common random numbers). Consider several seeds per combination to estimate SNN variability.
 
 ---
 
@@ -235,6 +250,19 @@ Last full review against the code: 2026-10-04.
 ---
 
 # DONE
+
+Iteration 1 (2026-10-05). Checked on the cluster with projects/10_iteration1_check, except the `U_dyn` fix, which was applied after that run:
+- [x] (1) **network_params**: *Strict synapse models*: `extra="forbid"` plus a `syn_type` ↔ `syn_params` check (a Tsodyks dict could validate as static and drop STP).
+- [x] (1) **network_params**: *Synapse normalisation*: demotion (τ_rec = 0 → static, w·U) and promotion (static + STP keys → Tsodyks, w/U), in `load_network_parameters` and in sweeps; YAML anchors un-shared.
+- [x] (1) **controller/scripts**: *Run materialisation*: the worker applies CSV values to the raw YAML, normalises, validates, saves `data/<id>/params/` and runs from it; `tf_fits` re-saved after fitting. The master validates all new combinations before submitting; new CSV columns default to "" when not set. A relative `--project_dir` works.
+- [x] (1) **data_structures**: *STP per projection* (`ee_x`, `ei_u`, …; `stp_mean(projection, variable)`) in SNN and MF results, the workers and the plots. The `saved_variables` names are validated at load.
+- [x] (1) **utils.snn_helpers**: *SNN STP reconstruction follows NEST `tsodyks_synapse` exactly* (the old one double-applied the u jump; with τ_fac = 0 it used u = U(2 − U)).
+- [x] (1) **data_structures**: *No more silent NaN*: `get_pop_mean`/`get_pop_std`/`_get_raw_all` no longer swallow exceptions (this is what made the SNN STP variables NaN).
+- [x] (1) **mf_simulation**: *`stp_dynamic` STP state reported* per projection (it used to fall back to steady state); legacy/asymptotic report what their model uses.
+- [x] (1) **mf_simulation.models**: *`stp_dynamic` used u = 1 with τ_fac = 0*: `_utilization()` now gives u = U without facilitation; `U_dyn` defaults and templates are initialised to 0.
+- [x] (2) **storage**: *Units in every `.npz`* (`units` entry); `ResultsAggregator.get_units`, `load_run_params`, `load_transfer_functions`.
+- [x] (2) **mf_simulation**: *First-order results crash* (`np.sqrt(None)`) fixed; *`rate_cov` units* (kHz², was off by 1e6) fixed; *swapped Y time constants* (ei/ie) in the dynamic models fixed.
+- [x] (3) **controller**: *Manifest per run* (`data/<id>/manifest.json`; parallel jobs used to overwrite one file).
 
 Verified in the code or in the project READMEs on 2026-10-04:
 - [x] (2) **controller**: *Multi-dimensional inspection*: `run_multiinspection.py` (Cartesian product), joint/tuple parameters (comma keys), adding new combinations to an existing CSV, SLURM submission, and `ResultsAggregator`.
