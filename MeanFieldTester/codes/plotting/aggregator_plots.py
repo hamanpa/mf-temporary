@@ -8,7 +8,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 from .base import BasePlot, EXC_COLOR, INH_COLOR, LINESTYLES
-from ..data_structures.neuron_simulation import SingleNeuronResults, drive_index
+from ..data_structures.neuron_simulation import drive_index
 
 
 def load_neuron_grid_slice(aggregator, sim_id: str, model: str, stim_name: str, variables: List[str], drive_rate: float | None = None) -> Dict[str, np.ndarray]:
@@ -25,7 +25,6 @@ def load_neuron_grid_slice(aggregator, sim_id: str, model: str, stim_name: str, 
     index = drive_index(arrays["drive_rate_grid"], drive_rate)
     return {variable: values[..., index] for variable, values in arrays.items()}
 from ..network_params.translators import get_unit_multiplier
-from ..transfer_function import get_transfer_function
 from ..transfer_function.base import BaseTransferFunction
 
 
@@ -488,95 +487,36 @@ class AggregatorNeuronIOCurvePlotter(BaseAggregatorPlot):
         model: str = "single_neuron",
         tf_funcs: List[BaseTransferFunction] | Dict[str, List[BaseTransferFunction]] | None = None,
         neuron_name: str | None = None,
-        workflow_params=None,
-        network_params=None,
-        mf_model_name: str | None = None,
-        fit_transfer_function: bool = False,
+        mf_model_names: str | List[str] | None = None,
         params: dict = None,
     ):
+        """
+        TF curves are overlaid either from `tf_funcs` (given explicitly, same for every run) or from
+        `mf_model_names`: the TFs of these MF models as fitted during each plotted run
+        (`ResultsAggregator.load_transfer_functions`, read from `data/<id>/params/`; no refitting).
+        `neuron_name` selects the TF (default: `model`, the neuron results file prefix).
+        """
         super().__init__(variables=variables, models=models, stim_name=stim_name, params=params)
         self.model = model
         self.tf_funcs = tf_funcs
-        self.neuron_name = neuron_name
-        self.workflow_params = workflow_params
-        self.network_params = network_params
-        self.mf_model_name = mf_model_name
-        self.fit_transfer_function = fit_transfer_function
+        self.neuron_name = neuron_name or model
+        self.mf_model_names = [mf_model_names] if isinstance(mf_model_names, str) else mf_model_names
 
-    def _load_workflow_params(self):
-        if self.workflow_params is None:
-            return None
-        if isinstance(self.workflow_params, (str, Path)):
-            from ..controller.config import load_workflow_config
-
-            return load_workflow_config(self.workflow_params)
-        return self.workflow_params
-
-    def _get_tf_params(self):
-        workflow_params = self._load_workflow_params()
-        if workflow_params is None:
-            return None
-
-        if hasattr(workflow_params, "transfer_function"):
-            return workflow_params.transfer_function
-
-        mf_models = getattr(workflow_params, "mf_models", None)
-        if not mf_models:
-            raise ValueError("workflow_params contains no mean-field models.")
-        model_name = self.mf_model_name or next(iter(mf_models))
-        if model_name not in mf_models:
-            raise KeyError(f"Mean-field model '{model_name}' not found in workflow_params.")
-        return mf_models[model_name].transfer_function
-
-    def _load_neuron_results(self, aggregator, sim_id: str) -> SingleNeuronResults:
-        fields = [
-            "exc_rate_grid", "inh_rate_grid", "drive_rate_grid", "out_rate_mean", "out_rate_std",
-            "adaptation_mean", "adaptation_std", "voltage_mean", "voltage_std",
-            "voltage_tau", "exc_conductance_mean", "exc_conductance_std",
-            "inh_conductance_mean", "inh_conductance_std",
-        ]
-        data = {}
-        for field in fields:
-            try:
-                data[field] = aggregator._load_variable(
-                    sim_id, self.model, self.stim_name, field
-                )
-            except (FileNotFoundError, KeyError):
-                data[field] = None
-
-        required = ["exc_rate_grid", "inh_rate_grid", "out_rate_mean"]
-        missing = [field for field in required if data[field] is None]
-        if missing:
-            raise ValueError(
-                f"Cannot fit a transfer function: missing neuron result fields {missing}."
-            )
-        return SingleNeuronResults(neuron_name=self.neuron_name, **data)
-
-    def _fit_tf_funcs(self, aggregator, sim_id: str):
-        tf_params = self._get_tf_params()
-        if tf_params is None:
-            return None
-        if self.neuron_name is None:
-            raise ValueError("neuron_name is required when fitting a transfer function.")
-
-        network_params = self.network_params
-        if isinstance(network_params, (str, Path)):
-            from ..network_params.loader import load_network_parameters
-
-            network_params = load_network_parameters(network_params)
-        if network_params is None:
-            raise ValueError(
-                "network_params is required to construct a transfer function."
-            )
-
-        tf_func = get_transfer_function(
-            tf_method_name=tf_params.tf_model.model_name,
-            neuron_name=self.neuron_name,
-            network_params=network_params,
-            tf_params=tf_params,
-        )
-        tf_func.fit(self._load_neuron_results(aggregator, sim_id))
-        return [tf_func]
+    def _get_tf_funcs(self, aggregator, sim_id: str, tf_funcs=None) -> Tuple[List[BaseTransferFunction], List[str]]:
+        """
+        The TFs to overlay and their default labels: explicit `tf_funcs` (draw argument, then constructor),
+        else the run's own fitted TFs of `mf_model_names` (labelled by MF model name).
+        """
+        tf_funcs = self.tf_funcs if tf_funcs is None else tf_funcs
+        if tf_funcs is None and self.mf_model_names:
+            loaded = [aggregator.load_transfer_functions(sim_id, name)[self.neuron_name] for name in self.mf_model_names]
+            return loaded, list(self.mf_model_names)
+        if isinstance(tf_funcs, dict):
+            tf_funcs = tf_funcs.get(self.neuron_name, [])
+        if isinstance(tf_funcs, BaseTransferFunction):
+            tf_funcs = [tf_funcs]
+        tf_funcs = list(tf_funcs or [])
+        return tf_funcs, [f"TF {i + 1}" for i in range(len(tf_funcs))]
 
     def _draw(
         self,
@@ -650,17 +590,12 @@ class AggregatorNeuronIOCurvePlotter(BaseAggregatorPlot):
                 label=label if self.full_params["curve_legend"] else "_nolegend_",
             )
 
-        fit_funcs = self.tf_funcs if tf_funcs is None else tf_funcs
-        if fit_funcs is None and self.fit_transfer_function:
-            fit_funcs = self._fit_tf_funcs(aggregator, sim_id)
-        if isinstance(fit_funcs, dict):
-            fit_key = self.neuron_name or self.model
-            fit_funcs = fit_funcs.get(fit_key, [])
+        fit_funcs, default_fit_labels = self._get_tf_funcs(aggregator, sim_id, tf_funcs)
 
         if fit_funcs:
             fit_labels = self.full_params["tf_labels"]
             if fit_labels is None:
-                fit_labels = [f"TF {i + 1}" for i in range(len(fit_funcs))]
+                fit_labels = default_fit_labels
             fit_linestyles = self.full_params["tf_linestyles"][:len(fit_funcs)]
 
             for j, nu_i_idx in enumerate(inh_slice_indices):

@@ -290,7 +290,7 @@ Tracked in `todo.md`. Listed here so the design text is not mistaken for a descr
 - **Stringly typed:**
   - external populations are recognised by the name prefixes `drive`/`stim` (SNN), and the TVB factory looks up `"drive_neuron"`/`"stim_neuron"`;
   - several places use `"exc_neuron"`/`"inh_neuron"` directly instead of `exc_neuron_name`/`inh_neuron_name`.
-- **Computation in plotting:** `AggregatorNeuronIOCurvePlotter` can fit a TF itself, and TF plots evaluate TFs.
+- **Computation in plotting:** TF plots evaluate TFs (the aggregator I/O plot loads the run's fitted TFs, it does not refit).
 - **Hidden side effect:** TF fitting writes into the MF config (§6.3).
 - **Duplicated formulas:** the TF/μV formulas (TF class vs TVB models) and the stimulus profiles (numpy vs TVB) each exist twice, with no automated check that they agree.
 - **Two exc/inh populations assumed:** E/I-specific code (`exc_neuron_name` raises unless there is exactly one of each, legacy MF models, results getters) assumes one E and one I population.

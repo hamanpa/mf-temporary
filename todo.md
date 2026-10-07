@@ -44,7 +44,6 @@ Last full review against the code: 2026-10-04.
   - Known issues in `aggregator_plots.py`:
     - units are only labels: the data is plotted raw. Use `ResultsAggregator.get_units` and convert. `AggregatorAdaptationHeatmapPlotter` says pA, but the data is nA.
     - the plotters call the private `aggregator._load_variable`.
-    - `AggregatorNeuronIOCurvePlotter` refits the TF from the base YAMLs; use `load_transfer_functions` (see the "No computation inside plots" item).
     - `full_params` is mutated while drawing (list → dict conversion, injected legend handles); this is safe in `AggregatorGridPlottingHook` (deep copy per cell) but not on repeated direct `draw`.
     - colours and models are chosen by name prefix.
     - `plotted_any` is never initialised (`NameError` when nothing is plotted; "No Data" never shows).
@@ -212,8 +211,8 @@ Last full review against the code: 2026-10-04.
 ## plotting
 
 - [ ] (3) **plotting**: *No computation inside plots*
-  - `AggregatorNeuronIOCurvePlotter` can fit a TF itself (`_fit_tf_funcs`), and it refits from the project's *base* YAMLs, not from the run's parameters (wrong for swept τ_rec with STP TFs).
-  - Use `ResultsAggregator.load_transfer_functions(sim_id, mf_model)` instead: the run's own fitted TFs, no refitting. This only works for runs made after iteration 1.
+  - [x] (2026-10-07) `AggregatorNeuronIOCurvePlotter` no longer refits the TF (it refitted from the project's *base* YAMLs, wrong for swept τ_rec: e.g. 05/`bc841756` was all-static but was refitted with τ_rec = 30/70 STP). It now takes `mf_model_names` and overlays each run's own fitted TFs via `ResultsAggregator.load_transfer_functions` (runs after iteration 1 only); `fit_transfer_function`, `workflow_params`, `network_params` were removed.
+  - TF plots still *evaluate* TFs (see `design.md`, known deviations).
 - [ ] (3) **plotting**: *Heatmaps of adaptive grids show white wedges*
   - `SingleNeuronActivityHeatmapPlot` / `AggregatorHeatmapPlotter` use `contourf`, which assumes a rectangular grid. On adaptive grids each inh column has its own exc axis, and columns where the neuron never fires collapse to exc = 0, leaving gaps (already visible before the drive axis, e.g. projects/10). Use `tricontourf` on the scattered points, or `pcolormesh`.
 - [ ] (3) **plotting**: *Handle missing data gracefully*
