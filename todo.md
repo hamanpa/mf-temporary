@@ -37,24 +37,13 @@ Last full review against the code: 2026-10-04.
     - add plots of adaptation, STP x/u (per projection), drive, and voltage;
     - respect the results structure and filtering used in `projects/05_DiVolo-STP/explore_results.ipynb` (`ResultsAggregator.get_results`, `AggregatorGridPlottingHook`).
   - Process: write a review and plan first, and get it approved before changing code (as done for task 1).
-  - Data available per run since iteration 1:
-    - SNN and MF `*_pop_mean` for rate, adaptation and voltage, `drive_rate`, and STP per projection (`ee_x_pop_mean`, …);
-    - SNN-only conductances (MF conductance is a draft and not saved);
-    - `units` in every `.npz`, `data/<id>/params/` (with `tf_fits`), and the neuron grids with a drive axis.
-  - Known issues in `aggregator_plots.py`:
-    - units are only labels: the data is plotted raw. Use `ResultsAggregator.get_units` and convert. `AggregatorAdaptationHeatmapPlotter` says pA, but the data is nA.
-    - the plotters call the private `aggregator._load_variable`.
-    - `full_params` is mutated while drawing (list → dict conversion, injected legend handles); this is safe in `AggregatorGridPlottingHook` (deep copy per cell) but not on repeated direct `draw`.
-    - colours and models are chosen by name prefix.
-    - `plotted_any` is never initialised (`NameError` when nothing is plotted; "No Data" never shows).
-    - the heatmap defaults (`stim_name="SpontActivity0_5"`, `model="single_neuron"`) don't match the worker's files (`exc_neuron`, `steady_state`).
-    - `update_params` (labels, linestyles, alphas, linewidths: ~60 lines) belongs in the base class.
-    - white wedges in adaptive-grid heatmaps (see the item below).
-  - Semantic traps to decide on:
-    - `*_rate_pop_std` is the spread across neurons for the SNN, but `sqrt(C_ee)` (population-rate fluctuation) for the MF;
-    - the MF drive is constant, while the SNN drive ramps (see mf_simulation).
-  - User idea to discuss: a lazy-loading results container (metadata such as units and params loaded up front; data loaded when filtered), possibly an evolution of `ResultsAggregator`.
-  - `explore_results.ipynb` cells 25, 27 and 28 use the alias `exc_neuron.tau_rec`, which is ambiguous with the new connectivity paths. Use `exc_neuron.exc_neuron.tau_rec`.
+  - Plan (approved 2026-10-07): A data access (aggregator refactor, `SavedResults` view), B aggregator plot base (non-mutating styles, colours by population/projection source, model-only legend with `legend_color`, `std_bands` per model, missing-variable warnings, models per run), C plots (rate, voltage, adaptation, STP x/u, drive/stimulus, SNN conductances; heatmap defaults/units/wedges; I/O plotter on the view), D notebooks 05–07 and docs.
+  - [x] Part A (2026-10-07): `controller/results_aggregator.py` (`ResultsAggregator` moved, `SavedResults` view with `get(variable, metric, unit)`, `run_filters`, strict file resolution, read-only cached arrays). The plotters call the view instead of `_load_variable` (exact keys, no suffix guessing); their rework follows in B/C.
+  - [x] Part B (2026-10-07): `BaseAggregatorPlot` helpers, resolved per draw without modifying `full_params`: per-model styles (`labels`, `linestyles`, `alphas`, `linewidths`: one value, list in the order of `models`, or dict), per-variable colours (`colors` > preset `default_colors` > population by convention: `exc_`/`inh_`, projection *source* > `default_color`), a model-only legend (`legend_color`, default black; `variable_legend`), models per run with a warning for missing ones, `show_no_data`. `AggregatorTracePlot` takes variable names plus `metric` (default `pop_mean`), reads data in `x_unit`/`y_unit`, has `std_bands` per model, and skips missing variables with a warning; `update_params`, `get_variable_color`, `iter_models` and the `plotted_any` bug are gone. The rate/voltage/STP presets now work (`exc_rate`, …).
+  - [x] Part C (2026-10-07): trace presets `AggregatorAdaptationTracePlotter` (E, blue, pA), `AggregatorSTPTracePlotter` (`projection_variable` x/u onto `target`, coloured by source; `y` rejected), `AggregatorConductanceTracePlotter` (SNN only, nS), `AggregatorInputTracePlotter` (drive and stimulus, with a variable legend); `projection_variable`/`target` work on any trace plot (also as `plot.*` grid axes). Heatmaps: defaults `exc_neuron`/`steady_state`, data read in x/y/z units (the adaptation heatmap really is pA now), shared `draw_grid_heatmap` with `heatmap_method` (default `tricontourf`: no wedges) also in `SingleNeuron*HeatmapPlot`. Raster in `x_unit`. I/O plotter: data in the plot units, TF inputs explicitly in Hz/nA, legend through `_legend_kwargs` (no `full_params` mutation), defaults `exc_neuron`/`steady_state`.
+  - [x] Part D (2026-10-10): notebooks 05/06/07: hook cells use `run_filters={...}`; the ambiguous 05 aliases are full paths (source-based, as in the old synapse format: `exc_neuron.tau_rec` → `exc_neuron.exc_neuron.tau_rec`, `inh_neuron.tau_rec` → `exc_neuron.inh_neuron.tau_rec`, `inh_neuron.U` → `exc_neuron.inh_neuron.U`); trace `variables` are variable names (`exc_rate`); the scratch cell 18 of 06/07 uses `agg.results(...)`.
+  - Open: runs made before iteration 1 (all of 06 and 07) have no `units` in their `.npz`, and the strict view refuses unit conversion, so plots with `x_unit`/`y_unit` set fail there (decision pending, see below).
+  - Resolved by parts A–C: units only as labels, private `_load_variable`, `full_params` mutation, name-prefix model lists, `plotted_any`, wrong heatmap defaults, `update_params`, wedges, the lazy results container (`SavedResults`), the 05 aliases. Semantic traps: the MF/SNN meaning of `pop_std` is documented at `std_bands`; the drive ramp is the mf_simulation item *Drive ramp missing in the MF*.
   - Caveat: `try_load` reuses an existing neuron cache (`data/<id>_*_neuron_results.pkl`) even if the configured grid changed (e.g. a drive axis was added). Delete the caches or use a new project when changing the grid.
 
 - [ ] (3) **docs**: *Rewrite the documentation set*
@@ -124,10 +113,16 @@ Last full review against the code: 2026-10-04.
   - The SNN ramps the drive over `initial_increase_duration`. The MF sets `external_input_*` to a constant `drive_rate` from t = 0 (and `MFResults.drive_rate_mean` is constant too).
   - This affects comparisons that include the first ~400 ms (the default `time_average_window` starts at 0).
   - Avoid packing the drive into the `stimulus` state variable: drive and stimulus can have different targets once there is a grid.
+  - Cause: TVB takes the drive as a constant input. Check whether TVB allows a gradual onset similar to the SNN (user, 2026-10-07).
 - [ ] (2) **mf_simulation**: *Test the first-order models*
   - First-order models are used in analyses, so they must be maintained, not just second order.
   - Only `stp_*.first_order` was run, once, in projects/04. `divolo2019.first_order` has never been run.
   - Iteration 1 fixed a crash when building results (`np.sqrt(None)` on the missing `C_ee`/`C_ii`), so they can't have worked in the sweep path before. Still untested on the cluster.
+- [ ] (3) **mf_simulation.tvb_simulator.models**: *Drop the STP variable `y` from `stp_dynamic`*
+  - Only x and u are needed as dynamical STP variables in the MF; `y` (active resources) is not necessary. Remove the `Y_*` state variables and the `*_y_pop_mean` outputs.
+  - Until then the plots ignore `y` (task 2).
+- [ ] (3) **mf_simulation**: *Compute and save MF mean conductances*
+  - The MF computes μV, so the mean conductances per projection (μG = r·K·τ·Q_eff) can be computed from the rates and saved like the SNN `*_conductance_pop_mean` (`MFResults._conductance_mean` is a draft and not saved). Allows SNN-vs-MF conductance comparisons.
 - [ ] (3) **mf_simulation**: *Single source of truth for the TF formula*
   - It is implemented twice: `NeuroPSICustomTF`/`MembranePotentialFluctuations`, and `get_fluct_regime_vars`/`TF` in the TVB models.
   - At least add a test that evaluates both with the same coefficients.
@@ -157,7 +152,7 @@ Last full review against the code: 2026-10-04.
 ## neuron_simulation
 
 - [ ] (3) **neuron_simulation**: *Compute `voltage_tau`*
-  - It is currently zeros (pynn_simulator.py:258, :279).
+  - It is currently zeros (`_adex_neuron_worker` in `neuron_simulation/pynn_simulator.py` saves `'voltage_tau': 0`), so the saved grids have no measured τV to compare with the TF's.
 - [ ] (3) **neuron_simulation**: *Execution mode `validate`*
   - Compare stored neuron data with a fresh simulation.
 - [ ] (3) **neuron_simulation**: *Unclear: "weird results" in projects/04_debug*
@@ -173,8 +168,8 @@ Last full review against the code: 2026-10-04.
 
 ## transfer_function
 
-- [ ] (3) **transfer_function.neuropsi_tf**: *`MembranePotentialFluctuations.voltage_tau` mutates its input*
-  - `rates[neuron_name][~mask] = 1e-9` writes into the caller's arrays.
+- [x] (3) **transfer_function.neuropsi_tf**: *`MembranePotentialFluctuations.voltage_tau` mutates its input* (fixed 2026-10-07; not to be confused with the open *Compute `voltage_tau`* item in neuron_simulation)
+  - `rates[neuron_name][~mask] = 1e-9` wrote into the caller's arrays (in `fit`, the flattened exc/inh grids; in plots, the aggregator's cached grids). Found when `SavedResults` arrays became read-only. Now uses a local `np.where` copy; numerically the same (zero rates still enter τV as 1e-9 Hz).
 - [ ] (3) **transfer_function**: *Make the TF → MF hand-off explicit*
   - `run_tf_fitting_workflow` writes the coefficients into `mf_sim_params.transfer_function.tf_fits` as a hidden side effect.
   - Return the coefficients instead, and have the caller put them into the MF config. (Since iteration 1 the worker also saves them in `data/<id>/params/workflow_params.yaml`.)
@@ -191,20 +186,27 @@ Last full review against the code: 2026-10-04.
   - Unit-aware ingestion and getters exist for some results and simulators only. Elsewhere the units are hard-coded (e.g. the TVB `run_stimulus` `input_units`, `MFResults._conductance_mean` "draft" warning, the plot-side assumptions). Make every results class and backend go through `DEFAULT_UNITS` + `input_units`, consistent with `units.md`.
 - [ ] (3) **storage**: *Stop using pickle for the neuron-results cache*
   - `try_load` caches `SingleNeuronResults` as `.pkl`, which is brittle when classes are renamed. The worker already writes `{neuron}_results_steady_state.npz`, so load from that instead.
-- [ ] (4) **data_structures**: *Rename `_mean`/`_std` getters to `_pop_mean`/`_pop_std`*
-  - This makes the names unambiguous next to `_time_mean`, and the npz keys already use the `_pop_` form.
+- [ ] (3) **data_structures**: *One accessor `get(variable, metric, unit)` across the results classes*
+  - Reference: the saved-results view of `ResultsAggregator` (task 2) has only `get(variable, metric, unit)`, with keys `{variable}_{metric}`.
+  - `SNNResults` has `get_pop_mean(variable, unit)`, `get_pop_std`, `get_time_mean`, … (the metric is in the method name, and the SNN saver dispatches with `getattr(results, f"get_{metric}")`); `MFResults` has only named getters (`exc_rate_mean()` = population mean, `stp_mean(projection, variable)`, …).
+  - Give both `get(variable, metric, unit, **kwargs)` (`time_mean` etc. need the time window); turn the named getters into thin aliases or delete them; switch the savers, extractors and `network_plots` to `get`. Simulation-path change: needs a cluster check.
+  - This also makes the names unambiguous (`_mean` vs `_pop_mean` vs `_time_mean`); the npz keys already use the `_pop_` form.
+  - Intended metric vocabulary (user, 2026-10-07): `pop_mean` (over the population, a time series; the only one the MF has), `time_mean` (over time: meaningful for static stimuli or for differences of two models), `full_mean` (over population and time), plus the `_std` variants. Review that one convention (`{variable}_{metric}`) is kept across the results classes, extractors, savers and `ResultsAggregator` (several conventions were tried in the past).
 
 ## controller / scripts
 
 - [ ] (2) **analysis**: *Compute SNN-vs-MF comparison metrics in the sweep path*
   - `analysis/comparison_metrics.METRIC_REGISTRY` (RMSE, Pearson, lag, PSD, …) is only used by the obsolete `ParameterInspector`. The main path saves raw traces and computes no errors.
   - Add a helper on top of `ResultsAggregator`.
+- [ ] (2) **analysis**: *Sweep-level summaries in `ResultsAggregator` (next task after task 2)*
+  - E.g. the time-mean rate in a window for every run and model, plotted against a swept parameter (one line per model). The computation goes in `ResultsAggregator` (or `analysis/`), the plot only draws it.
 - [ ] (3) **analysis**: *Detect explosions and steady state*
   - Flag runaway activity (e.g. high rate in the first 1000 ms) and check whether a steady state was reached before time averaging.
 - [ ] (3) **controller**: *Move `ResultsAggregator` into its own module*
-  - It currently lives in `controller/inspectors.py` next to obsolete code.
+  - [x] (2026-10-07, task 2 Part A) Moved to `controller/results_aggregator.py` with the `SavedResults` view; `filter_runs` / `get_results` take `run_filters: dict` (one convention with `AggregatorGridPlottingHook(run_filters=...)`); strict file resolution; `get_results(sim_name, stim_name)` no longer has (wrong) defaults.
+  - Left: update the `get_results(**{...})` notebook calls (05, 06, 07; task 2 Part D) and check `drafts/` and cluster-side scripts.
 - [ ] (3) **scripts**: *Remove duplicated helpers*
-  - `parse_val`, `normalize_val` and `DELIMETER` (sic) are copied in `run_multiinspection.py`, `inspection_worker.py` and `ResultsAggregator`.
+  - `parse_val`, `normalize_val` and `DELIMETER` (sic) are copied in `run_multiinspection.py`, `inspection_worker.py` and `ResultsAggregator` (`DELIMITER` in `controller/results_aggregator.py`).
 - [ ] (4) **controller.config**: *Template and schema generation*
   - `--template` and `--schema` raise `NotImplementedError`, and the code after the `raise` is dead. Either implement them (`WorkflowConfig.model_json_schema()` is nearly free) or delete them.
 
@@ -213,7 +215,7 @@ Last full review against the code: 2026-10-04.
 - [ ] (3) **plotting**: *No computation inside plots*
   - [x] (2026-10-07) `AggregatorNeuronIOCurvePlotter` no longer refits the TF (it refitted from the project's *base* YAMLs, wrong for swept τ_rec: e.g. 05/`bc841756` was all-static but was refitted with τ_rec = 30/70 STP). It now takes `mf_model_names` and overlays each run's own fitted TFs via `ResultsAggregator.load_transfer_functions` (runs after iteration 1 only); `fit_transfer_function`, `workflow_params`, `network_params` were removed.
   - TF plots still *evaluate* TFs (see `design.md`, known deviations).
-- [ ] (3) **plotting**: *Heatmaps of adaptive grids show white wedges*
+- [x] (3) **plotting**: *Heatmaps of adaptive grids show white wedges* (2026-10-07, task 2 Part C: `draw_grid_heatmap`, `heatmap_method: tricontourf`; inside the convex hull of the points, unsampled areas are interpolated)
   - `SingleNeuronActivityHeatmapPlot` / `AggregatorHeatmapPlotter` use `contourf`, which assumes a rectangular grid. On adaptive grids each inh column has its own exc axis, and columns where the neuron never fires collapse to exc = 0, leaving gaps (already visible before the drive axis, e.g. projects/10). Use `tricontourf` on the scattered points, or `pcolormesh`.
 - [ ] (3) **plotting**: *Handle missing data gracefully*
   - `None` when a variable wasn't measured, `None` instead of a results object when a run was skipped, and NaN arrays when an MF field is missing. See `.notes/none_data_handling.md`.

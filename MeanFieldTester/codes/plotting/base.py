@@ -22,6 +22,35 @@ BIN_SIZE = 5  # [ms], size for averiging activity in histograms
 NEURON_NAMES = ["exc_neuron", "inh_neuron"]
 
 
+HEATMAP_PARAMS = {
+    'vmin': None,  # Minimum value for the heatmap
+    'vmax': None,  # Maximum value for the heatmap
+    'levels': 10,  # Number of levels in the heatmap
+    'cmap': 'viridis',  # Colormap for the heatmap
+    # "tricontourf": filled contours on the scattered grid points (adaptive grids: each inh column has its own
+    # exc axis; areas inside the convex hull of the points are interpolated); "contourf": on the structured grid
+    # (rectangular grids only; degenerate adaptive columns leave white wedges)
+    'heatmap_method': 'tricontourf',
+}
+
+
+def draw_grid_heatmap(ax, x: np.ndarray, y: np.ndarray, z: np.ndarray, params: dict):
+    """Filled-contour heatmap of z over a 2D (exc, inh) input grid, see HEATMAP_PARAMS. Returns the mappable."""
+    kwargs = dict(levels=params['levels'], extend=params['extend'], vmin=params['vmin'], vmax=params['vmax'], cmap=params['cmap'])
+    method = params['heatmap_method']
+    if method == 'contourf':
+        return ax.contourf(x, y, z, **kwargs)
+    if method == 'tricontourf':
+        x, y, z = (np.asarray(values, dtype=float).ravel() for values in (x, y, z))
+        finite = np.isfinite(x) & np.isfinite(y) & np.isfinite(z)
+        x, y, z = x[finite], y[finite], z[finite]
+        # Collapsed adaptive columns repeat grid points; triangulation needs unique points (first one kept)
+        _, first = np.unique(np.column_stack([x, y]), axis=0, return_index=True)
+        first = np.sort(first)
+        return ax.tricontourf(x[first], y[first], z[first], **kwargs)
+    raise ValueError(f"Unknown heatmap_method '{method}'. Use 'tricontourf' or 'contourf'.")
+
+
 class BasePlot(ABC):
     # Class-level default parameters for common axis settings
     DEFAULT_PARAMS = {

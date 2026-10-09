@@ -75,7 +75,7 @@ class NeuroPSICustomTF(BaseTransferFunction):
             # NOTE: the drive population is still identified by name (see todo.md, hard-coded population names)
             if "drive_neuron" not in self.mpf.synapse_params:
                 raise ValueError(f"drive_rate > 0, but {self.neuron_name} has no drive_neuron connection.")
-            # A writable float array of the input shape (MembranePotentialFluctuations may modify its inputs)
+            # A float array of the input shape
             rates["drive_neuron"] = np.array(np.broadcast_to(drive_rate, np.shape(exc_rate)), dtype=float)
         return rates
 
@@ -440,11 +440,9 @@ class MembranePotentialFluctuations:
             syn_tau = self.synapse_params[neuron_name]['syn_tau']
             syn_num = self.synapse_params[neuron_name]['syn_num']
 
-            mask = rates[neuron_name] > 0
-            rates[neuron_name][~mask] = 1e-9  # Avoid division by zero for zero rates
-            term = syn_num * (rates[neuron_name] * 1e-3) * (syn_u * syn_tau)**2
-
-            # term = syn_num * (rates[neuron_name] * 1e-3 + 1e-9) * (syn_u * syn_tau)**2
+            # Avoid division by zero for zero rates (a local copy: the caller's rates are not modified)
+            rate = np.where(np.asarray(rates[neuron_name]) > 0, rates[neuron_name], 1e-9)
+            term = syn_num * (rate * 1e-3) * (syn_u * syn_tau)**2
 
             numerator_terms.append(term)
             denominator_terms.append(term / (tau_eff + syn_tau))

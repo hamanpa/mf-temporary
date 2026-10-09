@@ -244,12 +244,14 @@ The TF formula exists **twice**: in `NeuroPSICustomTF` (used for fitting and plo
      - Each task writes `data/ID/{model}_results_{stim}.npz` with `{variable}_{metric}` keys plus `units`. The keys are chosen by `snn_simulation.saved_variables/saved_metrics/saved_extra_keys`; `saved_variables` is validated against `SNNResults.SAVEABLE_VARIABLES` when the config is loaded.
      - Each task returns status metadata including a traceback; a failed task is recorded, it does not crash the batch.
      - The manifest is written to `data/ID/manifest.json`.
-3. **`controller.ResultsAggregator(P)`**
+3. **`controller.ResultsAggregator(P)`** (`controller/results_aggregator.py`)
    - Loads the CSV into a parameter matrix.
    - Resolves short parameter aliases: any ordered sub-sequence of the dotted path, e.g. `exc_neuron.b`. An ambiguous alias is an error.
-   - `get_results(variable, sim_name, stim_name, **filters)` stacks arrays across matching runs, with lazy cached `.npz` loading.
+   - `filter_runs(run_filters)` selects runs from the parameter matrix only (no data loaded).
+   - `results(sim_id, model, stim)` returns a `SavedResults` view of `{model}_results_{stim}.npz`: keys and units are read up front, arrays on access through `get(variable, metric="pop_mean", unit=None)` (key `{variable}_{metric}`; `metric=None` for keys without a metric such as `times`). Conversion uses `get_unit_multiplier`, as in the results classes, and fails rather than assume when no unit is stored. Arrays are LRU-cached and read-only. File resolution is strict: a missing file is an error listing the available models and stimuli.
+   - `get_results(variable, sim_name, stim_name, metric, unit, run_filters)` stacks one array across the matching runs.
    - `analyze_parameter_grid` finds the varying parameters.
-   - `get_units`, `load_run_params(sim_id)` and `load_transfer_functions(sim_id, mf_model)` read the per-run artefacts.
+   - `get_units`, `available_results(sim_id)`, `load_run_params(sim_id)` and `load_transfer_functions(sim_id, mf_model)` read the per-run artefacts.
 
 Project folder layout: `params/`, `param_combinations.csv`, `data/<id>/` (`params/`, `*.npz`, `manifest.json`), `imgs/<id>/`, `logs/`, `explore_results.ipynb`.
 
@@ -268,7 +270,9 @@ Project folder layout: `params/`, `param_combinations.csv`, `data/<id>/` (`param
   - Params are layered: defaults < `common_params` < `subplot_params`. `subplot_params` is keyed by plot class name or by `(row, col)`.
   - Ready-made hooks: `NeuronActivityHook`, `TransferFunctionPlottingHook`, `NetworkOverviewPlottingHook`, `NetworkHistogramPlottingHook`.
   - The hook call signature is the `BasicWorkflowHook` protocol in `controller/interfaces.py`.
-- **Aggregator plots** (sweep path): `BaseAggregatorPlot.draw(ax, sim_id, aggregator)`, e.g. traces, heatmaps, rasters, neuron I/O curves. `AggregatorGridPlottingHook` lays them out on a 2D grid over two swept parameters (columns = x, rows = y), with optional filters on the others.
+- **Aggregator plots** (sweep path): `BaseAggregatorPlot.draw(ax, sim_id, aggregator)`, e.g. traces, heatmaps, rasters, neuron I/O curves. `AggregatorGridPlottingHook` lays them out on a 2D grid over two swept parameters (columns = x, rows = y). An axis is either a run parameter (selects the run of each cell) or a plot parameter `plot.<full_params key>` (e.g. `plot.drive_rate`: same run, a different plotter setting per row). `run_filters` only narrow the runs (`ResultsAggregator.filter_runs`, no data loaded), and each cell must match exactly one run. `fig_params` `x_values`/`y_values` pick and order the values; without them, run values come from the remaining runs and plot values from `BaseAggregatorPlot.param_values` (data-driven, per plotter), ordered by `x_order`/`y_order` (default ascending: left to right, top to bottom).
+  - Aggregator plots read data only through `ResultsAggregator.results(...).get(variable, metric, unit)` in their `x_unit`/`y_unit`/`z_unit`. `BaseAggregatorPlot` resolves per-model styles (one value, list in `models` order, or dict), per-variable colours (`colors` > preset `default_colors` > population by naming convention: `exc_`/`inh_`, projection *source* > `default_color`) and a model-only legend per draw, without modifying `full_params`; a `_draw` passes its own legend via `_legend_kwargs`. Missing models/variables are skipped with a warning.
+  - `AggregatorTracePlot` (variables + `metric`, `std_bands` per model, `projection_variable`/`target` for per-projection variables) with presets for rate, voltage, adaptation, STP x/u, conductance (SNN only) and external inputs; heatmaps share `draw_grid_heatmap` (`plotting/base.py`) with the single-neuron heatmaps.
 
 ---
 

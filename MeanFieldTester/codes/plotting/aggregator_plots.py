@@ -1,5 +1,6 @@
 import os
 import copy
+import warnings
 from pathlib import Path
 from abc import ABC, abstractmethod
 from typing import Dict, List, Tuple, Any, Union, Callable
@@ -8,24 +9,33 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 from .base import BasePlot, EXC_COLOR, INH_COLOR, LINESTYLES
-from ..data_structures.neuron_simulation import drive_index
+from ..data_structures.neuron_simulation import drive_index, drive_values
+from ..network_params.models import INTERNAL_PROJECTIONS
 
 
-def load_neuron_grid_slice(aggregator, sim_id: str, model: str, stim_name: str, variables: List[str], drive_rate: float | None = None) -> Dict[str, np.ndarray]:
-    """
-    Loads single-neuron grid arrays of a run as 2D (exc_rate, inh_rate) slices at `drive_rate` [Hz]
-    (None: the first drive value), plus the "drive_rate_grid" slice itself.
-    Files saved before the drive axis existed are 2D (drive = 0) and returned as they are, without "drive_rate_grid".
-    """
-    arrays = {variable: aggregator._load_variable(sim_id, model, stim_name, variable) for variable in variables}
-    try:
-        arrays["drive_rate_grid"] = aggregator._load_variable(sim_id, model, stim_name, "drive_rate_grid")
-    except KeyError:
-        return arrays  # older 2D data (drive = 0)
-    index = drive_index(arrays["drive_rate_grid"], drive_rate)
-    return {variable: values[..., index] for variable, values in arrays.items()}
 from ..network_params.translators import get_unit_multiplier
 from ..transfer_function.base import BaseTransferFunction
+from .base import HEATMAP_PARAMS, draw_grid_heatmap
+
+
+def load_neuron_grid_slice(
+        aggregator, sim_id: str, model: str, stim_name: str, variables: List[str],
+        drive_rate: float | None = None, units: Dict[str, str] | None = None,
+) -> Dict[str, np.ndarray]:
+    """
+    Loads single-neuron grid arrays of a run as 2D (exc_rate, inh_rate) slices at `drive_rate` [Hz]
+    (None: the first drive value), plus the "drive_rate_grid" slice itself [Hz].
+    `units`: {variable: unit} to read variables in (others as stored).
+    Files saved before the drive axis existed are 2D (drive = 0) and returned as they are, without "drive_rate_grid".
+    """
+    units = units or {}
+    results = aggregator.results(sim_id, model, stim_name)
+    arrays = {variable: results.get(variable, metric=None, unit=units.get(variable)) for variable in variables}
+    if not results.has("drive_rate_grid", metric=None):
+        return arrays  # older 2D data (drive = 0)
+    arrays["drive_rate_grid"] = results.get("drive_rate_grid", metric=None, unit="Hz")
+    index = drive_index(arrays["drive_rate_grid"], drive_rate)
+    return {variable: values[..., index] for variable, values in arrays.items()}
 
 
 class BaseAggregatorPlot(BasePlot, ABC):
@@ -33,18 +43,36 @@ class BaseAggregatorPlot(BasePlot, ABC):
     Abstract base class for plotters that draw ResultsAggregator simulation data onto a single ax.
     Extends BasePlot, maintaining full compatibility with DEFAULT_PARAMS, full_params,
     apply_preplot_params, and apply_postplot_params.
+
+    Shared helpers for plots of several models of one run (resolved per draw, `full_params` is not modified):
+    per-model styles (`model_styles`), per-variable colours (`variable_color`), the model legend
+    (`model_legend_handles`), the models of a run (`models_for`) and the "No Data" message (`show_no_data`).
+    A `_draw` that builds its own legend sets `self._legend_kwargs` (e.g. {"handles": ..., "title": ...}),
+    which `draw` merges into a copy of the `legend` param.
     """
 
     DEFAULT_VARIABLES = []
 
     DEFAULT_PARAMS = {
         **BasePlot.DEFAULT_PARAMS,
-        "colors": None,      # dict or list of colors
-        "linestyles": None,  # dict or list of linestyles
-        "labels": None,      # list of model/curve labels
-        "alphas": None,      # dict or list of alpha values, if None uses default_alpha
+        # Per-model styles: one value for all models, a list (in the order of `models`) or a dict {model: value}.
+        # None: labels = model names, linestyles cycle through LINESTYLES, `default_alpha`, `default_linewidth`.
+        "labels": None,
+        "linestyles": None,
+        "alphas": None,
+        "linewidths": None,
         "default_alpha": 1.0,
+        "default_linewidth": 1.5,
+        # Per-variable colours: a list (in the order of `variables`) or a dict {variable: colour}. Variables without
+        # one get `default_colors` (set by presets), then their population colour (`exc_color`/`inh_color`, see
+        # `population_of`), then `default_color`.
+        "colors": None,
+        "default_colors": {},
         "default_color": "black",
+        # Legend: one entry per model (label and line style) drawn in `legend_color`
+        # (None: the variable's colour when one variable is plotted); `variable_legend` adds one entry per variable.
+        "legend_color": "black",
+        "variable_legend": False,
     }
 
     def __init__(
@@ -76,251 +104,301 @@ class BaseAggregatorPlot(BasePlot, ABC):
         else:
             self.variables = list(self.DEFAULT_VARIABLES)
 
+        self._explicit_variables = variables is not None
         self.models = models
         self.stim_name = stim_name
+        self._legend_kwargs = None
 
     def draw(self, ax: plt.Axes, sim_id: str = None, aggregator=None, **kwargs):
+        self._legend_kwargs = None
         self.apply_preplot_params(ax, self.full_params)
         im = self._draw(ax, sim_id=sim_id, aggregator=aggregator, **kwargs)
-        self.apply_postplot_params(ax, self.full_params)
+        params = self.full_params
+        if self._legend_kwargs and self._legend_kwargs.get("handles") and params["legend"]:
+            legend = params["legend"] if isinstance(params["legend"], dict) else {}
+            params = {**params, "legend": {**legend, **self._legend_kwargs}}
+        self.apply_postplot_params(ax, params)
         return im
+
+    def plot_variables(self) -> List[str]:
+        """The variables drawn (presets may derive them from params, see `AggregatorTracePlot`)."""
+        return self.variables
+
+    def param_values(self, param: str, aggregator, sim_id: str) -> list | None:
+        """
+        Values that the plot parameter `param` (a `full_params` key) can take for run `sim_id`,
+        e.g. the drive rates of a neuron grid. Used by `AggregatorGridPlottingHook` for `plot.*` axes
+        without explicit values. None: this plotter cannot discover the values of `param`.
+        """
+        return None
 
     @abstractmethod
     def _draw(self, ax: plt.Axes, sim_id: str = None, aggregator=None, **kwargs) -> None:
         pass
 
+    # ------------------------------------------------------------------
+    # Shared helpers
+    # ------------------------------------------------------------------
+
+    def models_for(self, aggregator, sim_id: str) -> Tuple[List[str], List[str]]:
+        """
+        (ordered, present): `ordered` are the requested models (`models`, or all models of the run with this
+        stimulus), the order that list-valued style params refer to; `present` are those with results in this run.
+        Requested models without results are skipped with a warning.
+        """
+        stim_file_name = str(self.stim_name).replace(" ", "_")
+        available = [model for model, stims in aggregator.available_results(sim_id).items() if stim_file_name in stims]
+        ordered = list(self.models) if self.models is not None else available
+        present = [model for model in ordered if model.lower() in available]
+        missing = [model for model in ordered if model.lower() not in available]
+        if missing:
+            warnings.warn(f"Run '{sim_id}': no '{self.stim_name}' results for models {missing}; not plotted. Available: {available}")
+        return ordered, present
+
+    def _per_model(self, name: str, models: List[str], default: Callable[[int, str], Any]) -> Dict[str, Any]:
+        """{model: value} of the per-model param `name` (one value, list in the order of `models`, or dict)."""
+        value = self.full_params[name]
+        if value is None:
+            return {model: default(i, model) for i, model in enumerate(models)}
+        if isinstance(value, dict):
+            return {model: value.get(model, default(i, model)) for i, model in enumerate(models)}
+        if isinstance(value, (list, tuple)):
+            if len(value) != len(models):
+                raise ValueError(f"'{name}' has {len(value)} values, but there are {len(models)} models: {models}.")
+            return dict(zip(models, value))
+        return {model: value for model in models}
+
+    def model_styles(self, models: List[str]) -> Dict[str, dict]:
+        """{model: {"label", "linestyle", "alpha", "linewidth"}}."""
+        labels = self._per_model("labels", models, lambda i, model: model)
+        linestyles = self._per_model("linestyles", models, lambda i, model: LINESTYLES[i % len(LINESTYLES)])
+        alphas = self._per_model("alphas", models, lambda i, model: self.full_params["default_alpha"])
+        linewidths = self._per_model("linewidths", models, lambda i, model: self.full_params["default_linewidth"])
+        return {
+            model: {"label": labels[model], "linestyle": linestyles[model], "alpha": alphas[model], "linewidth": linewidths[model]}
+            for model in models
+        }
+
+    @staticmethod
+    def population_of(variable: str) -> str | None:
+        """
+        "exc"/"inh" by the naming convention: the `exc_`/`inh_` prefix, or the *source* of a projection code
+        (target-source, e.g. `ei_x` = synapses onto E from I → "inh"); None otherwise (e.g. `drive_rate`).
+        """
+        prefix = variable.split("_", 1)[0]
+        if prefix in ("exc", "inh"):
+            return prefix
+        if prefix in INTERNAL_PROJECTIONS:
+            return {"e": "exc", "i": "inh"}[prefix[1]]
+        return None
+
+    def variable_color(self, variable: str) -> str:
+        """Colour of a variable (see the `colors` param)."""
+        colors = self.full_params["colors"]
+        variables = self.plot_variables()
+        if isinstance(colors, (list, tuple)):
+            if len(colors) != len(variables):
+                raise ValueError(f"'colors' has {len(colors)} values, but there are {len(variables)} variables: {variables}.")
+            colors = dict(zip(variables, colors))
+        if isinstance(colors, dict) and variable in colors:
+            return colors[variable]
+        if variable in self.full_params["default_colors"]:
+            return self.full_params["default_colors"][variable]
+        population = self.population_of(variable)
+        if population is not None:
+            return self.full_params[f"{population}_color"]
+        return self.full_params["default_color"]
+
+    def model_legend_handles(self, styles: Dict[str, dict], plotted_variables: List[str]) -> List[Line2D]:
+        """One handle per model (see the `legend_color` and `variable_legend` params)."""
+        color = self.full_params["legend_color"]
+        if color is None:
+            color = self.variable_color(plotted_variables[0]) if len(plotted_variables) == 1 else self.full_params["default_color"]
+        handles = [
+            Line2D([0], [0], color=color, linestyle=style["linestyle"], linewidth=style["linewidth"], alpha=style["alpha"], label=style["label"])
+            for style in styles.values()
+        ]
+        if self.full_params["variable_legend"]:
+            handles += [Line2D([0], [0], color=self.variable_color(variable), label=variable) for variable in plotted_variables]
+        return handles
+
+    @staticmethod
+    def show_no_data(ax: plt.Axes, sim_id: str) -> None:
+        ax.text(0.5, 0.5, f"No Data\n({sim_id})", ha="center", va="center", transform=ax.transAxes, color="gray")
+
 
 class AggregatorTracePlot(BaseAggregatorPlot):
-    """Plotter for 1D time-series trace variables across models for a single aggregator run."""
+    """
+    Time traces of `{variable}_{metric}` (see `SavedResults.get`) for several models of one run:
+    one colour per variable, one line style per model. Data are read in `x_unit`/`y_unit`.
+    Variables a model has not saved are skipped with a warning.
+    """
 
     DEFAULT_PARAMS = {
         **BaseAggregatorPlot.DEFAULT_PARAMS,
-        "colors": None,      # dict or list of colors
-        "linestyles": None,  # dict or list of linestyles
-        "labels": None,      # list of model/curve labels
-        "alphas": None,      # dict or list of alpha values, if None uses default_alpha
-        "linewidths": None,  # dict or list of linewidths
-        "default_alpha": 1.0,
-        "default_color": "black",
-        "default_linewidth": 1.5,
+        "xlabel": "Time",
+        "x_unit": "ms",
+        "metric": "pop_mean",
+        # Band mean ± `{variable}_pop_std` per model: one bool, a list (in the order of `models`) or a dict {model: bool}.
+        # Drawn only where the std is saved. Note: for the MF it is √C (fluctuation of the population rate),
+        # for the SNN (if `pop_std` is saved) the spread across neurons.
+        "std_bands": False,
+        "band_alpha": 0.3,
+        # Per-projection variables onto one target population: with `projection_variable` set (e.g. "x", "u",
+        # "conductance") and no explicit `variables`, the plot draws `{target}e_{v}` and `{target}i_{v}`
+        # (target-source codes, coloured by source), e.g. target "exc", "x" → ee_x, ei_x.
+        "projection_variable": None,
+        "target": "exc",
     }
 
-    def update_params(self, target_models: List[str]):
-        """Ensures labels and linestyles are populated for target_models.
-        
-        Updates
-        - labels
-        - linestyles
-        - alphas
-        - linewidths
-
-        """
-        num_models = len(target_models)
-
-        if self.full_params["labels"] is None:
-            self.full_params["labels"] = {m : f"{m}" for m in target_models}
-        elif isinstance(self.full_params["labels"], (list, tuple)):
-            if len(self.full_params["labels"]) != num_models:
-                raise ValueError(f"Length of 'labels' ({len(self.full_params['labels'])}) does not match number of target models ({num_models}).")
-            self.full_params["labels"] = dict(zip(target_models, self.full_params["labels"]))
-        elif isinstance(self.full_params["labels"], dict):
-            for m in target_models:
-                if m not in self.full_params["labels"]:
-                    self.full_params["labels"][m] = f"{m}"
-        else:
-            raise TypeError(f"'labels' must be a list, tuple, or dict, got {type(self.full_params['labels'])}.")
-
-        if self.full_params["linestyles"] is None:
-            self.full_params["linestyles"] = {m: LINESTYLES[i % len(LINESTYLES)] for i, m in enumerate(target_models)}
-        elif isinstance(self.full_params["linestyles"], (list, tuple)):
-            if len(self.full_params["linestyles"]) != num_models:
-                raise ValueError(f"Length of 'linestyles' ({len(self.full_params['linestyles'])}) does not match number of target models ({num_models}).")
-            self.full_params["linestyles"] = dict(zip(target_models, self.full_params["linestyles"]))
-        elif isinstance(self.full_params["linestyles"], dict):
-            for m in target_models:
-                if m not in self.full_params["linestyles"]:
-                    idx = target_models.index(m)
-                    self.full_params["linestyles"][m] = LINESTYLES[idx % len(LINESTYLES)]
-        else:
-            raise TypeError(f"'linestyles' must be a list, tuple, or dict, got {type(self.full_params['linestyles'])}.")
-
-        if self.full_params["alphas"] is None:
-            self.full_params["alphas"] = {m: self.full_params["default_alpha"] for m in target_models}
-        elif isinstance(self.full_params["alphas"], (list, tuple)):
-            if len(self.full_params["alphas"]) != num_models:
-                raise ValueError(f"Length of 'alphas' ({len(self.full_params['alphas'])}) does not match number of target models ({num_models}).")
-            self.full_params["alphas"] = dict(zip(target_models, self.full_params["alphas"]))
-        elif isinstance(self.full_params["alphas"], dict):
-            for m in target_models:
-                if m not in self.full_params["alphas"]:
-                    self.full_params["alphas"][m] = self.full_params["default_alpha"]
-        else:
-            raise TypeError(f"'alphas' must be a list, tuple, or dict, got {type(self.full_params['alphas'])}.")
-
-        if self.full_params["linewidths"] is None:
-            self.full_params["linewidths"] = {m: self.full_params["default_linewidth"] for m in target_models}
-        elif isinstance(self.full_params["linewidths"], (list, tuple)):
-            if len(self.full_params["linewidths"]) != num_models:
-                raise ValueError(f"Length of 'linewidths' ({len(self.full_params['linewidths'])}) does not match number of target models ({num_models}).")
-            self.full_params["linewidths"] = dict(zip(target_models, self.full_params["linewidths"]))
-        elif isinstance(self.full_params["linewidths"], dict):
-            for m in target_models:
-                if m not in self.full_params["linewidths"]:
-                    self.full_params["linewidths"][m] = self.full_params["default_linewidth"]
-        else:
-            raise TypeError(f"'linewidths' must be a list, tuple, or dict, got {type(self.full_params['linewidths'])}.")
-
-
-        if num_models > 2:
-            legend_elements = [Line2D([0], [0], color='black', label=self.full_params["labels"][model], linestyle=self.full_params["linestyles"][model]) for model in target_models]
-            if self.full_params['legend'] is True:
-                self.full_params['legend'] = {'handles': legend_elements}
-            elif type(self.full_params['legend'] ) is dict:
-                self.full_params['legend']['handles'] = legend_elements
-
-
-    def get_variable_color(self, var_name: str) -> str:
-        """Determines the color for a given variable name or index."""
-
-        colors = self.full_params["colors"]
-        if isinstance(colors, (list, tuple)) and colors:
-            return dict(zip(self.variables, colors)).get(var_name)
-
-        if isinstance(colors, dict):
-            if var_name in colors:
-                return colors[var_name]
-
-        var_lower = var_name.lower()
-        if var_lower.startswith("exc"):
-            return self.full_params["exc_color"]
-        elif var_lower.startswith("inh"):
-            return self.full_params["inh_color"]
-
-        return self.full_params["default_color"]
-
-
-    def iter_models(self, aggregator, sim_id: str):
-        """Yields (model, times, model_style_dict) for available models."""
-        available_models = list(aggregator.get_available_variables().keys())
-        if self.models is None:
-            target_models = available_models
-        else:
-            target_models = [m for m in self.models if m in available_models]
-            if len(target_models) == 0:
-                raise ValueError(f"No requested models {self.models} are available in the aggregator for sim_id '{sim_id}'. Available models: {available_models}")
-            missing_models = [m for m in self.models if m not in available_models]
-            if missing_models:
-                raise ValueError(f"The following requested models are not available in the aggregator for sim_id '{sim_id}': {missing_models}. Only plotting available models: {target_models}")
-            
-        self.update_params(target_models)
-
-        for model in target_models:
-            times = aggregator._load_variable(sim_id, model, self.stim_name, "times")
-
-            model_style = {
-                "linestyle": self.full_params["linestyles"][model],
-                "linewidth": self.full_params["linewidths"][model],
-                "alpha": self.full_params["alphas"][model],
-                "label": self.full_params["labels"][model],
-            }
-
-            yield model, times, model_style
+    def plot_variables(self) -> List[str]:
+        variable = self.full_params["projection_variable"]
+        if self._explicit_variables or variable is None:
+            return self.variables
+        targets = {"exc": "e", "inh": "i"}
+        if self.full_params["target"] not in targets:
+            raise ValueError(f"'target' must be one of {list(targets)}, got '{self.full_params['target']}'.")
+        target = targets[self.full_params["target"]]
+        return [f"{target}{source}_{variable}" for source in ("e", "i")]
 
     def _draw(self, ax: plt.Axes, sim_id: str = None, aggregator=None, **kwargs) -> None:
         if aggregator is None or sim_id is None:
             return None
 
-        for model, times, model_style in self.iter_models(aggregator, sim_id):
-            for var_name in self.variables:
-                data = aggregator._load_variable(sim_id, model, self.stim_name, var_name)
-                color = self.get_variable_color(var_name)
+        ordered, present = self.models_for(aggregator, sim_id)
+        styles = self.model_styles(ordered)
+        std_bands = self._per_model("std_bands", ordered, lambda i, model: False)
+        x_unit, y_unit, metric = self.full_params["x_unit"], self.full_params["y_unit"], self.full_params["metric"]
 
-                ax.plot(
-                    times,
-                    data,
-                    label=model_style["label"],
-                    color=color,
-                    linestyle=model_style["linestyle"],
-                    linewidth=model_style["linewidth"],
-                    alpha=model_style["alpha"],
-                )
+        plotted_variables = []
+        for model in present:
+            results = aggregator.results(sim_id, model, self.stim_name)
+            times = results.times(x_unit)
+            style = styles[model]
 
-                if np.isnan(data).any() or np.isinf(data).any():
-                    print(f"Warning: NaN or Inf values detected in variable '{var_name}' for model '{model}' and sim_id '{sim_id}'. These values will not be plotted.")
-                plotted_any = True
+            for variable in self.plot_variables():
+                if not results.has(variable, metric):
+                    # (no sim_id in the message, so the warning is shown once per model and key, not per run)
+                    warnings.warn(f"Model '{model}' has no '{results.key(variable, metric)}'; not plotted.")
+                    continue
+                data = results.get(variable, metric, unit=y_unit)
+                if not np.all(np.isfinite(data)):
+                    warnings.warn(f"Run '{sim_id}', model '{model}': NaN or Inf in '{results.key(variable, metric)}' (not drawn there).")
+                color = self.variable_color(variable)
+                ax.plot(times, data, label=style["label"], color=color,
+                        linestyle=style["linestyle"], linewidth=style["linewidth"], alpha=style["alpha"])
 
-        if not plotted_any:
-            ax.text(
-                0.5,
-                0.5,
-                f"No Data\n({sim_id})",
-                ha="center",
-                va="center",
-                transform=ax.transAxes,
-                color="gray",
-            )
+                if std_bands[model]:
+                    if metric == "pop_mean" and results.has(variable, "pop_std"):
+                        std = results.get(variable, "pop_std", unit=y_unit)
+                        ax.fill_between(times, data - std, data + std, color=color, alpha=self.full_params["band_alpha"], linewidth=0)
+                    else:
+                        warnings.warn(f"Model '{model}' has no '{results.key(variable, 'pop_std')}' for the std band.")
+
+                if variable not in plotted_variables:
+                    plotted_variables.append(variable)
+
+        if not plotted_variables:
+            self.show_no_data(ax, sim_id)
+            return None
+
+        self._legend_kwargs = {"handles": self.model_legend_handles({model: styles[model] for model in present}, plotted_variables)}
         return None
 
 
 class AggregatorRateTracePlotter(AggregatorTracePlot):
-    DEFAULT_VARIABLES = ["exc_rate_mean", "inh_rate_mean"]
+    DEFAULT_VARIABLES = ["exc_rate", "inh_rate"]
     DEFAULT_PARAMS = {
         **AggregatorTracePlot.DEFAULT_PARAMS,
         "title": "Firing Rate",
-        "xlabel": "Time",
-        "x_unit": "ms",
         "ylabel": "Firing Rate",
         "y_unit": "Hz",
     }
 
 
 class AggregatorVoltageTracePlotter(AggregatorTracePlot):
-    DEFAULT_VARIABLES = ["exc_voltage_mean", "inh_voltage_mean"]
+    DEFAULT_VARIABLES = ["exc_voltage", "inh_voltage"]
     DEFAULT_PARAMS = {
         **AggregatorTracePlot.DEFAULT_PARAMS,
         "title": "Membrane Voltage",
-        "xlabel": "Time",
-        "x_unit": "ms",
         "ylabel": "Membrane potential",
         "y_unit": "mV",
     }
 
 
-class AggregatorSTPTracePlotter(AggregatorTracePlot):
-    # STP variables per projection (target-source code), e.g. "ee_x" = x of the synapses onto E from E
-    DEFAULT_VARIABLES = ["ee_x_pop_mean", "ee_u_pop_mean"]
+class AggregatorAdaptationTracePlotter(AggregatorTracePlot):
+    # Only E adapts in the usual setups, so E alone in blue (add "inh_adaptation" to `variables` for I)
+    DEFAULT_VARIABLES = ["exc_adaptation"]
     DEFAULT_PARAMS = {
         **AggregatorTracePlot.DEFAULT_PARAMS,
-        "title": "STP Adaptation Variables",
-        "xlabel": "Time",
-        "x_unit": "ms",
-        "ylabel": "STP Adaptation Variables",
+        "title": "Adaptation",
+        "ylabel": "Adaptation",
+        "y_unit": "pA",
+        "default_colors": {"exc_adaptation": "blue"},
+    }
+
+
+class AggregatorSTPTracePlotter(AggregatorTracePlot):
+    """
+    STP variable `projection_variable` ("x" or "u") of the projections onto `target` ("exc"/"inh"),
+    e.g. target "exc", "x" → ee_x (from E, exc colour) and ei_x (from I, inh colour).
+    """
+    DEFAULT_PARAMS = {
+        **AggregatorTracePlot.DEFAULT_PARAMS,
+        "title": "STP Variables",
+        "ylabel": "STP variable",
         "y_unit": None,
-        "colors": {
-            "ee_x_pop_mean": "blue",
-            "ee_u_pop_mean": "purple",
-            "ei_x_pop_mean": "cyan",
-            "ei_u_pop_mean": "magenta",
-        },
+        "projection_variable": "x",
+    }
+
+    def plot_variables(self) -> List[str]:
+        if not self._explicit_variables and self.full_params["projection_variable"] not in ("x", "u"):
+            # y (active resources) is not needed in the MF and will be dropped (see todo.md)
+            raise ValueError(f"'projection_variable' must be 'x' or 'u', got '{self.full_params['projection_variable']}'.")
+        return super().plot_variables()
+
+
+class AggregatorConductanceTracePlotter(AggregatorTracePlot):
+    """Mean conductance of the projections onto `target` ("exc"/"inh"). Only the SNN saves conductances."""
+    DEFAULT_PARAMS = {
+        **AggregatorTracePlot.DEFAULT_PARAMS,
+        "title": "Synaptic Conductance",
+        "ylabel": "Conductance",
+        "y_unit": "nS",
+        "projection_variable": "conductance",
+    }
+
+
+class AggregatorInputTracePlotter(AggregatorTracePlot):
+    """External inputs: drive and stimulus rate per source (saved without a metric)."""
+    DEFAULT_VARIABLES = ["drive_rate", "stim_rate"]
+    DEFAULT_PARAMS = {
+        **AggregatorTracePlot.DEFAULT_PARAMS,
+        "title": "External Inputs",
+        "ylabel": "Input rate",
+        "y_unit": "Hz",
+        "metric": None,
+        "default_colors": {"drive_rate": "gray", "stim_rate": "purple"},
+        "variable_legend": True,
     }
 
 
 class AggregatorHeatmapPlotter(BaseAggregatorPlot):
-    """Plotter for 2D contourf / heatmaps of single neuron data loaded via aggregator."""
+    """
+    Heatmap of a single-neuron grid variable (first of `variables`, a grid key such as "out_rate_mean")
+    over the (exc, inh) input rates at one `drive_rate`, read in `x_unit`/`y_unit`/`z_unit`. See HEATMAP_PARAMS.
+    """
 
     DEFAULT_VARIABLES = ["out_rate_mean"]
     DEFAULT_PARAMS = {
         **BaseAggregatorPlot.DEFAULT_PARAMS,
+        **HEATMAP_PARAMS,
         "title": "Single Neuron Activity Heatmap",
         "xlabel": r"$\nu_e$",
         "ylabel": r"$\nu_i$",
         "x_unit": "Hz",
         "y_unit": "Hz",
         "z_unit": "Hz",
-        "vmin": None,
-        "vmax": None,
-        "levels": 10,
-        "cmap": "viridis",
         "extend": "max",
         "colorbar_label": r"$\nu_{out}$",
         "drive_rate": None,  # drive rate [Hz] of the (exc, inh) slice; None = first drive value of the grid
@@ -330,8 +408,8 @@ class AggregatorHeatmapPlotter(BaseAggregatorPlot):
         self,
         variables: Union[str, List[str]] = None,
         models: List[str] = None,
-        stim_name: str = "SpontActivity0_5",
-        model: str = "single_neuron",
+        stim_name: str = "steady_state",
+        model: str = "exc_neuron",
         params: dict = None,
     ):
         super().__init__(variables=variables, models=models, stim_name=stim_name, params=params)
@@ -342,28 +420,19 @@ class AggregatorHeatmapPlotter(BaseAggregatorPlot):
             return None
 
         var_name = self.variables[0] if self.variables else "out_rate_mean"
+        units = {"exc_rate_grid": self.full_params["x_unit"], "inh_rate_grid": self.full_params["y_unit"], var_name: self.full_params["z_unit"]}
 
         try:
             arrays = load_neuron_grid_slice(
                 aggregator, sim_id, self.model, self.stim_name,
-                ["exc_rate_grid", "inh_rate_grid", var_name], self.full_params["drive_rate"],
+                ["exc_rate_grid", "inh_rate_grid", var_name], self.full_params["drive_rate"], units=units,
             )
-            exc_grid, inh_grid, data = arrays["exc_rate_grid"], arrays["inh_rate_grid"], arrays[var_name]
-        except (FileNotFoundError, KeyError):
-            ax.text(0.5, 0.5, f"No Data\n({sim_id})", ha="center", va="center", transform=ax.transAxes, color="gray")
+        except (FileNotFoundError, KeyError) as error:
+            warnings.warn(str(error))
+            self.show_no_data(ax, sim_id)
             return None
 
-        im = ax.contourf(
-            exc_grid,
-            inh_grid,
-            data,
-            levels=self.full_params["levels"],
-            extend=self.full_params["extend"],
-            vmin=self.full_params["vmin"],
-            vmax=self.full_params["vmax"],
-            cmap=self.full_params["cmap"],
-        )
-        return im
+        return draw_grid_heatmap(ax, arrays["exc_rate_grid"], arrays["inh_rate_grid"], arrays[var_name], self.full_params)
 
 
 class AggregatorActivityHeatmapPlotter(AggregatorHeatmapPlotter):
@@ -420,8 +489,9 @@ class AggregatorSNNRasterPlotter(BaseAggregatorPlot):
         if aggregator is None or sim_id is None:
             return None
 
-        exc_spikes = aggregator._load_variable(sim_id, self.model, self.stim_name, "exc_spikes")
-        inh_spikes = aggregator._load_variable(sim_id, self.model, self.stim_name, "inh_spikes")
+        results = aggregator.results(sim_id, self.model, self.stim_name)
+        exc_spikes = results.get("exc_spikes", metric=None, unit=self.full_params["x_unit"])
+        inh_spikes = results.get("inh_spikes", metric=None, unit=self.full_params["x_unit"])
 
         exc_cells = self.full_params["exc_cells"]
         inh_cells = self.full_params["inh_cells"]
@@ -483,8 +553,8 @@ class AggregatorNeuronIOCurvePlotter(BaseAggregatorPlot):
         self,
         variables: Union[str, List[str]] = None,
         models: List[str] = None,
-        stim_name: str = "SpontActivity0_5",
-        model: str = "single_neuron",
+        stim_name: str = "steady_state",
+        model: str = "exc_neuron",
         tf_funcs: List[BaseTransferFunction] | Dict[str, List[BaseTransferFunction]] | None = None,
         neuron_name: str | None = None,
         mf_model_names: str | List[str] | None = None,
@@ -501,6 +571,18 @@ class AggregatorNeuronIOCurvePlotter(BaseAggregatorPlot):
         self.tf_funcs = tf_funcs
         self.neuron_name = neuron_name or model
         self.mf_model_names = [mf_model_names] if isinstance(mf_model_names, str) else mf_model_names
+
+    def param_values(self, param: str, aggregator, sim_id: str) -> list | None:
+        """`drive_rate`: the drive rates [Hz] of the run's neuron grid (older 2D data: [0.0]; no grid file: [])."""
+        if param != "drive_rate":
+            return None
+        try:
+            results = aggregator.results(sim_id, self.model, self.stim_name)
+        except FileNotFoundError:
+            return []
+        if not results.has("drive_rate_grid", metric=None):
+            return [0.0]  # older 2D data (drive = 0)
+        return drive_values(results.get("drive_rate_grid", metric=None)).tolist()
 
     def _get_tf_funcs(self, aggregator, sim_id: str, tf_funcs=None) -> Tuple[List[BaseTransferFunction], List[str]]:
         """
@@ -529,11 +611,14 @@ class AggregatorNeuronIOCurvePlotter(BaseAggregatorPlot):
         if aggregator is None or sim_id is None:
             return None
 
+        x_unit, y_unit = self.full_params["x_unit"], self.full_params["y_unit"]
         variables = ["exc_rate_grid", "inh_rate_grid", "out_rate_mean"] + (["out_rate_std"] if self.full_params["yerrorbar"] else [])
+        units = {"exc_rate_grid": x_unit, "inh_rate_grid": x_unit, "out_rate_mean": y_unit, "out_rate_std": y_unit}
         try:
-            arrays = load_neuron_grid_slice(aggregator, sim_id, self.model, self.stim_name, variables, self.full_params["drive_rate"])
-        except (FileNotFoundError, KeyError):
-            ax.text(0.5, 0.5, f"No Data\n({sim_id})", ha="center", va="center", transform=ax.transAxes, color="gray")
+            arrays = load_neuron_grid_slice(aggregator, sim_id, self.model, self.stim_name, variables, self.full_params["drive_rate"], units=units)
+        except (FileNotFoundError, KeyError) as error:
+            warnings.warn(str(error))
+            self.show_no_data(ax, sim_id)
             return None
         exc_grid, inh_grid, out_mean = arrays["exc_rate_grid"], arrays["inh_rate_grid"], arrays["out_rate_mean"]
         out_std = arrays.get("out_rate_std")
@@ -574,7 +659,7 @@ class AggregatorNeuronIOCurvePlotter(BaseAggregatorPlot):
         curve_labels = []
         for j, nu_i_idx in enumerate(inh_slice_indices):
             nu_i_val = inh_grid[0, nu_i_idx]
-            label = self.full_params["labels"][j] if (self.full_params["labels"] and j < len(self.full_params["labels"])) else fr"$r_i$={nu_i_val:.0f} Hz"
+            label = self.full_params["labels"][j] if (self.full_params["labels"] and j < len(self.full_params["labels"])) else fr"$r_i$={nu_i_val:.0f} {x_unit}"
             curve_labels.append(label)
             yerr = out_std[:, nu_i_idx] if out_std is not None else None
 
@@ -598,27 +683,29 @@ class AggregatorNeuronIOCurvePlotter(BaseAggregatorPlot):
                 fit_labels = default_fit_labels
             fit_linestyles = self.full_params["tf_linestyles"][:len(fit_funcs)]
 
+            # The TFs take rates in Hz and adaptation in nA (see transfer_function), independent of the plot units
+            tf_variables = ["exc_rate_grid", "inh_rate_grid"]
+            if any("adaptation" in tf.required_inputs() for tf in fit_funcs):
+                tf_variables.append("adaptation_mean")
+            try:
+                tf_inputs = load_neuron_grid_slice(
+                    aggregator, sim_id, self.model, self.stim_name, tf_variables, self.full_params["drive_rate"],
+                    units={"exc_rate_grid": "Hz", "inh_rate_grid": "Hz", "adaptation_mean": "nA"},
+                )
+            except KeyError:
+                raise ValueError(f"Transfer-function fits require {tf_variables}, not all saved for model '{self.model}'.") from None
+
             for j, nu_i_idx in enumerate(inh_slice_indices):
-                adaptation = None
-                if any("adaptation" in tf.required_inputs() for tf in fit_funcs):
-                    try:
-                        adaptation = load_neuron_grid_slice(
-                            aggregator, sim_id, self.model, self.stim_name, ["adaptation_mean"], self.full_params["drive_rate"]
-                        )["adaptation_mean"][:, nu_i_idx]
-                    except (FileNotFoundError, KeyError):
-                        raise ValueError(
-                            "Transfer-function fits require 'adaptation_mean', "
-                            f"which is unavailable for model '{self.model}'."
-                        ) from None
+                adaptation = tf_inputs["adaptation_mean"][:, nu_i_idx] if "adaptation_mean" in tf_inputs else None
+                drive_grid = tf_inputs.get("drive_rate_grid")
 
                 for tf, linestyle in zip(fit_funcs, fit_linestyles, strict=True):
-                    drive_grid = arrays.get("drive_rate_grid")
                     nu_out_fit = tf(
-                        exc_rate=exc_grid[:, nu_i_idx],
-                        inh_rate=inh_grid[:, nu_i_idx],
+                        exc_rate=tf_inputs["exc_rate_grid"][:, nu_i_idx],
+                        inh_rate=tf_inputs["inh_rate_grid"][:, nu_i_idx],
                         drive_rate=None if drive_grid is None else drive_grid[:, nu_i_idx],  # the plotted drive slice
                         adaptation=adaptation,
-                    ) * get_unit_multiplier("Hz", self.full_params["y_unit"])
+                    ) * get_unit_multiplier("Hz", y_unit)
                     ax.plot(
                         exc_grid[:, nu_i_idx],
                         nu_out_fit,
@@ -654,12 +741,7 @@ class AggregatorNeuronIOCurvePlotter(BaseAggregatorPlot):
                     )
                     for label, linestyle in zip(fit_labels, fit_linestyles, strict=True)
                 ]
-            if self.full_params["legend"] is True:
-                self.full_params["legend"] = {"handles": legend_elements}
-            elif isinstance(self.full_params["legend"], dict):
-                self.full_params["legend"]["handles"] = legend_elements
-            if isinstance(self.full_params["legend"], dict) and self.full_params["curve_legend_title"]:
-                self.full_params["legend"]["title"] = self.full_params["curve_legend_title"]
+            self._legend_kwargs = {"handles": legend_elements}
         elif self.full_params["curve_legend"]:
             legend_elements = [
                 Line2D(
@@ -670,12 +752,9 @@ class AggregatorNeuronIOCurvePlotter(BaseAggregatorPlot):
                 )
                 for j, label in enumerate(curve_labels)
             ]
-            if self.full_params["legend"] is True:
-                self.full_params["legend"] = {"handles": legend_elements}
-            elif isinstance(self.full_params["legend"], dict):
-                self.full_params["legend"]["handles"] = legend_elements
-            if isinstance(self.full_params["legend"], dict) and self.full_params["curve_legend_title"]:
-                self.full_params["legend"]["title"] = self.full_params["curve_legend_title"]
+            self._legend_kwargs = {"handles": legend_elements}
+        if self._legend_kwargs and self.full_params["curve_legend_title"]:
+            self._legend_kwargs["title"] = self.full_params["curve_legend_title"]
         return None
 
 
@@ -700,7 +779,21 @@ class AggregatorGridPlottingHook:
         "savefig_path": None,
         "show_row_col_labels": True,
         "hide_inner_ticks": True,
+        # Values of the x axis (columns, left to right) and y axis (rows, top to bottom).
+        # None: all values of the runs left by `run_filters` (run parameter), or the values the plotter
+        # discovers (`plot.*` parameter, see `BaseAggregatorPlot.param_values`); a list: these values, in this order
+        # (cells without a matching run, or whose run lacks the plot value, show "N/A").
+        "x_values": None,
+        "y_values": None,
+        # Order of values that are not given explicitly: "ascending", "descending",
+        # or None (order of the runs, as in param_combinations.csv).
+        "x_order": "ascending",
+        "y_order": "ascending",
     }
+
+    # Axis parameters with this prefix are plot parameters (`full_params` keys set per row/column on the
+    # same run, e.g. "plot.drive_rate"); any other axis parameter is a run parameter (selects the run).
+    PLOT_PARAM_PREFIX = "plot."
 
     def __init__(
         self,
@@ -711,10 +804,18 @@ class AggregatorGridPlottingHook:
         fig_params: dict = None,
         common_params: dict = None,
         subplot_params: dict = None,
-        param_filters: dict = None,
-        filters: dict = None,
-        **kwargs_filters,
+        run_filters: dict = None,
     ):
+        """
+        Parameters
+        ----------
+        x_param, y_param : str
+            Parameter spanning the columns / rows: a run parameter (as in param_combinations.csv, may be
+            abbreviated, see `ResultsAggregator.resolve_param_column`) or a plot parameter "plot.<full_params key>".
+        run_filters : dict
+            Run parameter filters, {param: value or list of values} (see `ResultsAggregator.filter_runs`).
+            Each cell must match exactly one of the remaining runs.
+        """
         self.agg = aggregator
         self.x_param = x_param
         self.y_param = y_param
@@ -724,31 +825,104 @@ class AggregatorGridPlottingHook:
         self.common_params = common_params or {}
         self.subplot_params = subplot_params or {}
 
-        # Merge dict filters and keyword filters
-        combined_filters = {}
-        if param_filters:
-            combined_filters.update(param_filters)
-        if filters:
-            combined_filters.update(filters)
-        combined_filters.update(kwargs_filters)
-        self.param_filters = combined_filters
+        self.run_filters = dict(run_filters or {})
+        plot_keys = [key for key in self.run_filters if key.startswith(self.PLOT_PARAM_PREFIX)]
+        if plot_keys:
+            raise ValueError(
+                f"run_filters only select runs, got plot parameters {plot_keys}. "
+                "Use x_param/y_param with fig_params['x_values'/'y_values'] for an axis, or common_params for a fixed value."
+            )
+
+    @staticmethod
+    def _order_values(values: list, order) -> list:
+        """Orders the unique values of one grid axis: "ascending", "descending" or None (as given)."""
+        if order is None:
+            return values
+        if order not in ("ascending", "descending"):
+            raise ValueError(f"Unknown order '{order}'. Use 'ascending', 'descending' or None.")
+        return sorted(values, reverse=(order == "descending"))
+
+    @staticmethod
+    def _contains(values: list, value) -> bool:
+        """`value in values`, with numbers compared by np.isclose (plot values are often floats, e.g. drive rates)."""
+        for candidate in values:
+            if isinstance(candidate, (int, float)) and isinstance(value, (int, float)) and not isinstance(value, bool):
+                if np.isclose(candidate, value):
+                    return True
+            elif candidate == value:
+                return True
+        return False
+
+    def _resolve_axis(self, axis: str, param_mat: np.ndarray, sim_ids: List[str]) -> dict:
+        """
+        Resolves the "x" or "y" axis into {"kind", "label", "values", ...}:
+        run axis: "col" (param_mat column); plot axis: "key" (full_params key) and "run_values"
+        ({sim_id: values the plotter discovers for that run, or None}).
+        """
+        param = getattr(self, f"{axis}_param")
+        values = self.fig_params[f"{axis}_values"]
+        order = self.fig_params[f"{axis}_order"]
+
+        if param.startswith(self.PLOT_PARAM_PREFIX):
+            key = param[len(self.PLOT_PARAM_PREFIX):]
+            if not isinstance(self.plotter, BaseAggregatorPlot):
+                raise TypeError(f"{axis}_param='{param}' (a plot parameter) needs a BaseAggregatorPlot plotter.")
+            run_values = {sim_id: self.plotter.param_values(key, self.agg, sim_id) for sim_id in sim_ids}
+            if values is None:
+                if any(run_value is None for run_value in run_values.values()):
+                    raise ValueError(
+                        f"{axis}_param='{param}': {type(self.plotter).__name__} cannot discover the values of '{key}'. "
+                        f"Give them in fig_params['{axis}_values']."
+                    )
+                discovered = []
+                for run_value in run_values.values():
+                    discovered.extend(value for value in run_value if not self._contains(discovered, value))
+                values = self._order_values(discovered, order)
+            return {"kind": "plot", "label": key, "key": key, "values": list(values), "run_values": run_values}
+
+        _, col = self.agg.resolve_param_column(param)
+        if values is None:
+            values = self._order_values(list(dict.fromkeys(param_mat[:, col])), order)
+        return {"kind": "run", "label": param, "col": col, "values": list(values)}
+
+    def _cell_sim_id(self, cell_axes: list, param_mat: np.ndarray, sim_ids: List[str]) -> str | None:
+        """
+        The run of one cell, given [(axis, value), ...] for its x and y; None if there is no matching run
+        or the run lacks a plot-axis value. Raises ValueError if several runs match.
+        """
+        mask = np.ones(len(sim_ids), dtype=bool)
+        for axis, value in cell_axes:
+            if axis["kind"] == "run":
+                mask &= param_mat[:, axis["col"]] == value
+        indices = np.flatnonzero(mask)
+        if indices.size == 0:
+            return None
+        if indices.size > 1:
+            cell = ", ".join(f"{axis['label']} = {value}" for axis, value in cell_axes)
+            raise ValueError(
+                f"{indices.size} runs match the cell ({cell}): {[sim_ids[i] for i in indices]}. "
+                "Narrow them with run_filters."
+            )
+        sim_id = sim_ids[indices[0]]
+        for axis, value in cell_axes:
+            if axis["kind"] == "plot":
+                run_value = axis["run_values"][sim_id]
+                if run_value is not None and not self._contains(run_value, value):
+                    return None
+        return sim_id
 
     def __call__(self) -> Tuple[plt.Figure, np.ndarray]:
-        # 1. Resolve exact parameter names
-        x_full_name, x_col = self.agg.resolve_param_column(self.x_param)
-        y_full_name, y_col = self.agg.resolve_param_column(self.y_param)
-
-        # 2. Query filtered results matrix
-        _, param_mat, p_names, sim_ids = self.agg.get_results(
-            variable="times", **self.param_filters
-        )
-
+        # 1. Runs left by the filters (no data is loaded)
+        param_mat, sim_ids = self.agg.filter_runs(self.run_filters)
         if len(sim_ids) == 0:
-            raise ValueError(f"No simulation runs match the filters: {self.param_filters}")
+            raise ValueError(f"No simulation runs match the filters: {self.run_filters}")
 
-        # 3. Extract unique x and y parameter values
-        x_vals = list(dict.fromkeys(param_mat[:, x_col]))
-        y_vals = list(dict.fromkeys(param_mat[:, y_col]))
+        # 2. Values of the x (columns) and y (rows) axes
+        x_axis = self._resolve_axis("x", param_mat, sim_ids)
+        y_axis = self._resolve_axis("y", param_mat, sim_ids)
+        x_vals, y_vals = x_axis["values"], y_axis["values"]
+        if not x_vals or not y_vals:
+            raise ValueError(f"Empty grid axis: {self.x_param} = {x_vals}, {self.y_param} = {y_vals}.")
 
         nrows = len(y_vals)
         ncols = len(x_vals)
@@ -782,9 +956,9 @@ class AggregatorGridPlottingHook:
             for j, x_val in enumerate(x_vals):
                 ax = axes_grid[i, j]
 
-                # Match sim_id for (x_val, y_val)
-                cell_mask = (param_mat[:, x_col] == x_val) & (param_mat[:, y_col] == y_val)
-                matching_indices = np.where(cell_mask)[0]
+                # Match the run of (x_val, y_val)
+                cell_axes = [(x_axis, x_val), (y_axis, y_val)]
+                sim_id = self._cell_sim_id(cell_axes, param_mat, sim_ids)
 
                 cell_overrides = self.subplot_params.get((i, j), {})
 
@@ -792,13 +966,16 @@ class AggregatorGridPlottingHook:
                 if isinstance(self.plotter, BasePlot):
                     cell_plotter = copy.deepcopy(self.plotter)
                     cell_plotter.full_params.update(self.common_params)
+                    for axis, value in cell_axes:
+                        if axis["kind"] == "plot":
+                            cell_plotter.full_params[axis["key"]] = value
                     cell_plotter.full_params.update(cell_overrides)
                 else:
                     cell_plotter = self.plotter
 
                 # Column Headers (top row only)
                 if i == 0 and self.fig_params.get("show_row_col_labels", True):
-                    cell_title = cell_overrides.get("title", f"{self.x_param} = {x_val}")
+                    cell_title = cell_overrides.get("title", f"{x_axis['label']} = {x_val}")
                 elif "title" in cell_overrides:
                     cell_title = cell_overrides["title"]
                 else:
@@ -828,8 +1005,7 @@ class AggregatorGridPlottingHook:
                     cell_plotter.full_params["ylabel"] = cell_ylabel
                     cell_plotter.full_params["legend"] = cell_legend
 
-                if len(matching_indices) > 0:
-                    sim_id = sim_ids[matching_indices[0]]
+                if sim_id is not None:
                     if isinstance(cell_plotter, BasePlot):
                         im = cell_plotter.draw(ax, sim_id=sim_id, aggregator=self.agg)
                         if im is not None:
@@ -859,7 +1035,7 @@ class AggregatorGridPlottingHook:
 
                 # Row Labels (LEFT margin on first column j == 0)
                 if j == 0 and self.fig_params.get("show_row_col_labels", True):
-                    row_text = f"{self.y_param} = {y_val}"
+                    row_text = f"{y_axis['label']} = {y_val}"
                     ax.text(
                         -0.22,
                         0.5,

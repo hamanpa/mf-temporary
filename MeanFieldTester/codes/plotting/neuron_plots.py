@@ -1,7 +1,7 @@
 import matplotlib.pyplot as plt
 from ..utils.list_helpers import indexed_linear_sample
 from ..data_structures.base import BaseSingleNeuronResults
-from .base import BaseSingleNeuronPlot
+from .base import BaseSingleNeuronPlot, HEATMAP_PARAMS, draw_grid_heatmap
 from typing import Dict
 
 
@@ -114,10 +114,7 @@ class SingleNeuronAdaptationHeatmapPlot(BaseSingleNeuronPlot):
         'x_unit': 'Hz',
         'y_unit': 'Hz',
         'z_unit': 'pA',
-        'vmin': None,  # Minimum value for the heatmap
-        'vmax': None,  # Maximum value for the heatmap
-        'levels': 10,  # Number of levels in the heatmap
-        'cmap': 'viridis',  # Colormap for the heatmap
+        **HEATMAP_PARAMS,
         'extend': 'neither',  # Extend the colorbar to the maximum value
         'colorbar_label': 'adaptation',  # Label for the colorbar
     }
@@ -133,15 +130,11 @@ class SingleNeuronAdaptationHeatmapPlot(BaseSingleNeuronPlot):
         y_unit = self.full_params.get('y_unit', None)
         z_unit = self.full_params.get('z_unit', None)
 
-        im = ax.contourf(single_neuron_result.exc_rate_grid(x_unit),
-                         single_neuron_result.inh_rate_grid(y_unit),
-                         single_neuron_result.adaptation_mean(z_unit),
-                         levels=self.full_params['levels'],
-                         extend=self.full_params['extend'],
-                         vmin=self.full_params['vmin'],
-                         vmax=self.full_params['vmax'],
-                         cmap=self.full_params['cmap']
-                         )
+        im = draw_grid_heatmap(ax,
+                               single_neuron_result.exc_rate_grid(x_unit),
+                               single_neuron_result.inh_rate_grid(y_unit),
+                               single_neuron_result.adaptation_mean(z_unit),
+                               self.full_params)
         return im
 
 
@@ -155,10 +148,7 @@ class SingleNeuronActivityHeatmapPlot(BaseSingleNeuronPlot):
         'z_unit': 'Hz',
         'xlabel': r'$\nu_e$',
         'ylabel': r'$\nu_i$',
-        'vmin': None,  # Minimum value for the heatmap
-        'vmax': None,  # Maximum value for the heatmap
-        'levels': 10,  # Number of levels in the heatmap
-        'cmap': 'viridis',  # Colormap for the heatmap
+        **HEATMAP_PARAMS,
         'extend': 'max',  # Extend the colorbar to the maximum value
         'colorbar_label': r'$\nu_{{out}}$',  # Label for the colorbar
     }
@@ -174,14 +164,10 @@ class SingleNeuronActivityHeatmapPlot(BaseSingleNeuronPlot):
         y_unit = self.full_params.get('y_unit', None)
         z_unit = self.full_params.get('z_unit', None)
 
-        im = ax.contourf(single_neuron_result.exc_rate_grid(x_unit),
-                         single_neuron_result.inh_rate_grid(y_unit),
-                         single_neuron_result.out_rate_mean(z_unit),
-                         levels=self.full_params['levels'],
-                         extend=self.full_params['extend'],
-                         vmin=self.full_params['vmin'],
-                         vmax=self.full_params['vmax'],
-                         cmap=self.full_params['cmap']
-                         )
+        im = draw_grid_heatmap(ax,
+                               single_neuron_result.exc_rate_grid(x_unit),
+                               single_neuron_result.inh_rate_grid(y_unit),
+                               single_neuron_result.out_rate_mean(z_unit),
+                               self.full_params)
         return im
 

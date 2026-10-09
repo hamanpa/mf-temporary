@@ -76,7 +76,7 @@ The active research is **MF models with Tsodyks–Markram STP**.
 - **Results:**
   - `projects/X/data/<id>/{model}_results_{stim}.npz` (each with a `units` entry); `{neuron}_results_steady_state.npz` holds the neuron grid.
   - `data/<id>/params/` holds the validated configs the run used, including `tf_fits`.
-  - Load them with `codes.controller.ResultsAggregator(project_dir)`: `get_results`, `get_units`, `load_run_params`, `load_transfer_functions`. See `projects/05_DiVolo-STP/explore_results.ipynb`.
+  - Load them with `codes.controller.ResultsAggregator(project_dir)`: `results(sim_id, model, stim).get(variable, metric, unit)`, `get_results(..., run_filters={...})`, `filter_runs`, `get_units`, `load_run_params`, `load_transfer_functions`. See `projects/05_DiVolo-STP/explore_results.ipynb`.
   - Runs made before iteration 1 (2026-10-05) have no `params/`, no units, and NaN SNN STP.
 - **Sweep runs** are built by `controller.run_params`: CSV values are applied to the raw YAML (dotted path = YAML keys), then normalised, validated and saved. The master validates every combination before submitting.
 - **Checking `.npz` files locally** (no numpy here): read them with `zipfile` and parse the `.npy` headers.
