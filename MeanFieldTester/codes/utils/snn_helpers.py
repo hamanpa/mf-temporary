@@ -177,7 +177,8 @@ def reconstruct_stp_dynamics(spike_times: list, U: float, tau_rec: float, tau_fa
         u <- u + U*(1 - u)
         x <- x - u*x ;  y <- y + u*x
 
-    The initial state is u = 0, x = 1, y = 0 (NEST defaults, last spike at t = 0).
+    The initial state is u = 0, x = 1, y = 0 (NEST defaults, last spike at t = 0). The active resources y
+    are tracked internally (x recovers from z = 1 - x - y) but not returned.
 
     Parameters
     ----------
@@ -190,12 +191,12 @@ def reconstruct_stp_dynamics(spike_times: list, U: float, tau_rec: float, tau_fa
 
     Returns
     -------
-    u, x, y : np.ndarray
+    u, x : np.ndarray
         Arrays of shape (len(times), len(spike_times)):
         - u(t): utilisation a spike at time t would use, u_dec(t) + U*(1 - u_dec(t)), with u_dec
           decaying from the last post-spike value. u(t)*x(t)*weight is the efficacy of a spike at t,
           which corresponds to the MF models' X * u.
-        - x(t): available resources; y(t): active (released) resources.
+        - x(t): available resources.
     """
     if tau_rec == tau_psc:
         raise ValueError("tsodyks_synapse requires tau_rec != tau_psc (singular propagator, as in NEST).")
@@ -204,7 +205,6 @@ def reconstruct_stp_dynamics(spike_times: list, U: float, tau_rec: float, tau_fa
     neurons_num = len(spike_times)
     u_all = np.empty((times.size, neurons_num))
     x_all = np.empty((times.size, neurons_num))
-    y_all = np.empty((times.size, neurons_num))
 
     for neuron_idx, neuron_spike_times in enumerate(spike_times):
         neuron_spike_times = np.asarray(neuron_spike_times, dtype=float)
@@ -232,12 +232,11 @@ def reconstruct_stp_dynamics(spike_times: list, U: float, tau_rec: float, tau_fa
         # Propagate the last post-spike state to every point of the time grid.
         idx = np.clip(np.searchsorted(t_states, times, side="right") - 1, 0, None)
         h = times - t_states[idx]
-        Puu, Pyy, Pxy, Pxz = _tsodyks_propagators(h, tau_rec, tau_fac, tau_psc)
+        Puu, _, Pxy, Pxz = _tsodyks_propagators(h, tau_rec, tau_fac, tau_psc)
         x_last, y_last = x_states[idx], y_states[idx]
 
         u_decayed = u_states[idx] * Puu
         u_all[:, neuron_idx] = u_decayed + U * (1.0 - u_decayed)
         x_all[:, neuron_idx] = x_last + Pxy * y_last + Pxz * (1.0 - x_last - y_last)
-        y_all[:, neuron_idx] = y_last * Pyy
 
-    return u_all, x_all, y_all
+    return u_all, x_all

@@ -242,9 +242,9 @@ class TVBMFSimulator(BaseMFSimulator):
         STP time courses per internal projection ("ee_x", "ee_u", ...), consistent with how the
         current model treats the synapses (see MODEL_STP_MODES):
 
-        - dynamic:       x = X, y = Y, u = the model's utilisation (U if tau_fac == 0, else U_dyn*(1-U) + U);
+        - dynamic:       x = X, u = the model's utilisation (U if tau_fac == 0, else U_dyn*(1-U) + U);
                          the efficacy factor used by the model is u*x
-        - asymptotic:    steady-state x, u at the source rate (y not modelled)
+        - asymptotic:    steady-state x, u at the source rate
         - static_weight: x = 1, u = U of the projection onto E from the same source (legacy models use
                          static weights weight*U and the projections onto E for both targets)
         """
@@ -270,7 +270,6 @@ class TVBMFSimulator(BaseMFSimulator):
             U = getattr(conn.syn_params, "U", 1.0)
             if mode == "dynamic":
                 stp_means[f"{projection}_x"] = results_dict[f"X_{projection}"]
-                stp_means[f"{projection}_y"] = results_dict[f"Y_{projection}"]
                 stp_means[f"{projection}_u"] = self.model._utilization(
                     results_dict[f"U_dyn_{projection}"], U, getattr(conn.syn_params, "tau_fac", 0.0)
                 )

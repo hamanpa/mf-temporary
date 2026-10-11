@@ -130,7 +130,7 @@ Sweeps add `inspected_params.yaml` (§7.1).
 ### 5.3 Naming conventions
 - `rate`, not nu/activity/fr. `params`, not pars. `mean`/`std`, not mu/sigma, in the public API. Greek-letter names (`mu_V`, `sigma_V`, `T_V`) appear only inside formula code.
 - **Two-letter projection codes are target-source.** `ei` is the projection *onto E from I* (I→E). This matches `W @ rate` and is used throughout: `ee/ei/ie/ii_conductance`, TVB `K_ei`, `Q_ei`, `X_ei`. The external sources are `d` (drive) and `s` (stimulus), e.g. `K_ed`.
-- **STP variables are per projection:** `<projection>_<variable>`, with variable `x` (available resources), `u` (utilisation a spike would use) or `y` (active resources). Examples: `ee_x`, `ei_u`; saved as `ee_x_pop_mean`. The efficacy factor is u·x (times the weight). They are accessed with `stp_mean(projection, variable)` on both SNN and MF results, and `stp_all(...)` on SNN results. See `data_structures.base.STP_VARIABLES`.
+- **STP variables are per projection:** `<projection>_<variable>`, with variable `x` (available resources) or `u` (utilisation a spike would use). Examples: `ee_x`, `ei_u`; saved as `ee_x_pop_mean`. The efficacy factor is u·x (times the weight). They are accessed with `stp_mean(projection, variable)` on both SNN and MF results, and `stp_all(...)` on SNN results. See `data_structures.base.STP_VARIABLES`.
 - Population prefixes: `exc_` and `inh_`. Population names in configs: `exc_neuron`, `inh_neuron`, `drive_neuron`, `stim_neuron`.
 - Variable/metric keys: `{variable}_{metric}`, e.g. `exc_rate_pop_mean` or `exc_voltage_time_std`.
   - `_all` means the raw per-neuron array, shape (time, neuron).
@@ -148,7 +148,7 @@ Sweeps add `inspected_params.yaml` (§7.1).
 - **Storage:** data is stored in private attributes (`_exc_rate_mean`) in default units and read through getter methods. Setting a field listed in `DEFAULT_UNITS` after construction raises an error (instances are frozen).
 - **Derived quantities are computed lazily inside results objects:**
   - **SNN rates** are computed from spikes using the smoothing function configured in `snn_simulation.smoothing` (`histogram`, `sliding_window`, `alpha_window`).
-  - **SNN STP variables** (per projection) are reconstructed offline from the recorded *presynaptic* spikes, using NEST's exact `tsodyks_synapse` update (three-state x/y/z, `u` decaying to 0 between spikes; `utils.snn_helpers.reconstruct_stp_dynamics`). Static synapses give x = 1, u = 1, y = 0. They are not cached, because the (T, N) arrays are large.
+  - **SNN STP variables** (per projection) are reconstructed offline from the recorded *presynaptic* spikes, using NEST's exact `tsodyks_synapse` update (three-state x/y/z, `u` decaying to 0 between spikes; `utils.snn_helpers.reconstruct_stp_dynamics`). Only x and u are exposed; y is tracked internally because x recovers from z = 1 − x − y. Static synapses give x = 1, u = 1. They are not cached, because the (T, N) arrays are large.
   - **SNN statistics** come from generic accessors `get_all`, `get_pop_mean`, `get_pop_std`, `get_time_mean`, `get_time_std`, `get_full_mean`. Workers rely on these. Unknown variables raise an error; only a variable that was not recorded gives NaN. Errors are not swallowed.
   - **MF voltage and conductance** come from `transfer_function.MembranePotentialFluctuations`, applied to the simulated rates, with effective weights weight·u·x from the model's STP. This means `data_structures` depends on `transfer_function`.
   - **MF STP variables** are provided by the simulator according to how the model treats synapses (`MODEL_STP_MODES` in the TVB factory):
@@ -196,7 +196,7 @@ The TF formula exists **twice**: in `NeuroPSICustomTF` (used for fitting and plo
   - **STP** (`stp_asymptotic.*`, `stp_dynamic.*`, in `stp_models.py`):
     - takes the full projection set `K/Q/U/tau_rec/tau_fac` for `ee, ei, ed, es, ie, ii, id, is`, plus `N_e`/`N_i`;
     - `asymptotic` scales weights by the steady-state u·x at the current rate;
-    - `dynamic` integrates X/Y/U_dyn per projection (`X_ee, X_ei, X_ie, X_ii`, …) as extra state variables.
+    - `dynamic` integrates X/U_dyn per projection (`X_ee, U_dyn_ee`, …) as extra state variables. Recovery is two-state, dX/dt = (1 − X)/τ_rec − u·X·ν: the active resources y (time scale τ_psc ≪ τ_rec) are not modelled, so the MF keeps only the slow processes.
 - **Order:** `.first_order` has rates + adaptation. `.second_order` adds covariances `C_ee, C_ei, C_ii`, with corrections from numerical TF derivatives.
 - **Initial values:** `init_values` in the config accept TVB names (`E`, `C_ee`, `W_e`, …) or MFT names (`exc_rate_mean`, …) through aliases. They are validated against the schema for the chosen model.
 

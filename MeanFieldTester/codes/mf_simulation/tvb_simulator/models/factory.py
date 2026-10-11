@@ -41,7 +41,7 @@ STP_MODELS_REGISTRY = {
 # How each model treats short-term plasticity (used to report STP variables consistently with the model):
 # - "static_weight": legacy models, static weights weight*U, using the projections onto E for both targets
 # - "asymptotic":    weights scaled by the steady-state u*x at the current source rate
-# - "dynamic":       X, Y, U_dyn per projection integrated as state variables
+# - "dynamic":       X, U_dyn per projection integrated as state variables
 MODEL_STP_MODES = {
     "zerlaut2018.first_order": "static_weight",
     "zerlaut2018.second_order": "static_weight",
@@ -146,7 +146,7 @@ TVB_STATE_VARIABLES_MAPPING = {
     **{
         f"{state}_{projection}": TranslationRule(f"{projection}_{field}_mean", sim_unit="")
         for projection in ("ee", "ei", "ie", "ii")
-        for state, field in (("X", "x"), ("Y", "y"), ("U_dyn", "u_dyn"))
+        for state, field in (("X", "x"), ("U_dyn", "u_dyn"))
     },
 }
 

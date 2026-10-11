@@ -11,6 +11,7 @@ import matplotlib.pyplot as plt
 from .base import BasePlot, EXC_COLOR, INH_COLOR, LINESTYLES
 from ..data_structures.neuron_simulation import drive_index, drive_values
 from ..network_params.models import INTERNAL_PROJECTIONS
+from ..data_structures.base import STP_VARIABLES
 
 
 from ..network_params.translators import get_unit_multiplier
@@ -352,9 +353,8 @@ class AggregatorSTPTracePlotter(AggregatorTracePlot):
     }
 
     def plot_variables(self) -> List[str]:
-        if not self._explicit_variables and self.full_params["projection_variable"] not in ("x", "u"):
-            # y (active resources) is not needed in the MF and will be dropped (see todo.md)
-            raise ValueError(f"'projection_variable' must be 'x' or 'u', got '{self.full_params['projection_variable']}'.")
+        if not self._explicit_variables and self.full_params["projection_variable"] not in STP_VARIABLES:
+            raise ValueError(f"'projection_variable' must be one of {STP_VARIABLES}, got '{self.full_params['projection_variable']}'.")
         return super().plot_variables()
 
 

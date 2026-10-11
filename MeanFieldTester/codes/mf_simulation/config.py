@@ -87,7 +87,6 @@ class Divolo2019InitialValuesConfig(Zerlaut2018InitialValuesConfig):
 
 _STP_INIT_DESCRIPTIONS = {
     "X": "available resources x",
-    "Y": "active resources y",
     "U_dyn": "facilitation variable U_dyn (efficacy u = U_dyn*(1-U) + U)",
 }
 
@@ -96,10 +95,8 @@ _STP_INIT_DESCRIPTIONS = {
 # and are expanded to both projections from that source (X_e -> X_ee and X_ie).
 _STP_SOURCE_BASED_INIT_NAMES = {
     "X_e": ("X", "e"), "exc_stp_x_mean": ("X", "e"),
-    "Y_e": ("Y", "e"), "exc_stp_y_mean": ("Y", "e"),
     "U_e": ("U_dyn", "e"), "U_dyn_e": ("U_dyn", "e"), "exc_stp_u_mean": ("U_dyn", "e"),
     "X_i": ("X", "i"), "inh_stp_x_mean": ("X", "i"),
-    "Y_i": ("Y", "i"), "inh_stp_y_mean": ("Y", "i"),
     "U_i": ("U_dyn", "i"), "U_dyn_i": ("U_dyn", "i"), "inh_stp_u_mean": ("U_dyn", "i"),
 }
 
@@ -116,20 +113,16 @@ def _stp_init_field(state: str, projection: str):
 
 class CustomNeuroPSIInitialValuesConfig(Divolo2019InitialValuesConfig):
     """
-    Initial values for the dynamic STP models: one X, Y, U_dyn per projection (target-source code,
-    'ei' = onto E from I), matching the TVB state variables X_ee, Y_ee, U_dyn_ee, ...
+    Initial values for the dynamic STP models: one X, U_dyn per projection (target-source code,
+    'ei' = onto E from I), matching the TVB state variables X_ee, U_dyn_ee, ...
     """
     ee_x_mean: List[float] = _stp_init_field("X", "ee")
-    ee_y_mean: List[float] = _stp_init_field("Y", "ee")
     ee_u_dyn_mean: List[float] = _stp_init_field("U_dyn", "ee")
     ei_x_mean: List[float] = _stp_init_field("X", "ei")
-    ei_y_mean: List[float] = _stp_init_field("Y", "ei")
     ei_u_dyn_mean: List[float] = _stp_init_field("U_dyn", "ei")
     ie_x_mean: List[float] = _stp_init_field("X", "ie")
-    ie_y_mean: List[float] = _stp_init_field("Y", "ie")
     ie_u_dyn_mean: List[float] = _stp_init_field("U_dyn", "ie")
     ii_x_mean: List[float] = _stp_init_field("X", "ii")
-    ii_y_mean: List[float] = _stp_init_field("Y", "ii")
     ii_u_dyn_mean: List[float] = _stp_init_field("U_dyn", "ii")
 
     @model_validator(mode="before")

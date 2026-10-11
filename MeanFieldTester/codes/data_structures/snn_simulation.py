@@ -345,10 +345,10 @@ class SNNResults(BaseSNNResults):
         projection : str
             Target-source code, e.g. 'ei' = synapses onto E from I.
         variable : str
-            'x', 'u' or 'y' (see `data_structures.base.STP_VARIABLES`).
+            'x' or 'u' (see `data_structures.base.STP_VARIABLES`).
 
         Reconstructed from the recorded presynaptic spikes with NEST's `tsodyks_synapse` rules
-        (`utils.snn_helpers.reconstruct_stp_dynamics`). Static synapses give x = 1, u = 1, y = 0.
+        (`utils.snn_helpers.reconstruct_stp_dynamics`). Static synapses give x = 1, u = 1.
         Returns None if the projection does not exist. Not cached (the arrays are large).
         """
         if variable not in STP_VARIABLES:
@@ -362,12 +362,12 @@ class SNNResults(BaseSNNResults):
 
         if conn.syn_type == "tsodyks_synapse":
             syn = conn.syn_params
-            u, x, y = snn_helpers.reconstruct_stp_dynamics(
+            u, x = snn_helpers.reconstruct_stp_dynamics(
                 spikes, syn.U, syn.tau_rec, syn.tau_fac, syn.tau_psc, self.times()
             )
-            values = {"u": u, "x": x, "y": y}[variable]
+            values = {"u": u, "x": x}[variable]
         else:
-            values = np.full((len(self.times()), len(spikes)), 0.0 if variable == "y" else 1.0)
+            values = np.ones((len(self.times()), len(spikes)))
 
         default_unit = self.DEFAULT_UNITS[f"{projection}_{variable}"]
         target_unit = default_unit if unit is None else unit

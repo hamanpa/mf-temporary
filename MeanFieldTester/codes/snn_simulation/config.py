@@ -61,6 +61,6 @@ class SpikingNeuralNetworkSimulationConfig(BaseModel):
         if unknown:
             raise ValueError(
                 f"Unknown saved_variables {unknown}. Allowed: {list(SNNResults.SAVEABLE_VARIABLES)}. "
-                "STP variables are per projection (target-source), e.g. 'ee_x', 'ei_u', 'ie_y'."
+                "STP variables are per projection (target-source), e.g. 'ee_x', 'ei_u'."
             )
         return value

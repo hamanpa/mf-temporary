@@ -46,6 +46,24 @@ Last full review against the code: 2026-10-04.
   - Resolved by parts A–C: units only as labels, private `_load_variable`, `full_params` mutation, name-prefix model lists, `plotted_any`, wrong heatmap defaults, `update_params`, wedges, the lazy results container (`SavedResults`), the 05 aliases. Semantic traps: the MF/SNN meaning of `pop_std` is documented at `std_bands`; the drive ramp is the mf_simulation item *Drive ramp missing in the MF*.
   - Caveat: `try_load` reuses an existing neuron cache (`data/<id>_*_neuron_results.pkl`) even if the configured grid changed (e.g. a drive axis was added). Delete the caches or use a new project when changing the grid.
 
+- [ ] (2) **codebase**: *Local testing project + tutorial* (added 2026-10-11; start after the running sweep finishes)
+  - A testing ground before proper tests in `MeanFieldTester/tests/`: a project (e.g. `projects/00_local_testing/`) with a tiny network and short stimuli, so each stage and the normal scripts run end to end in the local venv in minutes. Its `data/` is the only place local runs write to.
+  - Build it from `projects/00_drafts_tests/` (notebooks `testing_{neuron,transfer_function,snn,mf}_simulation.ipynb`, `testing_workflow.ipynb`): turn them into Python scripts.
+  - Add `tutorial.ipynb` for new users (and for remembering): the use case end to end, from configs through the stages to `ResultsAggregator` and plots. `projects/05_DiVolo-STP/explore_results.ipynb` is a good base for the aggregator part. Later: a notebook showing visually what each comparison metric captures.
+  - Could later share its configs with the standard small test network in root `params/`.
+
+- [ ] (2) **controller/scripts**: *Run sweeps from a pinned clone* (added 2026-10-11; start after the running sweep finishes)
+  - Why: queued jobs import `codes/` when they start, so editing `mf-temporary` during a sweep changes what they run. Scripts locate `codes/` from their own path, so launching from another checkout is enough.
+  - Setup: `git clone /home/haman/mf-temporary /home/haman/mf-run`; launch `python -u /home/haman/mf-run/scripts/run_multiinspection.py --project_dir /home/haman/mf-temporary/projects/<X> ...`; before a sweep, commit in `mf-temporary` and `git -C /home/haman/mf-run pull` (only when nothing is queued from it).
+  - Use a clone, not a worktree: worktree metadata in the shared `.git` would hold a cluster-only path that local git treats as missing and may prune.
+  - Record the commit each sweep ran (at least in the log; later saved automatically, see the next step).
+  - Later: per-sweep code snapshot (copy `codes/` + `scripts/`, commit hash and uncommitted diff into the sweep data, jobs run from it).
+  - Then update `CLAUDE.md` (Environment: edits to `codes/` are safe during sweeps) and `workflow.md`.
+
+- [ ] (2) **storage**: *Sweep data on `/CSNG/haman/`* (added 2026-10-11; plan first, start after the running sweep finishes)
+  - `/home/haman/` has limited storage: fine for tests and small runs; big runs must write to `/CSNG/haman/`.
+  - Plan the setup before implementing it. Open questions: where `data/`/`logs/` live (project dir vs a separate data root, symlink vs a configured path); how `ResultsAggregator` and notebooks find the data; what is visible locally (the sshfs mount covers only `mf-temporary`); moving existing large `data/` dirs (05 has ~10k files); interaction with the pinned run clone.
+
 - [ ] (3) **docs**: *Rewrite the documentation set*
   - Done: `design.md`, `todo.md`, `README.md`, `CLAUDE.md`. `MeanFieldTester/README.md` was deleted; its content was migrated.
   - When `workflow.md` exists, update `CLAUDE.md` (Quick facts → point to it) and `README.md` (quick start).
@@ -89,7 +107,7 @@ Last full review against the code: 2026-10-04.
 ## Blockers / wrong results
 
 - [ ] (1) **projects**: *Update the project YAMLs to the iteration-1 conventions (user)*
-  - `snn_simulation.saved_variables`: `exc_x/exc_u/inh_x/inh_u` are now rejected at load. Use per-projection names `ee_x, ee_u, ei_x, ei_u, ie_x, ie_u, ii_x, ii_u` (and `*_y` if wanted). Affects projects 05 and 06.
+  - `snn_simulation.saved_variables`: `exc_x/exc_u/inh_x/inh_u` are now rejected at load. Use per-projection names `ee_x, ee_u, ei_x, ei_u, ie_x, ie_u, ii_x, ii_u`. Affects projects 05 and 06.
   - `stp_dynamic` `init_values`: set `U_e`/`U_i` (U_dyn) to `[0.0, 0.0]`. The model now uses u = U when τ_fac = 0 regardless, but the init still matters when τ_fac > 0.
   - The commented examples in `inspected_params.yaml` still use `network.synapses.*`.
 - [ ] (2) **research.stp**: *Re-run the `stp_dynamic` results with τ_rec > 0 (projects 05, 07)*
@@ -118,9 +136,10 @@ Last full review against the code: 2026-10-04.
   - First-order models are used in analyses, so they must be maintained, not just second order.
   - Only `stp_*.first_order` was run, once, in projects/04. `divolo2019.first_order` has never been run.
   - Iteration 1 fixed a crash when building results (`np.sqrt(None)` on the missing `C_ee`/`C_ii`), so they can't have worked in the sweep path before. Still untested on the cluster.
-- [ ] (3) **mf_simulation.tvb_simulator.models**: *Drop the STP variable `y` from `stp_dynamic`*
-  - Only x and u are needed as dynamical STP variables in the MF; `y` (active resources) is not necessary. Remove the `Y_*` state variables and the `*_y_pop_mean` outputs.
-  - Until then the plots ignore `y` (task 2).
+- [x] (3) **mf_simulation.tvb_simulator.models**: *Drop the STP variable `y` from `stp_dynamic`* (2026-10-10)
+  - Removed everywhere: the `Y_*` state variables (the MF keeps only the slow STP processes, τ_psc ≪ τ_rec), the `*_y_mean` init fields and the `Y_e`/`Y_i` aliases, the TVB mapping, `*_y_pop_mean` outputs, `STP_VARIABLES` (now `("x", "u")`, so `*_y` is no longer an SNN `saved_variable`), and the `y` return of `reconstruct_stp_dynamics` (y is still tracked inside it, as NEST needs it for x). `Y_e`/`Y_i` removed from all workflow YAMLs.
+  - Saved `data/<id>/params/` of earlier runs contain `*_y_mean` and no longer validate (`extra='forbid'`); rerun instead.
+  - Not yet run on the cluster.
 - [ ] (3) **mf_simulation**: *Compute and save MF mean conductances*
   - The MF computes μV, so the mean conductances per projection (μG = r·K·τ·Q_eff) can be computed from the rates and saved like the SNN `*_conductance_pop_mean` (`MFResults._conductance_mean` is a draft and not saved). Allows SNN-vs-MF conductance comparisons.
 - [ ] (3) **mf_simulation**: *Single source of truth for the TF formula*
@@ -228,7 +247,7 @@ Last full review against the code: 2026-10-04.
 
 - [ ] (2) **codebase**: *Delete obsolete code (delete, don't archive)*
   - `ParameterInspector`, both extractors, `inject_pydantic_param`, `INSPECTION_PARMAS_WITHOUT_UPDATE`.
-  - `data_structures/inspection.py`, `plotting/inspection_plots.py`, `BaseInspectionPlot`, `InspectionWorkflowPlottingHook`, `ModelSummary`/`ModelComparisonInspectionPlottingHook`, `InspectionWorkflowHook`.
+  - `data_structures/inspection.py` (its `CoreInspectionResults` still uses the old population-based `exc_x`/`inh_u` STP names; `exc_y`/`inh_y` removed 2026-10-10), `plotting/inspection_plots.py`, `BaseInspectionPlot`, `InspectionWorkflowPlottingHook`, `ModelSummary`/`ModelComparisonInspectionPlottingHook`, `InspectionWorkflowHook`.
   - The `run_snn_batch_parallel`/`run_mf_batch_parallel` stubs and their commented-out bodies.
   - `utils/result_helpers.py` and `compare_mf_snn_results` in `utils/__init__.py` (used only in a projects/02 notebook).
   - `TVBMFSimulator._create_gaussian_connection_matrix`, and the commented-out blocks in `inspection_worker.py`.
@@ -246,8 +265,10 @@ Last full review against the code: 2026-10-04.
     - TF class vs TVB TF consistency;
     - numpy vs TVB stimulus profiles.
   - Add a dummy-results generator so plots can be tested without running simulations.
+  - Run them in the local venv (`/home/pavel/virt_env/mf-csng`, set up 2026-10-10; all `codes` subpackages import there).
 - [ ] (3) **codebase**: *Pinned requirements*
   - Create `requirements.txt` from the cluster venv (`/home/haman/virt_env/mf-csng/bin/pip freeze`). Separate what MeanFieldTester needs (pydantic v2, numpy, scipy, matplotlib, PyYAML, numba, PyNN, NEST 3.4, tvb-library) from what only drafts use (mozaik, Brian2, …).
+  - Check that the local venv matches (local as of 2026-10-10: Python 3.10.12, pydantic 2.14.0, NEST 3.4, PyNN 0.13.0, tvb-library 2.10.0, numpy 1.26.4).
   - Then update the Environment section of `README.md`.
 - [ ] (4) **codebase**: *Packaging*
   - Add a `pyproject.toml` and install with `pip install -e`, so the `sys.path.append` hacks in scripts and notebooks can go.
@@ -261,8 +282,6 @@ Last full review against the code: 2026-10-04.
 - [ ] (4) **codebase**: *Logging instead of `print`*
 - [ ] (4) **codebase**: *Unify docstrings (NumPy style)*
   - Priority: the workflow functions, `run_unified_batch_parallel`, the workers, and `ResultsAggregator`.
-- [ ] (4) **codebase**: *Tutorial notebook*
-  - `projects/05_DiVolo-STP/explore_results.ipynb` is a good base for the aggregator part. Also add a notebook showing what each comparison metric captures, visually.
 - [ ] (4) **codebase**: *Decide on the neuron_simulation API*
   - SNN and MF use `build_network → run_stimulus → end`. Neuron simulation uses `simulate()` because NEST objects can't be pickled for the grid multiprocessing. Keep it, unless `build/run/end` can live inside each worker.
 
@@ -293,6 +312,8 @@ Last full review against the code: 2026-10-04.
 ---
 
 # DONE
+
+- [x] (3) **codebase**: *nbstripout filter works on both machines* (2026-10-10): nbstripout installed in the local venv; `filter.nbstripout.clean` and `diff.ipynb.textconv` in the shared `.git/config` try the cluster venv Python, then the local one.
 
 Iteration 1 (2026-10-05). Checked on the cluster with projects/10_iteration1_check, except the `U_dyn` fix, which was applied after that run:
 - [x] (1) **network_params**: *Strict synapse models*: `extra="forbid"` plus a `syn_type` ↔ `syn_params` check (a Tsodyks dict could validate as static and drop STP).

@@ -20,13 +20,16 @@ The active research is **MF models with Tsodyks–Markram STP**.
   - Every edit is immediately live on the cluster.
   - GitHub is only a backup.
 - **Code runs on wintermute (SLURM)**, in the venv `/home/haman/virt_env/mf-csng`. A sweep takes 1–2 h there, versus about half a day locally.
-  - Don't run simulations here, and don't probe or trust the local venv (it is stale).
-  - Verification is static. Never claim to have run code. When a run is needed, give the user the exact command or `sbatch` to run on the cluster.
+- **A local venv exists for small checks:** `/home/pavel/virt_env/mf-csng` (`workon mf-csng`; in non-interactive shells call `/home/pavel/virt_env/mf-csng/bin/python` directly). `codes` is not an installed package: run from `MeanFieldTester/` or add it to `sys.path`, as the scripts do.
+  - Allowed: imports, config validation, unit tests, small purpose-built simulations (short, few neurons).
+  - **Never run real simulations, sweeps, or project notebooks locally.** They run for hours and can freeze the machine.
+  - Local runs write to the cluster filesystem. Never write test output into a real project's `data/`; use a scratch dir or a dedicated local-testing project.
+  - Say what was actually run and what was only checked statically. For real runs, give the user the exact command or `sbatch` to run on the cluster.
 - **Running and queued SLURM jobs import `codes/` when they start.** Editing library code while a sweep is queued or running changes what those jobs execute.
   - Ask before editing `MeanFieldTester/codes/` or `scripts/` if a sweep might be in flight.
   - Prefer a separate dev worktree for code changes.
 - **Over sshfs, file scans are slow.** Never grep or find through `projects/*/data/` (05 alone has ~10k files). Exclude `data/`, `imgs/` and `logs/`.
-- **The `nbstripout` git filter points to the cluster venv, so it fails locally.** Use `git -c filter.nbstripout.clean=cat -c filter.nbstripout.smudge=cat status`.
+- **Notebooks are committed without outputs** by the `nbstripout` git filter (`.git/info/attributes` + the shared `.git/config`). It works on both machines: the commands try the cluster venv Python, then the local one. Never bypass it (e.g. `-c filter.nbstripout.clean=cat`).
 
 ## Repo map
 - `MeanFieldTester/codes/` is the **API**: stages (`neuron_simulation`, `transfer_function`, `snn_simulation`, `mf_simulation`), plus `network_params`, `stimuli`, `data_structures`, `controller`, `analysis`, `plotting` and `utils`. See `design.md` §3–4.
@@ -79,7 +82,7 @@ The active research is **MF models with Tsodyks–Markram STP**.
   - Load them with `codes.controller.ResultsAggregator(project_dir)`: `results(sim_id, model, stim).get(variable, metric, unit)`, `get_results(..., run_filters={...})`, `filter_runs`, `get_units`, `load_run_params`, `load_transfer_functions`. See `projects/05_DiVolo-STP/explore_results.ipynb`.
   - Runs made before iteration 1 (2026-10-05) have no `params/`, no units, and NaN SNN STP.
 - **Sweep runs** are built by `controller.run_params`: CSV values are applied to the raw YAML (dotted path = YAML keys), then normalised, validated and saved. The master validates every combination before submitting.
-- **Checking `.npz` files locally** (no numpy here): read them with `zipfile` and parse the `.npy` headers.
+- **Checking `.npz` files locally:** use numpy from the local venv, preferably on a single file.
 - **TF → MF hand-off:** fitted coefficients are written into `mf_sim_params.transfer_function.tf_fits` (config mutation). The TVB models re-implement the TF internally, with a hard-coded expansion point and no `P_log` term.
 - **Legacy MF models** read only the projections onto E.
 - **Not used on the main path:** `ParameterInspector` and its extractors (obsolete, scheduled for deletion). `run_basic_workflow` is an in-memory API pipeline that the main path doesn't use.

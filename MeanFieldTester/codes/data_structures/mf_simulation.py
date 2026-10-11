@@ -164,7 +164,7 @@ class MFResults(BaseMFResults):
         projection : str
             Target-source code, e.g. 'ei' = synapses onto E from I.
         variable : str
-            'x', 'u' or 'y' (see `data_structures.base.STP_VARIABLES`).
+            'x' or 'u' (see `data_structures.base.STP_VARIABLES`).
         """
         if variable not in STP_VARIABLES:
             raise ValueError(f"Unknown STP variable '{variable}'. Expected one of {STP_VARIABLES}.")

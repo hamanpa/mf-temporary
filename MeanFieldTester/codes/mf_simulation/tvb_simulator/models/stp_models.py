@@ -867,16 +867,12 @@ class NeuroPSI_STP_dynamic_first_order(BaseNeuroPSI_STP):
             "W_e": numpy.array([0.0, 0.0]),
             "W_i": numpy.array([0.0, 0.0]),
             "X_ee": numpy.array([1.0, 1.0]),
-            "Y_ee": numpy.array([0.0, 0.0]),
             "U_dyn_ee": numpy.array([0.0, 0.0]),
             "X_ei": numpy.array([1.0, 1.0]),
-            "Y_ei": numpy.array([0.0, 0.0]),
             "U_dyn_ei": numpy.array([0.0, 0.0]),
             "X_ie": numpy.array([1.0, 1.0]),
-            "Y_ie": numpy.array([0.0, 0.0]),
             "U_dyn_ie": numpy.array([0.0, 0.0]),
             "X_ii": numpy.array([1.0, 1.0]),
-            "Y_ii": numpy.array([0.0, 0.0]),
             "U_dyn_ii": numpy.array([0.0, 0.0]),
             "noise": numpy.array([0.0, 0.0]),
             "stimulus": numpy.array([0.0, 0.0]),
@@ -887,7 +883,7 @@ class NeuroPSI_STP_dynamic_first_order(BaseNeuroPSI_STP):
     variables_of_interest = List(
         of=str,
         label="Variables watched by Monitors",
-        choices=("E", "I", "W_e", "W_i", "X_ee", "Y_ee", "U_dyn_ee", "X_ei", "Y_ei", "U_dyn_ei", "X_ie", "Y_ie", "U_dyn_ie", "X_ii", "Y_ii", "U_dyn_ii", "noise", "stimulus"),
+        choices=("E", "I", "W_e", "W_i", "X_ee", "U_dyn_ee", "X_ei", "U_dyn_ei", "X_ie", "U_dyn_ie", "X_ii", "U_dyn_ii", "noise", "stimulus"),
         default=("E",),
         doc="""Default state-variables of this Model to be monitored."""
     )
@@ -901,26 +897,24 @@ class NeuroPSI_STP_dynamic_first_order(BaseNeuroPSI_STP):
         doc="""Boundaries of state-variables."""
     )
 
-    state_variables = 'E I W_e W_i X_ee Y_ee U_dyn_ee X_ei Y_ei U_dyn_ei X_ie Y_ie U_dyn_ie X_ii Y_ii U_dyn_ii noise stimulus'.split()
-    _nvar = 18
+    state_variables = 'E I W_e W_i X_ee U_dyn_ee X_ei U_dyn_ei X_ie U_dyn_ie X_ii U_dyn_ii noise stimulus'.split()
+    _nvar = 14
     cvar = numpy.array([0], dtype=numpy.int32)
 
-    def tsodyks_markram_stp(self, X, Y, U_dyn, rate, tau_rec, tau_fac, tau_syn, U):
+    def tsodyks_markram_stp(self, X, U_dyn, rate, tau_rec, tau_fac, U):
         """Tsodyks-Markram short-term plasticity model."""
         if tau_rec:
             u = self._utilization(U_dyn, U, tau_fac)
             dX = (1 - X) / tau_rec - u * X * rate
-            dY = -Y / tau_syn + u * X * rate
         else:
             dX = 0.
-            dY = 0.
 
         if tau_fac:
             dU_dyn = -U_dyn / tau_fac + U * (1. - U_dyn) * rate
         else:
             dU_dyn = 0.
 
-        return dX, dY, dU_dyn
+        return dX, dU_dyn
 
     def dfun(self, state_variables, coupling, local_coupling=0.00):
         E = state_variables[0, :]
@@ -928,19 +922,15 @@ class NeuroPSI_STP_dynamic_first_order(BaseNeuroPSI_STP):
         W_e = state_variables[2, :]
         W_i = state_variables[3, :]
         X_ee = state_variables[4, :]
-        Y_ee = state_variables[5, :]
-        U_dyn_ee = state_variables[6, :]
-        X_ei = state_variables[7, :]
-        Y_ei = state_variables[8, :]
-        U_dyn_ei = state_variables[9, :]
-        X_ie = state_variables[10, :]
-        Y_ie = state_variables[11, :]
-        U_dyn_ie = state_variables[12, :]
-        X_ii = state_variables[13, :]
-        Y_ii = state_variables[14, :]
-        U_dyn_ii = state_variables[15, :]
-        noise = state_variables[16, :]
-        stimulus = state_variables[17, :]
+        U_dyn_ee = state_variables[5, :]
+        X_ei = state_variables[6, :]
+        U_dyn_ei = state_variables[7, :]
+        X_ie = state_variables[8, :]
+        U_dyn_ie = state_variables[9, :]
+        X_ii = state_variables[10, :]
+        U_dyn_ii = state_variables[11, :]
+        noise = state_variables[12, :]
+        stimulus = state_variables[13, :]
         derivative = numpy.empty_like(state_variables)
 
         c_0 = coupling[0, :]
@@ -975,33 +965,29 @@ class NeuroPSI_STP_dynamic_first_order(BaseNeuroPSI_STP):
         derivative[3] = -W_i / self.tau_w_i + self.b_i * I + self.a_i * (mu_V_i - self.E_L_i) / self.tau_w_i
 
         # Dynamic Synaptic Plasticity ODEs (exc -> exc)
-        dX_ee, dY_ee, dU_dyn_ee = self.tsodyks_markram_stp(X_ee, Y_ee, U_dyn_ee, E, self.tau_rec_ee, self.tau_fac_ee, self.tau_e, self.U_ee)
+        dX_ee, dU_dyn_ee = self.tsodyks_markram_stp(X_ee, U_dyn_ee, E, self.tau_rec_ee, self.tau_fac_ee, self.U_ee)
         derivative[4] = dX_ee
-        derivative[5] = dY_ee
-        derivative[6] = dU_dyn_ee
+        derivative[5] = dU_dyn_ee
         
         # Dynamic Synaptic Plasticity ODEs (inh -> exc)
-        dX_ei, dY_ei, dU_dyn_ei = self.tsodyks_markram_stp(X_ei, Y_ei, U_dyn_ei, I, self.tau_rec_ei, self.tau_fac_ei, self.tau_i, self.U_ei)
-        derivative[7] = dX_ei
-        derivative[8] = dY_ei
-        derivative[9] = dU_dyn_ei
+        dX_ei, dU_dyn_ei = self.tsodyks_markram_stp(X_ei, U_dyn_ei, I, self.tau_rec_ei, self.tau_fac_ei, self.U_ei)
+        derivative[6] = dX_ei
+        derivative[7] = dU_dyn_ei
 
         # Dynamic Synaptic Plasticity ODEs (exc -> inh)
-        dX_ie, dY_ie, dU_dyn_ie = self.tsodyks_markram_stp(X_ie, Y_ie, U_dyn_ie, E, self.tau_rec_ie, self.tau_fac_ie, self.tau_e, self.U_ie)
-        derivative[10] = dX_ie
-        derivative[11] = dY_ie
-        derivative[12] = dU_dyn_ie
+        dX_ie, dU_dyn_ie = self.tsodyks_markram_stp(X_ie, U_dyn_ie, E, self.tau_rec_ie, self.tau_fac_ie, self.U_ie)
+        derivative[8] = dX_ie
+        derivative[9] = dU_dyn_ie
 
         # Dynamic Synaptic Plasticity ODEs (inh -> inh)
-        dX_ii, dY_ii, dU_dyn_ii = self.tsodyks_markram_stp(X_ii, Y_ii, U_dyn_ii, I, self.tau_rec_ii, self.tau_fac_ii, self.tau_i, self.U_ii)
-        derivative[13] = dX_ii
-        derivative[14] = dY_ii
-        derivative[15] = dU_dyn_ii
+        dX_ii, dU_dyn_ii = self.tsodyks_markram_stp(X_ii, U_dyn_ii, I, self.tau_rec_ii, self.tau_fac_ii, self.U_ii)
+        derivative[10] = dX_ii
+        derivative[11] = dU_dyn_ii
 
         # Noise & stimulus
-        derivative[16] = -noise / self.tau_OU
-        derivative[17] = 0.0
-        state_variables[17, :] = 0.0
+        derivative[12] = -noise / self.tau_OU
+        derivative[13] = 0.0
+        state_variables[13, :] = 0.0
 
         return derivative
 
@@ -1023,16 +1009,12 @@ class NeuroPSI_STP_dynamic_second_order(NeuroPSI_STP_dynamic_first_order):
             "W_e": numpy.array([0.0, 0.0]),
             "W_i": numpy.array([0.0, 0.0]),
             "X_ee": numpy.array([1.0, 1.0]),
-            "Y_ee": numpy.array([0.0, 0.0]),
             "U_dyn_ee": numpy.array([0.0, 0.0]),
             "X_ei": numpy.array([1.0, 1.0]),
-            "Y_ei": numpy.array([0.0, 0.0]),
             "U_dyn_ei": numpy.array([0.0, 0.0]),
             "X_ie": numpy.array([1.0, 1.0]),
-            "Y_ie": numpy.array([0.0, 0.0]),
             "U_dyn_ie": numpy.array([0.0, 0.0]),
             "X_ii": numpy.array([1.0, 1.0]),
-            "Y_ii": numpy.array([0.0, 0.0]),
             "U_dyn_ii": numpy.array([0.0, 0.0]),
             "noise": numpy.array([0.0, 0.0]),
             "stimulus": numpy.array([0.0, 0.0]),
@@ -1043,13 +1025,13 @@ class NeuroPSI_STP_dynamic_second_order(NeuroPSI_STP_dynamic_first_order):
     variables_of_interest = List(
         of=str,
         label="Variables watched by Monitors",
-        choices=("E", "I", "C_ee", "C_ei", "C_ii", "W_e", "W_i", "X_ee", "Y_ee", "U_dyn_ee", "X_ei", "Y_ei", "U_dyn_ei", "X_ie", "Y_ie", "U_dyn_ie", "X_ii", "Y_ii", "U_dyn_ii", "noise", "stimulus"),
+        choices=("E", "I", "C_ee", "C_ei", "C_ii", "W_e", "W_i", "X_ee", "U_dyn_ee", "X_ei", "U_dyn_ei", "X_ie", "U_dyn_ie", "X_ii", "U_dyn_ii", "noise", "stimulus"),
         default=("E",),
         doc="""Default state-variables of this Model to be monitored."""
     )
 
-    state_variables = 'E I C_ee C_ei C_ii W_e W_i X_ee Y_ee U_dyn_ee X_ei Y_ei U_dyn_ei X_ie Y_ie U_dyn_ie X_ii Y_ii U_dyn_ii noise stimulus'.split()
-    _nvar = 21
+    state_variables = 'E I C_ee C_ei C_ii W_e W_i X_ee U_dyn_ee X_ei U_dyn_ei X_ie U_dyn_ie X_ii U_dyn_ii noise stimulus'.split()
+    _nvar = 17
 
     def dfun(self, state_variables, coupling, local_coupling=0.00):
         N_e = self.N_e
@@ -1063,19 +1045,15 @@ class NeuroPSI_STP_dynamic_second_order(NeuroPSI_STP_dynamic_first_order):
         W_e = state_variables[5, :]
         W_i = state_variables[6, :]
         X_ee = state_variables[7, :]
-        Y_ee = state_variables[8, :]
-        U_dyn_ee = state_variables[9, :]
-        X_ei = state_variables[10, :]
-        Y_ei = state_variables[11, :]
-        U_dyn_ei = state_variables[12, :]
-        X_ie = state_variables[13, :]
-        Y_ie = state_variables[14, :]
-        U_dyn_ie = state_variables[15, :]
-        X_ii = state_variables[16, :]
-        Y_ii = state_variables[17, :]
-        U_dyn_ii = state_variables[18, :]
-        noise = state_variables[19, :]
-        stimulus = state_variables[20, :]
+        U_dyn_ee = state_variables[8, :]
+        X_ei = state_variables[9, :]
+        U_dyn_ei = state_variables[10, :]
+        X_ie = state_variables[11, :]
+        U_dyn_ie = state_variables[12, :]
+        X_ii = state_variables[13, :]
+        U_dyn_ii = state_variables[14, :]
+        noise = state_variables[15, :]
+        stimulus = state_variables[16, :]
         derivative = numpy.empty_like(state_variables)
 
         c_0 = coupling[0, :]
@@ -1120,32 +1098,28 @@ class NeuroPSI_STP_dynamic_second_order(NeuroPSI_STP_dynamic_first_order):
         derivative[6] = -W_i / self.tau_w_i + self.b_i * I + self.a_i * (mu_V_i - self.E_L_i) / self.tau_w_i
 
         # Dynamic Synaptic Plasticity ODEs (exc -> exc)
-        dX_ee, dY_ee, dU_dyn_ee = self.tsodyks_markram_stp(X_ee, Y_ee, U_dyn_ee, E, self.tau_rec_ee, self.tau_fac_ee, self.tau_e, self.U_ee)
+        dX_ee, dU_dyn_ee = self.tsodyks_markram_stp(X_ee, U_dyn_ee, E, self.tau_rec_ee, self.tau_fac_ee, self.U_ee)
         derivative[7] = dX_ee
-        derivative[8] = dY_ee
-        derivative[9] = dU_dyn_ee
+        derivative[8] = dU_dyn_ee
         
         # Dynamic Synaptic Plasticity ODEs (inh -> exc)
-        dX_ei, dY_ei, dU_dyn_ei = self.tsodyks_markram_stp(X_ei, Y_ei, U_dyn_ei, I, self.tau_rec_ei, self.tau_fac_ei, self.tau_i, self.U_ei)
-        derivative[10] = dX_ei
-        derivative[11] = dY_ei
-        derivative[12] = dU_dyn_ei
+        dX_ei, dU_dyn_ei = self.tsodyks_markram_stp(X_ei, U_dyn_ei, I, self.tau_rec_ei, self.tau_fac_ei, self.U_ei)
+        derivative[9] = dX_ei
+        derivative[10] = dU_dyn_ei
 
         # Dynamic Synaptic Plasticity ODEs (exc -> inh)
-        dX_ie, dY_ie, dU_dyn_ie = self.tsodyks_markram_stp(X_ie, Y_ie, U_dyn_ie, E, self.tau_rec_ie, self.tau_fac_ie, self.tau_e, self.U_ie)
-        derivative[13] = dX_ie
-        derivative[14] = dY_ie
-        derivative[15] = dU_dyn_ie
+        dX_ie, dU_dyn_ie = self.tsodyks_markram_stp(X_ie, U_dyn_ie, E, self.tau_rec_ie, self.tau_fac_ie, self.U_ie)
+        derivative[11] = dX_ie
+        derivative[12] = dU_dyn_ie
 
         # Dynamic Synaptic Plasticity ODEs (inh -> inh)
-        dX_ii, dY_ii, dU_dyn_ii = self.tsodyks_markram_stp(X_ii, Y_ii, U_dyn_ii, I, self.tau_rec_ii, self.tau_fac_ii, self.tau_i, self.U_ii)
-        derivative[16] = dX_ii
-        derivative[17] = dY_ii
-        derivative[18] = dU_dyn_ii
+        dX_ii, dU_dyn_ii = self.tsodyks_markram_stp(X_ii, U_dyn_ii, I, self.tau_rec_ii, self.tau_fac_ii, self.U_ii)
+        derivative[13] = dX_ii
+        derivative[14] = dU_dyn_ii
 
         # Noise & stimulus
-        derivative[19] = -noise / self.tau_OU
-        derivative[20] = 0.0
-        state_variables[20, :] = 0.0
+        derivative[15] = -noise / self.tau_OU
+        derivative[16] = 0.0
+        state_variables[16, :] = 0.0
 
         return derivative

@@ -14,9 +14,9 @@ from ..network_params.models import INTERNAL_PROJECTIONS
 
 # Short-term plasticity variables (Tsodyks-Markram), stored per projection as "<projection>_<variable>",
 # e.g. "ei_x" = available resources x of the synapses onto E from I (target-source code).
-#   x: available resources, u: utilisation a spike would use, y: active (released) resources.
+#   x: available resources, u: utilisation a spike would use.
 # The efficacy factor of a projection is u * x (multiplied by the synaptic weight).
-STP_VARIABLES = ("x", "u", "y")
+STP_VARIABLES = ("x", "u")
 
 
 def parse_stp_variable(name: str) -> tuple[str, str] | None:
