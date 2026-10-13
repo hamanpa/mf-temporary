@@ -5,6 +5,7 @@ from pathlib import Path
 from abc import ABC, abstractmethod
 from typing import Dict, List, Tuple, Any, Union, Callable
 from matplotlib.lines import Line2D
+from matplotlib.colors import LogNorm, Normalize, to_rgb
 import numpy as np
 import matplotlib.pyplot as plt
 
@@ -12,6 +13,7 @@ from .base import BasePlot, EXC_COLOR, INH_COLOR, LINESTYLES
 from ..data_structures.neuron_simulation import drive_index, drive_values
 from ..network_params.models import INTERNAL_PROJECTIONS
 from ..data_structures.base import STP_VARIABLES
+from ..analysis.sweep_summaries import sweep_summary, DEFAULT_TIME_WINDOW
 
 
 from ..network_params.translators import get_unit_multiplier
@@ -71,9 +73,13 @@ class BaseAggregatorPlot(BasePlot, ABC):
         "default_colors": {},
         "default_color": "black",
         # Legend: one entry per model (label and line style) drawn in `legend_color`
-        # (None: the variable's colour when one variable is plotted); `variable_legend` adds one entry per variable.
+        # (None: the variable's colour when one variable is plotted); `variable_legend` adds one entry per variable;
+        # `model_legend` False drops the model entries (e.g. a panel next to one that already shows them).
         "legend_color": "black",
         "variable_legend": False,
+        "model_legend": True,
+        # Legend labels of variables: a list (in the order of `variables`) or a dict {variable: label}; None: the names
+        "variable_labels": None,
     }
 
     def __init__(
@@ -115,9 +121,12 @@ class BaseAggregatorPlot(BasePlot, ABC):
         self.apply_preplot_params(ax, self.full_params)
         im = self._draw(ax, sim_id=sim_id, aggregator=aggregator, **kwargs)
         params = self.full_params
-        if self._legend_kwargs and self._legend_kwargs.get("handles") and params["legend"]:
-            legend = params["legend"] if isinstance(params["legend"], dict) else {}
-            params = {**params, "legend": {**legend, **self._legend_kwargs}}
+        if self._legend_kwargs is not None and params["legend"]:
+            if self._legend_kwargs.get("handles"):
+                legend = params["legend"] if isinstance(params["legend"], dict) else {}
+                params = {**params, "legend": {**legend, **self._legend_kwargs}}
+            else:
+                params = {**params, "legend": False}  # the plot's own legend is empty
         self.apply_postplot_params(ax, params)
         return im
 
@@ -193,16 +202,21 @@ class BaseAggregatorPlot(BasePlot, ABC):
             return {"e": "exc", "i": "inh"}[prefix[1]]
         return None
 
-    def variable_color(self, variable: str) -> str:
-        """Colour of a variable (see the `colors` param)."""
+    def explicit_color(self, variable: str) -> str | None:
+        """Colour given for a variable in the `colors` param (None if not given)."""
         colors = self.full_params["colors"]
         variables = self.plot_variables()
         if isinstance(colors, (list, tuple)):
             if len(colors) != len(variables):
                 raise ValueError(f"'colors' has {len(colors)} values, but there are {len(variables)} variables: {variables}.")
             colors = dict(zip(variables, colors))
-        if isinstance(colors, dict) and variable in colors:
-            return colors[variable]
+        return colors.get(variable) if isinstance(colors, dict) else None
+
+    def variable_color(self, variable: str) -> str:
+        """Colour of a variable (see the `colors` param)."""
+        explicit = self.explicit_color(variable)
+        if explicit is not None:
+            return explicit
         if variable in self.full_params["default_colors"]:
             return self.full_params["default_colors"][variable]
         population = self.population_of(variable)
@@ -210,17 +224,28 @@ class BaseAggregatorPlot(BasePlot, ABC):
             return self.full_params[f"{population}_color"]
         return self.full_params["default_color"]
 
+    def variable_label(self, variable: str) -> str:
+        """Legend label of a variable (see the `variable_labels` param)."""
+        labels = self.full_params["variable_labels"]
+        if isinstance(labels, (list, tuple)):
+            variables = self.plot_variables()
+            if len(labels) != len(variables):
+                raise ValueError(f"'variable_labels' has {len(labels)} values, but there are {len(variables)} variables: {variables}.")
+            labels = dict(zip(variables, labels))
+        return labels.get(variable, variable) if labels else variable
+
     def model_legend_handles(self, styles: Dict[str, dict], plotted_variables: List[str]) -> List[Line2D]:
-        """One handle per model (see the `legend_color` and `variable_legend` params)."""
+        """One handle per model (see the `legend_color` and `variable_legend` params); styles may set a `marker`."""
         color = self.full_params["legend_color"]
         if color is None:
             color = self.variable_color(plotted_variables[0]) if len(plotted_variables) == 1 else self.full_params["default_color"]
         handles = [
-            Line2D([0], [0], color=color, linestyle=style["linestyle"], linewidth=style["linewidth"], alpha=style["alpha"], label=style["label"])
+            Line2D([0], [0], color=color, linestyle=style["linestyle"], linewidth=style["linewidth"], alpha=style["alpha"],
+                   marker=style.get("marker"), label=style["label"])
             for style in styles.values()
-        ]
+        ] if self.full_params["model_legend"] else []
         if self.full_params["variable_legend"]:
-            handles += [Line2D([0], [0], color=self.variable_color(variable), label=variable) for variable in plotted_variables]
+            handles += [Line2D([0], [0], color=self.variable_color(variable), label=self.variable_label(variable)) for variable in plotted_variables]
         return handles
 
     @staticmethod
@@ -228,7 +253,122 @@ class BaseAggregatorPlot(BasePlot, ABC):
         ax.text(0.5, 0.5, f"No Data\n({sim_id})", ha="center", va="center", transform=ax.transAxes, color="gray")
 
 
-class AggregatorTracePlot(BaseAggregatorPlot):
+class BaseAggregatorVariablePlot(BaseAggregatorPlot, ABC):
+    """
+    Base of the plotters of saved series `{variable}_{metric}` (see `SavedResults.get`) of several models:
+    one colour per variable, one style per model.
+
+    Per-projection variables onto one target population: with `projection_variable` set (e.g. "x", "u",
+    "conductance") and no explicit `variables`, the plot draws `{target}{source}_{v}` for each of `sources`
+    (target-source codes, coloured by source), e.g. target "exc", "x" → ee_x, ei_x; with sources ["exc"] → ee_x.
+    Several projection variables (e.g. ["x", "u"]) share the source colours: the k-th one is lightened towards white
+    by 1 − (1 − `secondary_shade`)^k (not variables with an explicit `colors` entry). Without `variable_legend`,
+    the legend gets one entry per projection variable, in the source colour if there is one source, else in
+    shades of `default_color`.
+    """
+
+    PROJECTION_VARIABLES = STP_VARIABLES + ("conductance",)
+
+    DEFAULT_PARAMS = {
+        **BaseAggregatorPlot.DEFAULT_PARAMS,
+        "metric": "pop_mean",
+        "projection_variable": None,  # one name or a list
+        "target": "exc",
+        "sources": ["exc", "inh"],  # source populations of the projections onto `target` (one name or a list)
+        "secondary_shade": 0.5,
+    }
+
+    def projection_variables(self) -> List[str]:
+        """The projection variables drawn ([] with explicit `variables` or without `projection_variable`)."""
+        variable = self.full_params["projection_variable"]
+        if self._explicit_variables or variable is None:
+            return []
+        variables = [variable] if isinstance(variable, str) else list(variable)
+        invalid = [v for v in variables if v not in self.PROJECTION_VARIABLES]
+        if invalid:
+            raise ValueError(f"'projection_variable' must be in {self.PROJECTION_VARIABLES}, got {invalid}.")
+        return variables
+
+    def plot_variables(self) -> List[str]:
+        projection_variables = self.projection_variables()
+        if not projection_variables:
+            return self.variables
+        codes = {"exc": "e", "inh": "i"}
+        target = self.full_params["target"]
+        sources = self.full_params["sources"]
+        sources = [sources] if isinstance(sources, str) else list(sources)
+        invalid = [population for population in [target, *sources] if population not in codes]
+        if invalid:
+            raise ValueError(f"'target' and 'sources' must be in {list(codes)}, got {invalid}.")
+        return [f"{codes[target]}{codes[source]}_{variable}" for variable in projection_variables for source in sources]
+
+    def _shade(self, color, k: int):
+        """`color` lightened for the k-th projection variable (k = 0: unchanged)."""
+        amount = 1 - (1 - self.full_params["secondary_shade"]) ** k
+        rgb = np.array(to_rgb(color))
+        return tuple(rgb + (1 - rgb) * amount)
+
+    def variable_color(self, variable: str):
+        color = super().variable_color(variable)
+        if self.explicit_color(variable) is not None:
+            return color
+        for k, projection_variable in enumerate(self.projection_variables()):
+            if variable.endswith(f"_{projection_variable}"):
+                return self._shade(color, k)
+        return color
+
+    def model_legend_handles(self, styles: Dict[str, dict], plotted_variables: List[str]) -> List[Line2D]:
+        handles = super().model_legend_handles(styles, plotted_variables)
+        projection_variables = self.projection_variables()
+        if len(projection_variables) > 1 and not self.full_params["variable_legend"]:
+            # One source: plot_variables() is one variable per projection variable, drawn in its colour;
+            # several sources: shades of default_color
+            variables = self.plot_variables()
+            single_source = len(variables) == len(projection_variables)
+            handles += [
+                Line2D([0], [0], label=self.variable_label(variable),
+                       color=self.variable_color(variables[k]) if single_source else self._shade(self.full_params["default_color"], k))
+                for k, variable in enumerate(projection_variables)
+            ]
+        return handles
+
+
+# Quantity presets shared by the trace and sweep plotters: default `variables` and `params`.
+RATE_PRESET = {
+    "variables": ["exc_rate", "inh_rate"],
+    "params": {"title": "Firing Rate", "ylabel": "Firing Rate", "y_unit": "Hz"},
+}
+VOLTAGE_PRESET = {
+    "variables": ["exc_voltage", "inh_voltage"],
+    "params": {"title": "Membrane Voltage", "ylabel": "Membrane potential", "y_unit": "mV"},
+}
+# Only E adapts in the usual setups, so E alone in blue (add "inh_adaptation" to `variables` for I)
+ADAPTATION_PRESET = {
+    "variables": ["exc_adaptation"],
+    "params": {"title": "Adaptation", "ylabel": "Adaptation", "y_unit": "pA", "default_colors": {"exc_adaptation": "blue"}},
+}
+# STP variable `projection_variable` ("x", "u" or ["x", "u"]) of the projections onto `target` ("exc"/"inh"),
+# e.g. target "exc", "x" → ee_x (from E, exc colour) and ei_x (from I, inh colour)
+STP_PRESET = {
+    "variables": [],
+    "params": {"title": "STP Variables", "ylabel": "STP variable", "y_unit": None, "projection_variable": "x"},
+}
+# Mean conductance of the projections onto `target` ("exc"/"inh"). Only the SNN saves conductances.
+CONDUCTANCE_PRESET = {
+    "variables": [],
+    "params": {"title": "Synaptic Conductance", "ylabel": "Conductance", "y_unit": "nS", "projection_variable": "conductance"},
+}
+# External inputs: drive and stimulus rate per source (saved without a metric)
+INPUT_PRESET = {
+    "variables": ["drive_rate", "stim_rate"],
+    "params": {
+        "title": "External Inputs", "ylabel": "Input rate", "y_unit": "Hz", "metric": None,
+        "default_colors": {"drive_rate": "gray", "stim_rate": "purple"}, "variable_legend": True,
+    },
+}
+
+
+class AggregatorTracePlot(BaseAggregatorVariablePlot):
     """
     Time traces of `{variable}_{metric}` (see `SavedResults.get`) for several models of one run:
     one colour per variable, one line style per model. Data are read in `x_unit`/`y_unit`.
@@ -236,31 +376,15 @@ class AggregatorTracePlot(BaseAggregatorPlot):
     """
 
     DEFAULT_PARAMS = {
-        **BaseAggregatorPlot.DEFAULT_PARAMS,
+        **BaseAggregatorVariablePlot.DEFAULT_PARAMS,
         "xlabel": "Time",
         "x_unit": "ms",
-        "metric": "pop_mean",
         # Band mean ± `{variable}_pop_std` per model: one bool, a list (in the order of `models`) or a dict {model: bool}.
         # Drawn only where the std is saved. Note: for the MF it is √C (fluctuation of the population rate),
         # for the SNN (if `pop_std` is saved) the spread across neurons.
         "std_bands": False,
         "band_alpha": 0.3,
-        # Per-projection variables onto one target population: with `projection_variable` set (e.g. "x", "u",
-        # "conductance") and no explicit `variables`, the plot draws `{target}e_{v}` and `{target}i_{v}`
-        # (target-source codes, coloured by source), e.g. target "exc", "x" → ee_x, ei_x.
-        "projection_variable": None,
-        "target": "exc",
     }
-
-    def plot_variables(self) -> List[str]:
-        variable = self.full_params["projection_variable"]
-        if self._explicit_variables or variable is None:
-            return self.variables
-        targets = {"exc": "e", "inh": "i"}
-        if self.full_params["target"] not in targets:
-            raise ValueError(f"'target' must be one of {list(targets)}, got '{self.full_params['target']}'.")
-        target = targets[self.full_params["target"]]
-        return [f"{target}{source}_{variable}" for source in ("e", "i")]
 
     def _draw(self, ax: plt.Axes, sim_id: str = None, aggregator=None, **kwargs) -> None:
         if aggregator is None or sim_id is None:
@@ -271,7 +395,7 @@ class AggregatorTracePlot(BaseAggregatorPlot):
         std_bands = self._per_model("std_bands", ordered, lambda i, model: False)
         x_unit, y_unit, metric = self.full_params["x_unit"], self.full_params["y_unit"], self.full_params["metric"]
 
-        plotted_variables = []
+        plotted_variables, plotted_models = [], []
         for model in present:
             results = aggregator.results(sim_id, model, self.stim_name)
             times = results.times(x_unit)
@@ -298,92 +422,337 @@ class AggregatorTracePlot(BaseAggregatorPlot):
 
                 if variable not in plotted_variables:
                     plotted_variables.append(variable)
+                if model not in plotted_models:
+                    plotted_models.append(model)
 
         if not plotted_variables:
             self.show_no_data(ax, sim_id)
             return None
 
-        self._legend_kwargs = {"handles": self.model_legend_handles({model: styles[model] for model in present}, plotted_variables)}
+        self._legend_kwargs = {"handles": self.model_legend_handles({model: styles[model] for model in plotted_models}, plotted_variables)}
         return None
 
 
-class AggregatorRateTracePlotter(AggregatorTracePlot):
-    DEFAULT_VARIABLES = ["exc_rate", "inh_rate"]
-    DEFAULT_PARAMS = {
-        **AggregatorTracePlot.DEFAULT_PARAMS,
-        "title": "Firing Rate",
-        "ylabel": "Firing Rate",
-        "y_unit": "Hz",
-    }
+class AggregatorRateTracePlot(AggregatorTracePlot):
+    DEFAULT_VARIABLES = RATE_PRESET["variables"]
+    DEFAULT_PARAMS = {**AggregatorTracePlot.DEFAULT_PARAMS, **RATE_PRESET["params"]}
 
 
-class AggregatorVoltageTracePlotter(AggregatorTracePlot):
-    DEFAULT_VARIABLES = ["exc_voltage", "inh_voltage"]
-    DEFAULT_PARAMS = {
-        **AggregatorTracePlot.DEFAULT_PARAMS,
-        "title": "Membrane Voltage",
-        "ylabel": "Membrane potential",
-        "y_unit": "mV",
-    }
+class AggregatorVoltageTracePlot(AggregatorTracePlot):
+    DEFAULT_VARIABLES = VOLTAGE_PRESET["variables"]
+    DEFAULT_PARAMS = {**AggregatorTracePlot.DEFAULT_PARAMS, **VOLTAGE_PRESET["params"]}
 
 
-class AggregatorAdaptationTracePlotter(AggregatorTracePlot):
-    # Only E adapts in the usual setups, so E alone in blue (add "inh_adaptation" to `variables` for I)
-    DEFAULT_VARIABLES = ["exc_adaptation"]
-    DEFAULT_PARAMS = {
-        **AggregatorTracePlot.DEFAULT_PARAMS,
-        "title": "Adaptation",
-        "ylabel": "Adaptation",
-        "y_unit": "pA",
-        "default_colors": {"exc_adaptation": "blue"},
-    }
+class AggregatorAdaptationTracePlot(AggregatorTracePlot):
+    DEFAULT_VARIABLES = ADAPTATION_PRESET["variables"]
+    DEFAULT_PARAMS = {**AggregatorTracePlot.DEFAULT_PARAMS, **ADAPTATION_PRESET["params"]}
 
 
-class AggregatorSTPTracePlotter(AggregatorTracePlot):
-    """
-    STP variable `projection_variable` ("x" or "u") of the projections onto `target` ("exc"/"inh"),
-    e.g. target "exc", "x" → ee_x (from E, exc colour) and ei_x (from I, inh colour).
-    """
-    DEFAULT_PARAMS = {
-        **AggregatorTracePlot.DEFAULT_PARAMS,
-        "title": "STP Variables",
-        "ylabel": "STP variable",
-        "y_unit": None,
-        "projection_variable": "x",
-    }
-
-    def plot_variables(self) -> List[str]:
-        if not self._explicit_variables and self.full_params["projection_variable"] not in STP_VARIABLES:
-            raise ValueError(f"'projection_variable' must be one of {STP_VARIABLES}, got '{self.full_params['projection_variable']}'.")
-        return super().plot_variables()
+class AggregatorSTPTracePlot(AggregatorTracePlot):
+    """STP variable(s) `projection_variable` ("x", "u" or ["x", "u"]) of the projections onto `target`, see STP_PRESET."""
+    DEFAULT_VARIABLES = STP_PRESET["variables"]
+    DEFAULT_PARAMS = {**AggregatorTracePlot.DEFAULT_PARAMS, **STP_PRESET["params"]}
 
 
-class AggregatorConductanceTracePlotter(AggregatorTracePlot):
+class AggregatorConductanceTracePlot(AggregatorTracePlot):
     """Mean conductance of the projections onto `target` ("exc"/"inh"). Only the SNN saves conductances."""
-    DEFAULT_PARAMS = {
-        **AggregatorTracePlot.DEFAULT_PARAMS,
-        "title": "Synaptic Conductance",
-        "ylabel": "Conductance",
-        "y_unit": "nS",
-        "projection_variable": "conductance",
-    }
+    DEFAULT_VARIABLES = CONDUCTANCE_PRESET["variables"]
+    DEFAULT_PARAMS = {**AggregatorTracePlot.DEFAULT_PARAMS, **CONDUCTANCE_PRESET["params"]}
 
 
-class AggregatorInputTracePlotter(AggregatorTracePlot):
+class AggregatorInputTracePlot(AggregatorTracePlot):
     """External inputs: drive and stimulus rate per source (saved without a metric)."""
-    DEFAULT_VARIABLES = ["drive_rate", "stim_rate"]
+    DEFAULT_VARIABLES = INPUT_PRESET["variables"]
+    DEFAULT_PARAMS = {**AggregatorTracePlot.DEFAULT_PARAMS, **INPUT_PRESET["params"]}
+
+
+class AggregatorSweepPlot(BaseAggregatorVariablePlot):
+    """
+    One value per run against a swept run parameter `x_param`: the time reduction `reduction` of
+    `{variable}_{metric}` within `time_window`, for several models (computed by `analysis.sweep_summaries`).
+    One colour per variable. Models in `point_models` (default: the SNN, the ground truth) are drawn as markers
+    without a line, the other models as lines with one line style each. Values are read in `y_unit`.
+
+    The runs left by `run_filters` must differ only in `x_param` (one run per value; joint parameters count as one).
+    The x values are the swept values as in the configs (MFT units, not converted): give the unit in `xlabel`.
+    Models or variables without results are skipped with a warning; runs without them are left out.
+    """
+
     DEFAULT_PARAMS = {
-        **AggregatorTracePlot.DEFAULT_PARAMS,
-        "title": "External Inputs",
-        "ylabel": "Input rate",
-        "y_unit": "Hz",
-        "metric": None,
-        "default_colors": {"drive_rate": "gray", "stim_rate": "purple"},
-        "variable_legend": True,
+        **BaseAggregatorVariablePlot.DEFAULT_PARAMS,
+        "xlabel": None,  # None: `x_param`
+        "reduction": "mean",  # see analysis.sweep_summaries.TIME_REDUCTIONS: "mean", "std", "max", "min"
+        # (start, end) in `time_unit`; None: start / end of the trace; negative: counted back from the end
+        "time_window": DEFAULT_TIME_WINDOW,
+        "time_unit": "ms",
+        # Models drawn as markers without a line; the others get a line (line styles cycle over them)
+        "point_models": ["snn"],
+        # Per model (one value, list in the order of `models`, or dict). None: "o" for point models, none for line models
+        "markers": None,
+        "markersize": 6,
+        # ± the std over the time window per model (one bool, list or dict); only with reduction "mean".
+        # Error bars for point models, bands for line models.
+        "time_std_bands": False,
+        "band_alpha": 0.3,
+        "capsize": 3,
+        "yscale": "linear",
     }
 
+    def __init__(
+        self,
+        stim_name: str,
+        x_param: str,
+        variables: str | List[str] | None = None,
+        models: List[str] | None = None,
+        params: dict = None,
+    ):
+        """
+        Parameters
+        ----------
+        x_param : str
+            Swept run parameter on the x axis, as in param_combinations.csv (may be abbreviated,
+            see `ResultsAggregator.resolve_param_column`).
+        """
+        super().__init__(stim_name=stim_name, variables=variables, models=models, params=params)
+        self.x_param = x_param
+        if self.full_params["xlabel"] is None:
+            self.full_params["xlabel"] = x_param
 
-class AggregatorHeatmapPlotter(BaseAggregatorPlot):
+    def draw(self, ax: plt.Axes, aggregator=None, run_filters: dict | None = None, **kwargs):
+        """Draws the sweep over the runs left by `run_filters` (see `ResultsAggregator.filter_runs`)."""
+        return super().draw(ax, sim_id=None, aggregator=aggregator, run_filters=run_filters, **kwargs)
+
+    def sweep_styles(self, models: List[str]) -> Dict[str, dict]:
+        """`model_styles` plus a `marker`; point models default to markers without a line."""
+        point_models = {model.lower() for model in (self.full_params["point_models"] or [])}
+        line_models = [model for model in models if model.lower() not in point_models]
+        linestyles = self._per_model(
+            "linestyles", models,
+            lambda i, model: "None" if model.lower() in point_models else LINESTYLES[line_models.index(model) % len(LINESTYLES)],
+        )
+        markers = self._per_model("markers", models, lambda i, model: "o" if model.lower() in point_models else None)
+        styles = self.model_styles(models)
+        for model in models:
+            styles[model].update(linestyle=linestyles[model], marker=markers[model])
+        return styles
+
+    def _draw(self, ax: plt.Axes, sim_id: str = None, aggregator=None, run_filters: dict | None = None, **kwargs) -> None:
+        if aggregator is None:
+            return None
+
+        params = self.full_params
+        _, sim_ids = aggregator.filter_runs(run_filters)
+        if not sim_ids:
+            raise ValueError(f"No runs match run_filters {run_filters}.")
+        ordered, present = self.models_for(aggregator, sim_ids[0])
+        styles = self.sweep_styles(ordered)
+        time_std_bands = self._per_model("time_std_bands", ordered, lambda i, model: False)
+        summary_kwargs = dict(
+            stim_name=self.stim_name, x_param=self.x_param, metric=params["metric"], time_window=params["time_window"],
+            unit=params["y_unit"], time_unit=params["time_unit"], run_filters=run_filters,
+        )
+
+        plotted_variables, plotted_models = [], []
+        for model in present:
+            style = styles[model]
+            for variable in self.plot_variables():
+                summary = sweep_summary(aggregator, variable, model, reduction=params["reduction"], **summary_kwargs)
+                key = f"{variable}_{params['metric']}" if params["metric"] else variable
+                if len(summary.missing) == summary.sim_ids.size:
+                    warnings.warn(f"Model '{model}' has no '{key}' for '{self.stim_name}'; not plotted.")
+                    continue
+                if summary.missing:
+                    warnings.warn(f"Model '{model}': no '{key}' for '{self.stim_name}' in runs {summary.missing}; left out.")
+                found = np.array([sim_id is not None and sim_id not in summary.missing for sim_id in summary.sim_ids])
+                if not np.all(np.isfinite(summary.values[found])):
+                    warnings.warn(f"Model '{model}': NaN or Inf in '{key}' for '{self.stim_name}' (not drawn there).")
+
+                color = self.variable_color(variable)
+                ax.plot(summary.x_values, summary.values, label=style["label"], color=color,
+                        linestyle=style["linestyle"], linewidth=style["linewidth"], alpha=style["alpha"],
+                        marker=style["marker"], markersize=params["markersize"])
+
+                if time_std_bands[model]:
+                    if params["reduction"] != "mean":
+                        warnings.warn(f"'time_std_bands' needs reduction 'mean', got '{params['reduction']}'; not drawn.")
+                    else:
+                        std = sweep_summary(aggregator, variable, model, reduction="std", **summary_kwargs).values
+                        if style["linestyle"] in ("None", "none", "", " "):
+                            ax.errorbar(summary.x_values, summary.values, yerr=std, fmt="none", ecolor=color,
+                                        alpha=style["alpha"], capsize=params["capsize"])
+                        else:
+                            ax.fill_between(summary.x_values, summary.values - std, summary.values + std,
+                                            color=color, alpha=params["band_alpha"], linewidth=0)
+
+                if variable not in plotted_variables:
+                    plotted_variables.append(variable)
+                if model not in plotted_models:
+                    plotted_models.append(model)
+
+        if not plotted_variables:
+            self.show_no_data(ax, self.stim_name)
+            return None
+
+        ax.set_yscale(params["yscale"])
+        self._legend_kwargs = {"handles": self.model_legend_handles({model: styles[model] for model in plotted_models}, plotted_variables)}
+        return None
+
+
+class AggregatorRateSweepPlot(AggregatorSweepPlot):
+    DEFAULT_VARIABLES = RATE_PRESET["variables"]
+    DEFAULT_PARAMS = {**AggregatorSweepPlot.DEFAULT_PARAMS, **RATE_PRESET["params"]}
+
+
+class AggregatorVoltageSweepPlot(AggregatorSweepPlot):
+    DEFAULT_VARIABLES = VOLTAGE_PRESET["variables"]
+    DEFAULT_PARAMS = {**AggregatorSweepPlot.DEFAULT_PARAMS, **VOLTAGE_PRESET["params"]}
+
+
+class AggregatorAdaptationSweepPlot(AggregatorSweepPlot):
+    DEFAULT_VARIABLES = ADAPTATION_PRESET["variables"]
+    DEFAULT_PARAMS = {**AggregatorSweepPlot.DEFAULT_PARAMS, **ADAPTATION_PRESET["params"]}
+
+
+class AggregatorSTPSweepPlot(AggregatorSweepPlot):
+    """STP variable(s) `projection_variable` ("x", "u" or ["x", "u"]) of the projections onto `target`, see STP_PRESET."""
+    DEFAULT_VARIABLES = STP_PRESET["variables"]
+    DEFAULT_PARAMS = {**AggregatorSweepPlot.DEFAULT_PARAMS, **STP_PRESET["params"]}
+
+
+class AggregatorConductanceSweepPlot(AggregatorSweepPlot):
+    """Mean conductance of the projections onto `target` ("exc"/"inh"). Only the SNN saves conductances."""
+    DEFAULT_VARIABLES = CONDUCTANCE_PRESET["variables"]
+    DEFAULT_PARAMS = {**AggregatorSweepPlot.DEFAULT_PARAMS, **CONDUCTANCE_PRESET["params"]}
+
+
+class AggregatorInputSweepPlot(AggregatorSweepPlot):
+    """External inputs: drive and stimulus rate per source (saved without a metric)."""
+    DEFAULT_VARIABLES = INPUT_PRESET["variables"]
+    DEFAULT_PARAMS = {**AggregatorSweepPlot.DEFAULT_PARAMS, **INPUT_PRESET["params"]}
+
+
+def cell_edges(values: np.ndarray) -> np.ndarray:
+    """Edges of the cells centred on sorted `values` (midpoints; outer cells symmetric; one value: ±0.5)."""
+    values = np.asarray(values, dtype=float)
+    if values.size == 1:
+        return np.array([values[0] - 0.5, values[0] + 0.5])
+    mid = (values[1:] + values[:-1]) / 2
+    return np.concatenate([[2 * values[0] - mid[0]], mid, [2 * values[-1] - mid[-1]]])
+
+
+class AggregatorSweepHeatmapPlot(BaseAggregatorPlot):
+    """
+    Map of one value per run over two swept run parameters `x_param`, `y_param`: the time reduction `reduction`
+    of `{variable}_{metric}` of one `model` within `time_window` (computed by `analysis.sweep_summaries`), drawn
+    with `pcolormesh` on the sweep cells (no interpolation between runs). Cells without a run or data stay blank.
+    Values are read in `z_unit`; `draw` returns the mappable for the colorbar (`add_colorbar`).
+
+    The runs left by `run_filters` must differ only in `x_param` and `y_param` (one run per cell).
+    E.g. where the network explodes: model "snn", variable "exc_rate", reduction "max", time_window (0, None), norm "log".
+    """
+
+    DEFAULT_PARAMS = {
+        **BaseAggregatorPlot.DEFAULT_PARAMS,
+        "title": None,  # None: the model
+        "xlabel": None,  # None: `x_param`
+        "ylabel": None,  # None: `y_param`
+        "metric": "pop_mean",
+        "reduction": "mean",  # see analysis.sweep_summaries.TIME_REDUCTIONS: "mean", "std", "max", "min"
+        # (start, end) in `time_unit`; None: start / end of the trace; negative: counted back from the end
+        "time_window": DEFAULT_TIME_WINDOW,
+        "time_unit": "ms",
+        "z_unit": None,
+        "colorbar_label": None,  # None: "{variable} ({reduction})"
+        "cmap": "viridis",
+        "vmin": None,
+        "vmax": None,
+        "norm": "linear",  # "linear" or "log" (values <= 0 stay blank)
+        # Write each cell's value (`annotate_format`), in black or white by the cell colour
+        "annotate": False,
+        "annotate_format": "{:.3g}",
+        "annotate_fontsize": 8,
+        "xmargin": 0.0,
+        "ymargin": 0.0,
+    }
+
+    def __init__(
+        self,
+        stim_name: str,
+        x_param: str,
+        y_param: str,
+        variable: str = "exc_rate",
+        model: str = "snn",
+        params: dict = None,
+    ):
+        """
+        Parameters
+        ----------
+        x_param, y_param : str
+            Swept run parameters on the x / y axis, as in param_combinations.csv (may be abbreviated,
+            see `ResultsAggregator.resolve_param_column`).
+        """
+        super().__init__(stim_name=stim_name, variables=variable, models=[model], params=params)
+        self.x_param = x_param
+        self.y_param = y_param
+        self.model = model
+        defaults = {
+            "title": model, "xlabel": x_param, "ylabel": y_param,
+            "colorbar_label": f"{variable} ({self.full_params['reduction']})",
+        }
+        for key, value in defaults.items():
+            if self.full_params[key] is None:
+                self.full_params[key] = value
+
+    def draw(self, ax: plt.Axes, aggregator=None, run_filters: dict | None = None, **kwargs):
+        """Draws the map over the runs left by `run_filters` (see `ResultsAggregator.filter_runs`)."""
+        return super().draw(ax, sim_id=None, aggregator=aggregator, run_filters=run_filters, **kwargs)
+
+    def _draw(self, ax: plt.Axes, sim_id: str = None, aggregator=None, run_filters: dict | None = None, **kwargs):
+        if aggregator is None:
+            return None
+
+        params = self.full_params
+        variable = self.variables[0]
+        summary = sweep_summary(
+            aggregator, variable, self.model, self.stim_name, self.x_param, self.y_param,
+            metric=params["metric"], reduction=params["reduction"], time_window=params["time_window"],
+            unit=params["z_unit"], time_unit=params["time_unit"], run_filters=run_filters,
+        )
+        key = f"{variable}_{params['metric']}" if params["metric"] else variable
+        n_runs = sum(run is not None for run in summary.sim_ids.flat)
+        if len(summary.missing) == n_runs:
+            warnings.warn(f"Model '{self.model}' has no '{key}' for '{self.stim_name}'; not plotted.")
+            self.show_no_data(ax, self.stim_name)
+            return None
+        if summary.missing:
+            warnings.warn(f"Model '{self.model}': no '{key}' for '{self.stim_name}' in runs {summary.missing}; left blank.")
+
+        values = np.ma.masked_invalid(summary.values)
+        if params["norm"] == "log":
+            values = np.ma.masked_less_equal(values, 0)
+            norm = LogNorm(vmin=params["vmin"], vmax=params["vmax"])
+        elif params["norm"] == "linear":
+            norm = Normalize(vmin=params["vmin"], vmax=params["vmax"])
+        else:
+            raise ValueError(f"Unknown norm '{params['norm']}'. Use 'linear' or 'log'.")
+
+        im = ax.pcolormesh(cell_edges(summary.x_values), cell_edges(summary.y_values), values,
+                           cmap=params["cmap"], norm=norm, shading="flat")
+        ax.set_xticks(summary.x_values, labels=[f"{value:g}" for value in summary.x_values])
+        ax.set_yticks(summary.y_values, labels=[f"{value:g}" for value in summary.y_values])
+
+        if params["annotate"]:
+            for (i, j), value in np.ndenumerate(summary.values):
+                if np.ma.is_masked(values[i, j]):
+                    continue
+                r, g, b, _ = im.cmap(im.norm(value))
+                ax.text(summary.x_values[j], summary.y_values[i], params["annotate_format"].format(value),
+                        ha="center", va="center", fontsize=params["annotate_fontsize"],
+                        color="black" if 0.299 * r + 0.587 * g + 0.114 * b > 0.5 else "white")
+        return im
+
+
+class AggregatorHeatmapPlot(BaseAggregatorPlot):
     """
     Heatmap of a single-neuron grid variable (first of `variables`, a grid key such as "out_rate_mean")
     over the (exc, inh) input rates at one `drive_rate`, read in `x_unit`/`y_unit`/`z_unit`. See HEATMAP_PARAMS.
@@ -435,20 +804,20 @@ class AggregatorHeatmapPlotter(BaseAggregatorPlot):
         return draw_grid_heatmap(ax, arrays["exc_rate_grid"], arrays["inh_rate_grid"], arrays[var_name], self.full_params)
 
 
-class AggregatorActivityHeatmapPlotter(AggregatorHeatmapPlotter):
+class AggregatorActivityHeatmapPlot(AggregatorHeatmapPlot):
     DEFAULT_VARIABLES = ["out_rate_mean"]
     DEFAULT_PARAMS = {
-        **AggregatorHeatmapPlotter.DEFAULT_PARAMS,
+        **AggregatorHeatmapPlot.DEFAULT_PARAMS,
         "title": "Neuron Activity Heatmap",
         "z_unit": "Hz",
         "colorbar_label": r"$\nu_{out}$",
     }
 
 
-class AggregatorAdaptationHeatmapPlotter(AggregatorHeatmapPlotter):
+class AggregatorAdaptationHeatmapPlot(AggregatorHeatmapPlot):
     DEFAULT_VARIABLES = ["adaptation_mean"]
     DEFAULT_PARAMS = {
-        **AggregatorHeatmapPlotter.DEFAULT_PARAMS,
+        **AggregatorHeatmapPlot.DEFAULT_PARAMS,
         "title": "Neuron Adaptation Heatmap",
         "z_unit": "pA",
         "colorbar_label": "adaptation",
@@ -457,7 +826,7 @@ class AggregatorAdaptationHeatmapPlotter(AggregatorHeatmapPlotter):
     }
 
 
-class AggregatorSNNRasterPlotter(BaseAggregatorPlot):
+class AggregatorSNNRasterPlot(BaseAggregatorPlot):
     """Plotter for SNN spike raster plots loaded via aggregator."""
 
     DEFAULT_PARAMS = {
@@ -523,7 +892,7 @@ class AggregatorSNNRasterPlotter(BaseAggregatorPlot):
         return None
 
 
-class AggregatorNeuronIOCurvePlotter(BaseAggregatorPlot):
+class AggregatorNeuronIOCurvePlot(BaseAggregatorPlot):
     """Plot single-neuron I/O curves and optionally overlay transfer-function fits."""
 
     DEFAULT_PARAMS = {
@@ -819,7 +1188,7 @@ class AggregatorGridPlottingHook:
         self.agg = aggregator
         self.x_param = x_param
         self.y_param = y_param
-        self.plotter = plotter or AggregatorRateTracePlotter()
+        self.plotter = plotter or AggregatorRateTracePlot()
 
         self.fig_params = {**self.DEFAULT_FIG_PARAMS, **(fig_params or {})}
         self.common_params = common_params or {}
@@ -1064,5 +1433,144 @@ class AggregatorGridPlottingHook:
             Path(save_path).parent.mkdir(parents=True, exist_ok=True)
             fig.savefig(save_path, dpi=self.fig_params.get("dpi", 100), bbox_inches="tight")
             print(f"Saved grid figure to '{save_path}'")
+
+        return fig, axes
+
+
+class AggregatorRunOverviewHook:
+    """
+    Overview of one run for one stimulus: one row of plotters (columns) sharing the time axis, by default
+    firing rate, adaptation, external inputs, voltage and STP x/u of the projections onto `target`
+    (u in a lighter shade of the source colour). The suptitle names the stimulus, the run and its values
+    of the parameters that vary in the project.
+
+    Params are layered as in the other hooks: plotter params < `common_params` < `subplot_params`
+    (keyed by plotter class name or column index). E.g. common_params={"target": "inh"} shows STP onto I;
+    common_params={"legend": False} removes all legends. `models` selects the models of every series column.
+    """
+
+    DEFAULT_FIG_PARAMS = {
+        "axsize": (4.0, 3.0),
+        "figsize": None,
+        "dpi": 100,
+        "title": None,  # None: stimulus, run and its values of the parameters that vary in the project
+        # Labels of parameters in the title, {param (as in param_combinations.csv, may be abbreviated): label};
+        # parameters without one are shown by their full name
+        "param_labels": {},
+        "params_per_line": 2,  # parameters per suptitle line
+        "sharex": True,
+        "constrained_layout": True,
+        "savefig": False,
+        "savefig_path": None,
+    }
+
+    def __init__(
+        self,
+        aggregator,
+        stim_name: str,
+        sim_id: str | None = None,
+        run_filters: dict | None = None,
+        plotters: List[BaseAggregatorPlot | type] | None = None,
+        models: List[str] | None = None,
+        fig_params: dict = None,
+        common_params: dict = None,
+        subplot_params: dict = None,
+    ):
+        """
+        Parameters
+        ----------
+        sim_id : str or None
+            The run. Or give `run_filters` (see `ResultsAggregator.filter_runs`) that match exactly one run.
+        plotters : list or None
+            One per column: plotter classes (built with `stim_name`) or instances (drawn with their own stimulus).
+            None: `default_plotters(stim_name)`.
+        models : list of str or None
+            Models of every series column (`BaseAggregatorVariablePlot`; also replaces the models an instance was
+            built with). The order is the one list-valued style params follow. None: each plotter's own `models`
+            (by default all models with results). Single-model columns (e.g. the raster) keep their `model`.
+        """
+        if sim_id is not None and run_filters:
+            raise ValueError("Give either sim_id or run_filters, not both.")
+        self.agg = aggregator
+        self.stim_name = stim_name
+        self.sim_id = sim_id
+        self.run_filters = dict(run_filters or {})
+        plotters = self.default_plotters(stim_name) if plotters is None else plotters
+        self.plotters = [plotter(stim_name) if isinstance(plotter, type) else plotter for plotter in plotters]
+        self.models = None if models is None else list(models)
+        self.fig_params = {**self.DEFAULT_FIG_PARAMS, **(fig_params or {})}
+        self.common_params = common_params or {}
+        self.subplot_params = subplot_params or {}
+
+    @staticmethod
+    def default_plotters(stim_name: str) -> List[BaseAggregatorPlot]:
+        """Rate (model legend), adaptation, inputs, voltage, STP x/u (legends without the model entries)."""
+        legend = {"fontsize": 8}
+        return [
+            AggregatorRateTracePlot(stim_name, params={"legend": legend}),
+            AggregatorAdaptationTracePlot(stim_name),
+            AggregatorInputTracePlot(stim_name, params={"legend": legend, "model_legend": False}),
+            AggregatorVoltageTracePlot(stim_name),
+            AggregatorSTPTracePlot(stim_name, params={"projection_variable": ["x", "u"], "legend": legend, "model_legend": False}),
+        ]
+
+    def run(self) -> str:
+        """The sim_id of the run (`sim_id`, or the one run left by `run_filters`)."""
+        if self.sim_id is not None:
+            if self.sim_id not in self.agg.sim_ids:
+                raise KeyError(f"Run '{self.sim_id}' is not in param_combinations.csv.")
+            return self.sim_id
+        param_mat, sim_ids = self.agg.filter_runs(self.run_filters)
+        if len(sim_ids) != 1:
+            varying = list(self.agg.analyze_parameter_grid(param_mat)["varying_params"]) if sim_ids else []
+            raise ValueError(
+                f"run_filters {self.run_filters} match {len(sim_ids)} runs, the overview needs exactly one."
+                + (f" Parameters that still vary: {varying}." if varying else "")
+            )
+        return sim_ids[0]
+
+    def title(self, sim_id: str) -> str:
+        """Stimulus, run and its values of the parameters that vary in the project."""
+        varying = list(self.agg.analyze_parameter_grid(self.agg.param_matrix)["varying_params"])
+        row = self.agg.param_matrix[self.agg.sim_ids.index(sim_id)]
+        labels = {self.agg.resolve_param_column(param)[0]: label for param, label in self.fig_params["param_labels"].items()}
+        entries = [f"{labels.get(name, name)} = {row[self.agg.param_col_map[name]]}" for name in varying]
+        per_line = self.fig_params["params_per_line"]
+        lines = [",   ".join(entries[i:i + per_line]) for i in range(0, len(entries), per_line)]
+        return "\n".join([f"{self.stim_name}, run {sim_id}"] + lines)
+
+    def __call__(self) -> Tuple[plt.Figure, np.ndarray]:
+        sim_id = self.run()
+        ncols = len(self.plotters)
+        ax_w, ax_h = self.fig_params["axsize"]
+        fig, axes = plt.subplots(
+            nrows=1,
+            ncols=ncols,
+            figsize=self.fig_params["figsize"] or (ncols * ax_w, ax_h),
+            sharex=self.fig_params["sharex"],
+            dpi=self.fig_params["dpi"],
+            constrained_layout=self.fig_params["constrained_layout"],
+            squeeze=False,
+        )
+        axes = axes[0]
+
+        for j, (ax, plotter) in enumerate(zip(axes, self.plotters)):
+            cell_plotter = copy.deepcopy(plotter)
+            if self.models is not None and isinstance(cell_plotter, BaseAggregatorVariablePlot):
+                cell_plotter.models = list(self.models)
+            cell_plotter.full_params.update(self.common_params)
+            cell_plotter.full_params.update(self.subplot_params.get(type(plotter).__name__, {}))
+            cell_plotter.full_params.update(self.subplot_params.get(j, {}))
+            im = cell_plotter.draw(ax, sim_id=sim_id, aggregator=self.agg)
+            if im is not None:
+                cell_plotter.add_colorbar(fig, ax, im)
+
+        fig.suptitle(self.fig_params["title"] or self.title(sim_id), fontsize=12)
+
+        if self.fig_params["savefig"]:
+            save_path = self.fig_params["savefig_path"] or "run_overview.png"
+            Path(save_path).parent.mkdir(parents=True, exist_ok=True)
+            fig.savefig(save_path, dpi=self.fig_params["dpi"], bbox_inches="tight")
+            print(f"Saved run overview to '{save_path}'")
 
         return fig, axes
