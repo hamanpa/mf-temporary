@@ -3,7 +3,7 @@ import tvb.simulator.lab as lab
 
 from ....network_params.models import BiologicalParameters
 from ....network_params.translators import TranslationRule, translate_params
-from ...config import MeanFieldSimulationConfig
+from ...config import MeanFieldSimulationConfig, MODEL_STP_MODES
 from .neuropsi_models import Zerlaut_adaptation_first_order, Zerlaut_adaptation_second_order, ZerlautMatteo_adaptation_first_order, ZerlautMatteo_adaptation_second_order
 from .stp_models import NeuroPSI_STP_asymptotic_first_order, NeuroPSI_STP_asymptotic_second_order, NeuroPSI_STP_dynamic_first_order, NeuroPSI_STP_dynamic_second_order
 from ....utils.array_helpers import convert_to_array
@@ -37,22 +37,6 @@ STP_MODELS_REGISTRY = {
     "stp_dynamic.first_order",
     "stp_dynamic.second_order",
 }
-
-# How each model treats short-term plasticity (used to report STP variables consistently with the model):
-# - "static_weight": legacy models, static weights weight*U, using the projections onto E for both targets
-# - "asymptotic":    weights scaled by the steady-state u*x at the current source rate
-# - "dynamic":       X, U_dyn per projection integrated as state variables
-MODEL_STP_MODES = {
-    "zerlaut2018.first_order": "static_weight",
-    "zerlaut2018.second_order": "static_weight",
-    "divolo2019.first_order": "static_weight",
-    "divolo2019.second_order": "static_weight",
-    "stp_asymptotic.first_order": "asymptotic",
-    "stp_asymptotic.second_order": "asymptotic",
-    "stp_dynamic.first_order": "dynamic",
-    "stp_dynamic.second_order": "dynamic",
-}
-
 
 TVB_NEUROPSI_LEGACY_EXC_NEURON_MAPPING = {
     "g_L": TranslationRule("g_L", sim_unit="nS"),
@@ -302,6 +286,9 @@ def setup_tvb_model(network_params: BiologicalParameters, mf_sim_params: MeanFie
             **proj_params,
             **mf_model_params
         }
+        # Spike statistics of the STP steady state (asymptotic: the efficacy; dynamic: the RMS/mean ratio), as in the TF
+        model.stp_spike_statistics = mf_sim_params.transfer_function.tf_model.stp_spike_statistics
+        model.stp_kappa = mf_sim_params.stp_kappa
 
         init_values = {key: TVB_STATE_VARIABLES_MAPPING[key] for key in state_variables}
         init_values = translate_params(mf_sim_params.init_values, init_values)

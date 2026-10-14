@@ -56,7 +56,9 @@ class TransferFunctionFitPlot(BaseTransferFunctionPlot):
         if self.full_params['labels'] is None:
             self.full_params['labels'] = [f'TF {i+1}' for i in range(len(tf_funcs_list))]
 
-        self.full_params['linestyles'] = self.full_params['linestyles'][:len(tf_funcs_list)]
+        # one line style per TF, cycling through the given ones (e.g. more MF models than styles)
+        linestyles = self.full_params['linestyles']
+        self.full_params['linestyles'] = [linestyles[i % len(linestyles)] for i in range(len(tf_funcs_list))]
 
         for j, (nu_i_idx, nu_i) in enumerate(indexed_linear_sample(neuron_results.inh_rate_grid(x_unit)[0], self.full_params['curves_num'])):
 

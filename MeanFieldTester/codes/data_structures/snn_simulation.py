@@ -1,5 +1,5 @@
 from .base import BaseSNNResults, STP_VARIABLES, parse_stp_variable
-from ..utils import snn_helpers
+from ..utils import snn_helpers, stp_helpers
 from ..network_params.models import INTERNAL_PROJECTIONS
 from pydantic import BaseModel
 import numpy as np
@@ -348,7 +348,7 @@ class SNNResults(BaseSNNResults):
             'x' or 'u' (see `data_structures.base.STP_VARIABLES`).
 
         Reconstructed from the recorded presynaptic spikes with NEST's `tsodyks_synapse` rules
-        (`utils.snn_helpers.reconstruct_stp_dynamics`). Static synapses give x = 1, u = 1.
+        (`utils.stp_helpers.reconstruct_stp_dynamics`). Static synapses give x = 1, u = 1.
         Returns None if the projection does not exist. Not cached (the arrays are large).
         """
         if variable not in STP_VARIABLES:
@@ -362,7 +362,7 @@ class SNNResults(BaseSNNResults):
 
         if conn.syn_type == "tsodyks_synapse":
             syn = conn.syn_params
-            u, x = snn_helpers.reconstruct_stp_dynamics(
+            u, x = stp_helpers.reconstruct_stp_dynamics(
                 spikes, syn.U, syn.tau_rec, syn.tau_fac, syn.tau_psc, self.times()
             )
             values = {"u": u, "x": x}[variable]

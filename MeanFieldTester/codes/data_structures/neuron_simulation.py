@@ -45,7 +45,16 @@ class SingleNeuronResults(BaseSingleNeuronResults):
     All grid arrays are indexed (exc_rate, inh_rate, drive_rate). Arrays given without a
     `drive_rate_grid` (e.g. older data, reference simulators) are treated as drive = 0 and get a
     drive axis of length 1. `at_drive(drive_rate)` returns a 2D (exc_rate, inh_rate) slice.
+
+    STP state at the input spikes (`stp_at_spikes`, unitless): for each projection onto the simulated neuron
+    (target-source code with the source e | i | d, e.g. "ed" = onto E from the drive), the mean and std over the
+    input spikes in the averaging window of x⁻ (resources before a spike), u⁺ (utilisation used) and u⁺·x⁻
+    (efficacy), keys `{projection}_{x|u|ux}_{mean|std}`. Recorded by the PyNN simulator; empty for results
+    without it (other simulators, older caches).
     """
+
+    STP_VARIABLES = ("x", "u", "ux")
+    STP_STATS = ("mean", "std")
 
     # Array fields, all with the same (exc_rate, inh_rate, drive_rate) shape
     GRID_FIELDS = (
@@ -94,6 +103,7 @@ class SingleNeuronResults(BaseSingleNeuronResults):
                  exc_conductance_std: np.ndarray = None,
                  inh_conductance_mean: np.ndarray = None,
                  inh_conductance_std: np.ndarray = None,
+                 stp_at_spikes: dict = None,
                  input_units: dict = None):
         
         # --- Public Metadata (No units required) ---
@@ -114,12 +124,18 @@ class SingleNeuronResults(BaseSingleNeuronResults):
             "exc_conductance_mean": exc_conductance_mean, "exc_conductance_std": exc_conductance_std,
             "inh_conductance_mean": inh_conductance_mean, "inh_conductance_std": inh_conductance_std,
         }
+        stp_at_spikes = dict(stp_at_spikes or {})
+        for key in stp_at_spikes:
+            if self.parse_stp_key(key) is None:
+                raise ValueError(f"Invalid STP key '{key}'. Expected '<projection>_<{'|'.join(self.STP_VARIABLES)}>_<mean|std>', e.g. 'ee_ux_mean'.")
         if drive_rate_grid is None:
             arrays = self._with_zero_drive_axis(arrays)
+            stp_at_spikes = self._with_zero_drive_axis(stp_at_spikes)
 
         # --- Protected Physical Data (Stored in Default Units) ---
         for name in self.GRID_FIELDS:
             setattr(self, f"_{name}", self._ingest(arrays[name], name, input_units))
+        self._stp_at_spikes = stp_at_spikes
 
         # Freeze the object to prevent accidental attribute creation or modification
         self._finalized = True
@@ -135,11 +151,54 @@ class SingleNeuronResults(BaseSingleNeuronResults):
             arrays["drive_rate_grid"] = np.zeros_like(arrays["exc_rate_grid"], dtype=float)
         return arrays
 
+    @classmethod
+    def parse_stp_key(cls, key: str) -> tuple[str, str, str] | None:
+        """(projection, variable, stat) of an STP key like 'ed_ux_mean', otherwise None."""
+        parts = key.split("_")
+        if len(parts) != 3:
+            return None
+        projection, variable, stat = parts
+        if len(projection) != 2 or projection[0] not in "ei" or projection[1] not in "eid":
+            return None
+        if variable not in cls.STP_VARIABLES or stat not in cls.STP_STATS:
+            return None
+        return projection, variable, stat
+
+    def default_unit(self, variable: str) -> str:
+        """As `BaseResults.default_unit`; STP keys (see `parse_stp_key`) are unitless."""
+        if self.parse_stp_key(variable) is not None:
+            return ""
+        return super().default_unit(variable)
+
+    def stp_keys(self) -> tuple[str, ...]:
+        """The recorded STP keys, e.g. ('ee_x_mean', 'ee_x_std', ...); empty if not recorded."""
+        return tuple(self._stp_at_spikes)
+
+    def stp_at_spikes(self, projection: str, variable: str, stat: str = "mean") -> np.ndarray | None:
+        """
+        STP state at the input spikes over the grid [unitless], or None if not recorded.
+
+        Parameters
+        ----------
+        projection : str
+            Target-source code onto the simulated neuron, e.g. 'ee', 'ei', 'ed'.
+        variable : str
+            'x' (x⁻), 'u' (u⁺) or 'ux' (efficacy u⁺·x⁻).
+        stat : str
+            'mean' or 'std' over the input spikes in the averaging window.
+        """
+        key = f"{projection}_{variable}_{stat}"
+        if self.parse_stp_key(key) is None:
+            raise ValueError(f"Invalid STP key '{key}'. Variables {self.STP_VARIABLES}, stats {self.STP_STATS}.")
+        return self._stp_at_spikes.get(key)
+
     def __setstate__(self, state: dict):
         # Results pickled before the drive axis existed (e.g. try_load caches) get a drive = 0 axis.
         if "_drive_rate_grid" not in state:
             prefixed = {name: state.get(f"_{name}") for name in self.GRID_FIELDS}
             state = {**state, **{f"_{name}": value for name, value in self._with_zero_drive_axis(prefixed).items()}}
+        # Results pickled before the STP state was recorded have none.
+        state.setdefault("_stp_at_spikes", {})
         self.__dict__.update(state)
 
     def at_drive(self, drive_rate: float | None = None) -> "SingleNeuronResults":
@@ -160,6 +219,7 @@ class SingleNeuronResults(BaseSingleNeuronResults):
             neuron_params=self.neuron_params,
             neuron_sim_params=self.neuron_sim_params,
             spikes=self.spikes,
+            stp_at_spikes={key: values[:, :, index] for key, values in self._stp_at_spikes.items()},
             **sliced,
         )
 

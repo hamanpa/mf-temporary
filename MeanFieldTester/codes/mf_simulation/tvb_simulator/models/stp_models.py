@@ -3,6 +3,8 @@ from tvb.basic.neotraits.api import NArray, Range, Final, List
 import scipy.special as sp_spec
 from numba import jit
 
+from ....utils.stp_helpers import steady_state_efficacy_moments
+
 
 class BaseNeuroPSI_STP(Model):
     r"""
@@ -418,6 +420,12 @@ class BaseNeuroPSI_STP(Model):
         doc="""Ratio of stimulated nodes to total nodes"""
     )
 
+    # Spike statistics of the STP steady state, "regular" | "poisson" (set by the factory from the TF config, see
+    # utils.stp_helpers): the asymptotic efficacy, and for the dynamic models the RMS/mean ratio of the efficacy
+    stp_spike_statistics = "poisson"
+    # Dynamic models: RMS weight = mean * kappa(rate) (True) or = mean (False); set by the factory (MF config stp_kappa)
+    stp_kappa = True
+
     @staticmethod
     def convert_to_array(lst: list, axis: int = 0):
         shape = lst[0].shape
@@ -434,28 +442,22 @@ class BaseNeuroPSI_STP(Model):
         new_array = numpy.stack(new_array, axis=axis)
         return new_array
 
-    @staticmethod
-    def _steady_state_stp(rate, u, tau_rec, tau_fac):
-        "Returns stationary limit of short-term plasticity."
-        u = u.reshape(1)
-        tau_rec = tau_rec.reshape(1)
-        tau_fac = tau_fac.reshape(1)
+    def _steady_state_efficacy(self, rate, U, tau_rec, tau_fac):
+        """
+        Steady-state efficacy factors of a projection at the source rate [kHz]: the mean ⟨u⁺x⁻⟩ (mean weight)
+        and the RMS √⟨(u⁺x⁻)²⟩ (fluctuation weight), see `utils.stp_helpers`. Static synapses (tau_rec = tau_fac = 0)
+        give U for both.
+        """
+        U, tau_rec, tau_fac = (float(numpy.asarray(value).ravel()[0]) for value in (U, tau_rec, tau_fac))
+        rate_hz = numpy.clip(numpy.asarray(rate, dtype=float), 0.0, None) * 1e3
+        mean, mean_sq = steady_state_efficacy_moments(rate_hz, U, tau_rec, tau_fac, self.stp_spike_statistics)
+        rms = mean if self.stp_spike_statistics == "regular" else numpy.sqrt(mean_sq)
+        return mean, rms
 
-        flat_rate = rate.flatten()
-        u_steady = numpy.ones_like(flat_rate) * u
-        x_steady = numpy.ones_like(flat_rate)
-        mask = flat_rate >= 1e-9
-
-        if tau_fac != 0:
-            exp = numpy.exp(-1 / (flat_rate[mask] * tau_fac))
-            u_steady[mask] = u / (1 - (1 - u) * exp)
-
-        if tau_rec != 0:
-            exp = numpy.exp(-1 / (flat_rate[mask] * tau_rec))
-            x_steady[mask] = (1 - exp) / (1 - (1 - u_steady[mask]) * exp)
-
-        flat_stp = u_steady * x_steady
-        return flat_stp.reshape(rate.shape)
+    def _efficacy_rms_ratio(self, rate, U, tau_rec, tau_fac):
+        """RMS/mean of the steady-state efficacy at the source rate [kHz] (1 for regular trains and static synapses)."""
+        mean, rms = self._steady_state_efficacy(rate, U, tau_rec, tau_fac)
+        return rms / mean
 
     @staticmethod
     def _utilization(U_dyn, U, tau_fac):
@@ -466,10 +468,15 @@ class BaseNeuroPSI_STP(Model):
         return numpy.where(tau_fac > 0, U_dyn * (1 - U) + U, U)
 
     @staticmethod
-    def get_fluct_regime_vars(inputs_exc, inputs_inh, W, weights_exc, taus_exc, conns_exc, weights_inh, taus_inh, conns_inh, E_e, E_i, g_L, C_m, E_L):
+    def get_fluct_regime_vars(inputs_exc, inputs_inh, W, weights_exc, taus_exc, conns_exc, weights_inh, taus_inh, conns_inh, E_e, E_i, g_L, C_m, E_L,
+                              fluct_exc=None, fluct_inh=None):
         """
         Compute the mean characteristic of neurons.
+        The mean conductance and voltage use the (mean) weights; the fluctuations (sigma_V, T_V) use the RMS
+        weights `fluct_exc`/`fluct_inh` (default: the weights), see `utils.stp_helpers.effective_synapse_weights`.
         """
+        fluct_exc = weights_exc if fluct_exc is None else fluct_exc
+        fluct_inh = weights_inh if fluct_inh is None else fluct_inh
         mu_Ge = (weights_exc * taus_exc * conns_exc * inputs_exc).sum(axis=0)[numpy.newaxis]
         mu_Gi = (weights_inh * taus_inh * conns_inh * inputs_inh).sum(axis=0)[numpy.newaxis]
         mu_G = g_L + mu_Ge + mu_Gi
@@ -477,8 +484,8 @@ class BaseNeuroPSI_STP(Model):
 
         mu_V = (mu_Ge * E_e + mu_Gi * E_i + g_L * E_L - W[numpy.newaxis]) / mu_G
 
-        U_e = weights_exc / mu_G * (E_e - mu_V)
-        U_i = weights_inh / mu_G * (E_i - mu_V)
+        U_e = fluct_exc / mu_G * (E_e - mu_V)
+        U_i = fluct_inh / mu_G * (E_i - mu_V)
 
         s_e = (conns_exc * inputs_exc * (U_e * taus_exc) ** 2 / (2. * (taus_exc + tau_eff))).sum(axis=0)
         s_i = (conns_inh * inputs_inh * (U_i * taus_inh) ** 2 / (2. * (taus_inh + tau_eff))).sum(axis=0)
@@ -509,19 +516,19 @@ class BaseNeuroPSI_STP(Model):
         """The firing rate estimation function of the neurons."""
         return sp_spec.erfc((Vthre - muV) / (numpy.sqrt(2) * sigmaV)) / (2 * Tv)
 
-    def TF_excitatory(self, fe, fi, W, weights_e, taus_e, conns_e, weights_i, taus_i, conns_i):
-        """Transfer function for excitatory population."""
-        return self.TF(fe, fi, W, weights_e, taus_e, conns_e, weights_i, taus_i, conns_i, self.P_e, self.E_L_e, self.g_L_e, self.C_m_e)
+    def TF_excitatory(self, fe, fi, W, weights_e, taus_e, conns_e, weights_i, taus_i, conns_i, fluct_e=None, fluct_i=None):
+        """Transfer function for excitatory population (`fluct_*`: RMS weights, see `get_fluct_regime_vars`)."""
+        return self.TF(fe, fi, W, weights_e, taus_e, conns_e, weights_i, taus_i, conns_i, self.P_e, self.E_L_e, self.g_L_e, self.C_m_e, fluct_e, fluct_i)
 
-    def TF_inhibitory(self, fe, fi, W, weights_e, taus_e, conns_e, weights_i, taus_i, conns_i):
-        """Transfer function for inhibitory population."""
-        return self.TF(fe, fi, W, weights_e, taus_e, conns_e, weights_i, taus_i, conns_i, self.P_i, self.E_L_i, self.g_L_i, self.C_m_i)
+    def TF_inhibitory(self, fe, fi, W, weights_e, taus_e, conns_e, weights_i, taus_i, conns_i, fluct_e=None, fluct_i=None):
+        """Transfer function for inhibitory population (`fluct_*`: RMS weights, see `get_fluct_regime_vars`)."""
+        return self.TF(fe, fi, W, weights_e, taus_e, conns_e, weights_i, taus_i, conns_i, self.P_i, self.E_L_i, self.g_L_i, self.C_m_i, fluct_e, fluct_i)
 
-    def TF(self, fe, fi, W, weights_e, taus_e, conns_e, weights_i, taus_i, conns_i, P, E_L, g_L, C_m):
+    def TF(self, fe, fi, W, weights_e, taus_e, conns_e, weights_i, taus_i, conns_i, P, E_L, g_L, C_m, fluct_e=None, fluct_i=None):
         """Transfer function main routine."""
         mu_V, sigma_V, T_V = self.get_fluct_regime_vars(
             fe, fi, W, weights_e, taus_e, conns_e, weights_i, taus_i, conns_i,
-            self.E_e, self.E_i, g_L, C_m, E_L
+            self.E_e, self.E_i, g_L, C_m, E_L, fluct_e, fluct_i
         )
 
         V_thre = self.threshold_func(
@@ -532,9 +539,16 @@ class BaseNeuroPSI_STP(Model):
         return self.estimate_firing_rate(mu_V, sigma_V, T_V, V_thre)
 
     def _prepare_inputs_and_weights(self, E, I, stimulus, local_coupling, coupling_0, 
-                                    stp_ee_custom=None, stp_ei_custom=None,
-                                    stp_ie_custom=None, stp_ii_custom=None):
-        """Prepares input populations, connection counts, and synaptic weights."""
+                                    dynamic_efficacy=None):
+        """
+        Prepares input populations, connection counts, and synaptic weights: the mean weights and the RMS
+        (fluctuation) weights, see `get_fluct_regime_vars`.
+
+        The STP efficacy of the internal projections is the steady state at the source rate (asymptotic models), or
+        `dynamic_efficacy` = {projection: X * u} from the model's state (dynamic models), whose RMS is the mean times
+        the steady-state RMS/mean ratio at the source rate (`stp_kappa`), or the mean itself (`stp_kappa` False).
+        Drive and stimulus synapses are static.
+        """
 
         def stack_broadcast(values):
             arrays = numpy.broadcast_arrays(*[numpy.asarray(value) for value in values])
@@ -571,52 +585,47 @@ class BaseNeuroPSI_STP(Model):
         weights_ie = stack_broadcast([self.Q_ie, self.Q_id, self.Q_is, 0, 0]).reshape((-1, 1, 1))
         weights_ii = stack_broadcast([self.Q_ii, 0, 0]).reshape((-1, 1, 1))
 
-        if stp_ee_custom is not None:
-            stp_ee = stp_ee_custom
-        else:
-            # NOTE: drive and stimulus are expected to be static synapses
-            stp_ee = [self._steady_state_stp(E, self.U_ee, self.tau_rec_ee, self.tau_fac_ee), 1., 1., 1., 1.]
-        stp_ee = stack_broadcast(stp_ee)
+        def efficacy(projection, rate):
+            params = (getattr(self, f"U_{projection}"), getattr(self, f"tau_rec_{projection}"), getattr(self, f"tau_fac_{projection}"))
+            if dynamic_efficacy is None:
+                return self._steady_state_efficacy(rate, *params)
+            mean = dynamic_efficacy[projection]
+            if not self.stp_kappa:
+                return mean, mean
+            return mean, mean * self._efficacy_rms_ratio(rate, *params)
 
-        if stp_ei_custom is not None:
-            stp_ei = stp_ei_custom
-        else:
-            stp_ei = [self._steady_state_stp(I, self.U_ei, self.tau_rec_ei, self.tau_fac_ei), 1., 1.]
-        stp_ei = stack_broadcast(stp_ei)
+        # NOTE: drive and stimulus are expected to be static synapses
+        mean_ee, rms_ee = efficacy("ee", E)
+        mean_ei, rms_ei = efficacy("ei", I)
+        mean_ie, rms_ie = efficacy("ie", E)
+        mean_ii, rms_ii = efficacy("ii", I)
 
-        if stp_ie_custom is not None:
-            stp_ie = stp_ie_custom
-        else:
-            stp_ie = [self._steady_state_stp(E, self.U_ie, self.tau_rec_ie, self.tau_fac_ie), 1., 1., 1., 1.]
-        stp_ie = stack_broadcast(stp_ie)
-
-        if stp_ii_custom is not None:
-            stp_ii = stp_ii_custom
-        else:
-            stp_ii = [self._steady_state_stp(I, self.U_ii, self.tau_rec_ii, self.tau_fac_ii), 1., 1.]
-        stp_ii = stack_broadcast(stp_ii)
-
-        weights_ee = weights_ee * stp_ee
-        weights_ei = weights_ei * stp_ei
-        weights_ie = weights_ie * stp_ie
-        weights_ii = weights_ii * stp_ii
+        fluct_ee = weights_ee * stack_broadcast([rms_ee, 1., 1., 1., 1.])
+        fluct_ei = weights_ei * stack_broadcast([rms_ei, 1., 1.])
+        fluct_ie = weights_ie * stack_broadcast([rms_ie, 1., 1., 1., 1.])
+        fluct_ii = weights_ii * stack_broadcast([rms_ii, 1., 1.])
+        weights_ee = weights_ee * stack_broadcast([mean_ee, 1., 1., 1., 1.])
+        weights_ei = weights_ei * stack_broadcast([mean_ei, 1., 1.])
+        weights_ie = weights_ie * stack_broadcast([mean_ie, 1., 1., 1., 1.])
+        weights_ii = weights_ii * stack_broadcast([mean_ii, 1., 1.])
 
         taus_e = stack_broadcast([self.tau_e, self.tau_e, self.tau_e, self.tau_e, self.tau_e]).reshape((-1, 1, 1))
         taus_i = stack_broadcast([self.tau_i, self.tau_i, self.tau_i]).reshape((-1, 1, 1))
 
         return (input_ee, input_ei, input_ie, input_ii, 
                 weights_ee, conns_ee, weights_ei, conns_ei, weights_ie, conns_ie, weights_ii, conns_ii,
-                taus_e, taus_i)
+                taus_e, taus_i, fluct_ee, fluct_ei, fluct_ie, fluct_ii)
 
     def _compute_second_order_terms(
         self, input_ee, input_ei, W_e, input_ie, input_ii, W_i,
         weights_ee, conns_ee, weights_ei, conns_ei, weights_ie, conns_ie, weights_ii, conns_ii,
         taus_e, taus_i,
-        E, I, C_ee, C_ei, C_ii, N_e, N_i, _TF_e, _TF_i, df=1e-7
+        E, I, C_ee, C_ei, C_ii, N_e, N_i, _TF_e, _TF_i, df=1e-7,
+        fluct_ee=None, fluct_ei=None, fluct_ie=None, fluct_ii=None,
     ):
         """Computes 2nd-order numerical partial derivatives and covariance ODE terms."""
-        args_exc = (weights_ee, taus_e, conns_ee, weights_ei, taus_i, conns_ei)
-        args_inh = (weights_ie, taus_e, conns_ie, weights_ii, taus_i, conns_ii)
+        args_exc = (weights_ee, taus_e, conns_ee, weights_ei, taus_i, conns_ei, fluct_ee, fluct_ei)
+        args_inh = (weights_ie, taus_e, conns_ie, weights_ii, taus_i, conns_ii, fluct_ie, fluct_ii)
 
         dfe_ee = numpy.zeros_like(input_ee)
         dfe_ee[0] = df
@@ -724,12 +733,12 @@ class NeuroPSI_STP_asymptotic_first_order(BaseNeuroPSI_STP):
 
         (input_ee, input_ei, input_ie, input_ii, 
         weights_ee, conns_ee, weights_ei, conns_ei, weights_ie, conns_ie, weights_ii, conns_ii,
-        taus_e, taus_i) = self._prepare_inputs_and_weights(E, I, stimulus, local_coupling, c_0)
+        taus_e, taus_i, fluct_ee, fluct_ei, fluct_ie, fluct_ii) = self._prepare_inputs_and_weights(E, I, stimulus, local_coupling, c_0)
 
 
         # Firing rates
-        _TF_e = self.TF_excitatory(input_ee, input_ei, W_e, weights_ee, taus_e, conns_ee, weights_ei, taus_i, conns_ei)
-        _TF_i = self.TF_inhibitory(input_ie, input_ii, W_i, weights_ie, taus_e, conns_ie, weights_ii, taus_i, conns_ii)
+        _TF_e = self.TF_excitatory(input_ee, input_ei, W_e, weights_ee, taus_e, conns_ee, weights_ei, taus_i, conns_ei, fluct_ee, fluct_ei)
+        _TF_i = self.TF_inhibitory(input_ie, input_ii, W_i, weights_ie, taus_e, conns_ie, weights_ii, taus_i, conns_ii, fluct_ie, fluct_ii)
 
         derivative[0] = (_TF_e - E) / self.T
         derivative[1] = (_TF_i - I) / self.T
@@ -807,17 +816,18 @@ class NeuroPSI_STP_asymptotic_second_order(NeuroPSI_STP_asymptotic_first_order):
 
         (input_ee, input_ei, input_ie, input_ii, 
         weights_ee, conns_ee, weights_ei, conns_ei, weights_ie, conns_ie, weights_ii, conns_ii,
-        taus_e, taus_i) = self._prepare_inputs_and_weights(E, I, stimulus, local_coupling, c_0)
+        taus_e, taus_i, fluct_ee, fluct_ei, fluct_ie, fluct_ii) = self._prepare_inputs_and_weights(E, I, stimulus, local_coupling, c_0)
 
-        _TF_e = self.TF_excitatory(input_ee, input_ei, W_e, weights_ee, taus_e, conns_ee, weights_ei, taus_i, conns_ei)
-        _TF_i = self.TF_inhibitory(input_ie, input_ii, W_i, weights_ie, taus_e, conns_ie, weights_ii, taus_i, conns_ii)
+        _TF_e = self.TF_excitatory(input_ee, input_ei, W_e, weights_ee, taus_e, conns_ee, weights_ei, taus_i, conns_ei, fluct_ee, fluct_ei)
+        _TF_i = self.TF_inhibitory(input_ie, input_ii, W_i, weights_ie, taus_e, conns_ie, weights_ii, taus_i, conns_ii, fluct_ie, fluct_ii)
 
         dE, dI, dC_ee, dC_ei, dC_ii = self._compute_second_order_terms(
             input_ee, input_ei, W_e, input_ie, input_ii, W_i,
             weights_ee, conns_ee, weights_ei, conns_ei,
             weights_ie, conns_ie, weights_ii, conns_ii,
             taus_e, taus_i,
-            E, I, C_ee, C_ei, C_ii, N_e, N_i, _TF_e, _TF_i
+            E, I, C_ee, C_ei, C_ii, N_e, N_i, _TF_e, _TF_i,
+            fluct_ee=fluct_ee, fluct_ei=fluct_ei, fluct_ie=fluct_ie, fluct_ii=fluct_ii,
         )
 
         derivative[0] = dE
@@ -935,18 +945,20 @@ class NeuroPSI_STP_dynamic_first_order(BaseNeuroPSI_STP):
 
         c_0 = coupling[0, :]
 
-        stp_ee_custom = [X_ee * self._utilization(U_dyn_ee, self.U_ee, self.tau_fac_ee), 1., 1., 1., 1.]
-        stp_ei_custom = [X_ei * self._utilization(U_dyn_ei, self.U_ei, self.tau_fac_ei), 1., 1.]
-        stp_ie_custom = [X_ie * self._utilization(U_dyn_ie, self.U_ie, self.tau_fac_ie), 1., 1., 1., 1.]
-        stp_ii_custom = [X_ii * self._utilization(U_dyn_ii, self.U_ii, self.tau_fac_ii), 1., 1.]
+        dynamic_efficacy = {
+            "ee": X_ee * self._utilization(U_dyn_ee, self.U_ee, self.tau_fac_ee),
+            "ei": X_ei * self._utilization(U_dyn_ei, self.U_ei, self.tau_fac_ei),
+            "ie": X_ie * self._utilization(U_dyn_ie, self.U_ie, self.tau_fac_ie),
+            "ii": X_ii * self._utilization(U_dyn_ii, self.U_ii, self.tau_fac_ii),
+        }
 
         (input_ee, input_ei, input_ie, input_ii, 
         weights_ee, conns_ee, weights_ei, conns_ei, weights_ie, conns_ie, weights_ii, conns_ii,
-        taus_e, taus_i) = self._prepare_inputs_and_weights(E, I, stimulus, local_coupling, c_0, stp_ee_custom=stp_ee_custom, stp_ei_custom=stp_ei_custom, stp_ie_custom=stp_ie_custom, stp_ii_custom=stp_ii_custom)
+        taus_e, taus_i, fluct_ee, fluct_ei, fluct_ie, fluct_ii) = self._prepare_inputs_and_weights(E, I, stimulus, local_coupling, c_0, dynamic_efficacy=dynamic_efficacy)
 
         # Firing rates
-        _TF_e = self.TF_excitatory(input_ee, input_ei, W_e, weights_ee, taus_e, conns_ee, weights_ei, taus_i, conns_ei)
-        _TF_i = self.TF_inhibitory(input_ie, input_ii, W_i, weights_ie, taus_e, conns_ie, weights_ii, taus_i, conns_ii)
+        _TF_e = self.TF_excitatory(input_ee, input_ei, W_e, weights_ee, taus_e, conns_ee, weights_ei, taus_i, conns_ei, fluct_ee, fluct_ei)
+        _TF_i = self.TF_inhibitory(input_ie, input_ii, W_i, weights_ie, taus_e, conns_ie, weights_ii, taus_i, conns_ii, fluct_ie, fluct_ii)
 
         derivative[0] = (_TF_e - E) / self.T
         derivative[1] = (_TF_i - I) / self.T
@@ -1058,24 +1070,27 @@ class NeuroPSI_STP_dynamic_second_order(NeuroPSI_STP_dynamic_first_order):
 
         c_0 = coupling[0, :]
 
-        stp_ee_custom = [X_ee * self._utilization(U_dyn_ee, self.U_ee, self.tau_fac_ee), 1., 1., 1., 1.]
-        stp_ei_custom = [X_ei * self._utilization(U_dyn_ei, self.U_ei, self.tau_fac_ei), 1., 1.]
-        stp_ie_custom = [X_ie * self._utilization(U_dyn_ie, self.U_ie, self.tau_fac_ie), 1., 1., 1., 1.]
-        stp_ii_custom = [X_ii * self._utilization(U_dyn_ii, self.U_ii, self.tau_fac_ii), 1., 1.]
+        dynamic_efficacy = {
+            "ee": X_ee * self._utilization(U_dyn_ee, self.U_ee, self.tau_fac_ee),
+            "ei": X_ei * self._utilization(U_dyn_ei, self.U_ei, self.tau_fac_ei),
+            "ie": X_ie * self._utilization(U_dyn_ie, self.U_ie, self.tau_fac_ie),
+            "ii": X_ii * self._utilization(U_dyn_ii, self.U_ii, self.tau_fac_ii),
+        }
 
         (input_ee, input_ei, input_ie, input_ii, 
         weights_ee, conns_ee, weights_ei, conns_ei, weights_ie, conns_ie, weights_ii, conns_ii,
-        taus_e, taus_i) = self._prepare_inputs_and_weights(E, I, stimulus, local_coupling, c_0, stp_ee_custom=stp_ee_custom, stp_ei_custom=stp_ei_custom, stp_ie_custom=stp_ie_custom, stp_ii_custom=stp_ii_custom)
+        taus_e, taus_i, fluct_ee, fluct_ei, fluct_ie, fluct_ii) = self._prepare_inputs_and_weights(E, I, stimulus, local_coupling, c_0, dynamic_efficacy=dynamic_efficacy)
 
-        _TF_e = self.TF_excitatory(input_ee, input_ei, W_e, weights_ee, taus_e, conns_ee, weights_ei, taus_i, conns_ei)
-        _TF_i = self.TF_inhibitory(input_ie, input_ii, W_i, weights_ie, taus_e, conns_ie, weights_ii, taus_i, conns_ii)
+        _TF_e = self.TF_excitatory(input_ee, input_ei, W_e, weights_ee, taus_e, conns_ee, weights_ei, taus_i, conns_ei, fluct_ee, fluct_ei)
+        _TF_i = self.TF_inhibitory(input_ie, input_ii, W_i, weights_ie, taus_e, conns_ie, weights_ii, taus_i, conns_ii, fluct_ie, fluct_ii)
 
         dE, dI, dC_ee, dC_ei, dC_ii = self._compute_second_order_terms(
             input_ee, input_ei, W_e, input_ie, input_ii, W_i,
             weights_ee, conns_ee, weights_ei, conns_ei,
             weights_ie, conns_ie, weights_ii, conns_ii,
             taus_e, taus_i,
-            E, I, C_ee, C_ei, C_ii, N_e, N_i, _TF_e, _TF_i
+            E, I, C_ee, C_ei, C_ii, N_e, N_i, _TF_e, _TF_i,
+            fluct_ee=fluct_ee, fluct_ei=fluct_ei, fluct_ie=fluct_ie, fluct_ii=fluct_ii,
         )
 
         derivative[0] = dE

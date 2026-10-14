@@ -35,6 +35,7 @@ from .base import BaseNeuronSimulator
 from ..network_params.translators import TranslationRule, translate_params
 from ..network_params.mappings import PYNN_ADEX_MAPPING, PYNN_STATIC_SYNAPSE_MAPPING, NEST_STATIC_SYNAPSE_MAPPING, NEST_TSODYKS_SYNAPSE_MAPPING, PYNN_INITIAL_VALUES_MAPPING
 from ..network_params.models import BiologicalParameters
+from ..utils.stp_helpers import efficacy_at_spikes
 
 def simulate_adex_neuron_single_point(
                                 exc_rate : float, 
@@ -48,6 +49,7 @@ def simulate_adex_neuron_single_point(
                                 simulation_time=1000.0,
                                 time_step=0.1,
                                 seed=1,
+                                record_sources: bool = False,
                                 **kwargs) -> dict:
     """Simulates a single AdEx neuron with Poisson synaptic input.
 
@@ -70,6 +72,7 @@ def simulate_adex_neuron_single_point(
                               Default is 0.1 ms.
         seed (int, optional): Seed for random number generator. 
                               Default is 0.
+        record_sources (bool, optional): Also record the spikes of the Poisson source populations.
     
     Returns:
     dict: A dictionary containing the recorded data with keys 
@@ -78,6 +81,8 @@ def simulate_adex_neuron_single_point(
         'w' (adaptation variable) 
         'gsyn_exc' (excitatory conductance) 
         'gsyn_inh' (inhibitory conductance)
+        'source_spikes' (only with record_sources): {"exc" | "inh" | "drive": list of spike-time arrays [ms],
+                        one per source}; "drive" only with drive input
     """
 
     # TODO: Direct external input
@@ -105,6 +110,7 @@ def simulate_adex_neuron_single_point(
     sim.Projection(poisson_input_exc, neuron, connector, synapse_type=synapse_exc, receptor_type='excitatory')
     poisson_input_inh = sim.Population(inh_synapses["number"], sim.SpikeSourcePoisson(rate=inh_rate))
     sim.Projection(poisson_input_inh, neuron, connector, synapse_type=synapse_inh, receptor_type='inhibitory')
+    sources = {"exc": poisson_input_exc, "inh": poisson_input_inh}
 
     if drive_rate > 0:
         if drive_synapses is None:
@@ -112,13 +118,22 @@ def simulate_adex_neuron_single_point(
         synapse_drive = sim.native_synapse_type(drive_synapses["syn_type"])(**drive_synapses["syn_params"])
         poisson_input_drive = sim.Population(drive_synapses["number"], sim.SpikeSourcePoisson(rate=drive_rate))
         sim.Projection(poisson_input_drive, neuron, connector, synapse_type=synapse_drive, receptor_type=drive_synapses["receptor_type"])
+        sources["drive"] = poisson_input_drive
 
     neuron.record(['v', 'spikes', 'w', 'gsyn_exc', 'gsyn_inh'])
+    if record_sources:
+        for population in sources.values():
+            population.record('spikes')
 
     sim.run(simulation_time)
 
     data = {name: neuron.get_data().segments[0].filter(name=name)[0] for name in ['v', 'w', 'gsyn_exc', 'gsyn_inh']}
     data['spikes'] = neuron.get_data().segments[0].spiketrains[0]
+    if record_sources:
+        data['source_spikes'] = {
+            role: [np.asarray(train.magnitude, dtype=float) for train in population.get_data().segments[0].spiketrains]
+            for role, population in sources.items()
+        }
 
     # TODO: I think I should also convert the units here to be consistent with
     #  the rest of the code, e.g. convert from nA to pA, mV to V, etc. 
@@ -141,6 +156,39 @@ GRID_METRICS = (
     "exc_conductance_mean", "exc_conductance_std",
     "inh_conductance_mean", "inh_conductance_std",
 )
+
+# Codes of the input roles of the single-neuron simulation in projection names (target-source, e.g. "ed" = onto E from the drive)
+SOURCE_CODES = {"exc": "e", "inh": "i", "drive": "d"}
+
+
+def _stp_params(conn) -> dict | None:
+    """Tsodyks parameters of a connection in MFT units ([ms]), None for a static synapse."""
+    if conn.syn_type != "tsodyks_synapse":
+        return None
+    syn = conn.syn_params
+    return {"U": syn.U, "tau_rec": syn.tau_rec, "tau_fac": syn.tau_fac, "tau_psc": syn.tau_psc}
+
+
+def stp_metrics(source_spikes: dict, projections: dict, t_start: float, t_end: float) -> dict:
+    """
+    STP state at the input spikes in [t_start, t_end] [ms], per projection onto the simulated neuron:
+    {f"{projection}_{x|u|ux}_{mean|std}": value} (see `SingleNeuronResults.STP_VARIABLES`).
+
+    `projections`: {projection code: {"source": "exc" | "inh" | "drive", "stp": {"U", "tau_rec", "tau_fac", "tau_psc"} [ms]
+    or None for a static synapse}}. Tsodyks projections are reconstructed per source (`efficacy_at_spikes`);
+    static ones have x = u = 1. A source that was not simulated (drive rate 0) has no spikes, i.e. the state
+    of a long silence (x = 1, u = U), so every projection has finite values at every grid point.
+    """
+    metrics = {}
+    for projection, definition in projections.items():
+        stp = definition["stp"]
+        if stp is None:
+            stats = {"x_mean": 1.0, "x_std": 0.0, "u_mean": 1.0, "u_std": 0.0, "ux_mean": 1.0, "ux_std": 0.0}
+        else:
+            stats = efficacy_at_spikes(source_spikes.get(definition["source"], []), stp["U"], stp["tau_rec"], stp["tau_fac"],
+                                       stp["tau_psc"], t_start=t_start, t_end=t_end)
+        metrics.update({f"{projection}_{key}": value for key, value in stats.items()})
+    return metrics
 
 
 def _single_point_sim_params(neuron_sim_params: NeuronSimulationConfig, n_run: int) -> dict:
@@ -178,10 +226,12 @@ def _adex_neuron_worker(task_data):
     
     """
     (exc_rate, inh_rate, drive_rate), grid_idx, n_run, neuron_name, neuron_params, neuron_sim_params = task_data
-    
+    projections = neuron_params["stp_projections"]
+    single_point_params = {key: value for key, value in neuron_params.items() if key != "stp_projections"}
+
     # Run simulation
     sim_data = simulate_adex_neuron_single_point(
-        exc_rate, inh_rate, drive_rate=drive_rate, **neuron_params, **neuron_sim_params
+        exc_rate, inh_rate, drive_rate=drive_rate, record_sources=True, **single_point_params, **neuron_sim_params
     )
     
     # Extract
@@ -216,17 +266,24 @@ def _adex_neuron_worker(task_data):
         'exc_conductance_mean': exc_conductance_steady.mean(),
         'exc_conductance_std': exc_conductance_steady.std(),
         'inh_conductance_mean': inh_conductance_steady.mean(),
-        'inh_conductance_std': inh_conductance_steady.std()
+        'inh_conductance_std': inh_conductance_steady.std(),
+        **stp_metrics(sim_data['source_spikes'], projections, avg_start, sim_time),
     })
 
 
 def _collect_grid_results(neuron_name: str, neuron_params: dict,
                           exc_rate_grid: np.ndarray, inh_rate_grid: np.ndarray, drive_rate_grid: np.ndarray,
                           neuron_sim_params: NeuronSimulationConfig, worker_results) -> SingleNeuronResults:
-    """Stores the worker results (in any order) into (exc, inh, drive, run) arrays and averages over runs."""
-    per_run = {metric: np.zeros(exc_rate_grid.shape + (neuron_sim_params.n_runs,)) for metric in GRID_METRICS}
+    """
+    Stores the worker results (in any order) into (exc, inh, drive, run) arrays and averages over runs.
+    The STP metrics (see `stp_metrics`, the same keys at every grid point) go to `stp_at_spikes`.
+    """
+    shape = exc_rate_grid.shape + (neuron_sim_params.n_runs,)
+    per_run = {metric: np.zeros(shape) for metric in GRID_METRICS}
     for grid_idx, n_run, metrics in worker_results:
         for metric, value in metrics.items():
+            if metric not in per_run:
+                per_run[metric] = np.full(shape, np.nan)  # every point sets it; NaN would expose a missing one
             per_run[metric][grid_idx + (n_run,)] = value
 
     run_mean = {metric: values.mean(axis=-1) for metric, values in per_run.items()}
@@ -240,6 +297,7 @@ def _collect_grid_results(neuron_name: str, neuron_params: dict,
         out_rate_mean=run_mean["out_rate"],
         out_rate_std=per_run["out_rate"].std(axis=-1),
         **{metric: run_mean[metric] for metric in GRID_METRICS if metric != "out_rate"},
+        stp_at_spikes={metric: values for metric, values in run_mean.items() if metric not in GRID_METRICS},
         input_units = {
             # PyNN records conductances in [uS]
             "exc_conductance_mean" : "uS",
@@ -641,6 +699,14 @@ class PyNNSimulator(BaseNeuronSimulator):
             exc_rate_grid, inh_rate_grid, drive_rate_grid = self.resolve_grid(neuron_name, legacy_neuron_params, neuron_sim_params)
             if drive_conn is None and np.any(drive_rate_grid > 0):
                 raise ValueError(f"The grid of {neuron_name} has drive rates > 0, but {neuron_name} has no drive_neuron connection.")
+
+            # Projections onto this neuron whose STP state at the input spikes is recorded (see `stp_metrics`)
+            target_code = {network_params.exc_neuron_name: "e", network_params.inh_neuron_name: "i"}[neuron_name]
+            inputs = {"exc": exc_conn, "inh": inh_conn, "drive": drive_conn}
+            legacy_neuron_params['stp_projections'] = {
+                target_code + SOURCE_CODES[role]: {"source": role, "stp": _stp_params(conn)}
+                for role, conn in inputs.items() if conn is not None
+            }
 
             if neuron_sim_params.cpus > 1:
                 neuron_result = simulate_adex_neuron_full_grid_multiprocess(

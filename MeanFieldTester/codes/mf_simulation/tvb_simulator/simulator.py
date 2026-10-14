@@ -6,10 +6,11 @@ from ..base import BaseMFSimulator
 from ..config import MeanFieldSimulationConfig
 from ...network_params.models import BiologicalParameters, INTERNAL_PROJECTIONS
 from ...stimuli.config import BaseStimulusConfig
-from .models.factory import setup_tvb_model, MODEL_STP_MODES
+from .models.factory import setup_tvb_model
+from ..config import MODEL_STP_MODES
 from .stimuli import prepare_stimulus
 from ...utils.array_helpers import convert_to_array
-from ...utils.stp_helpers import calculate_steady_state_stp_variables
+from ...utils.stp_helpers import steady_state_stp
 from ...data_structures.mf_simulation import MFResults
 
 
@@ -274,11 +275,12 @@ class TVBMFSimulator(BaseMFSimulator):
                     results_dict[f"U_dyn_{projection}"], U, getattr(conn.syn_params, "tau_fac", 0.0)
                 )
             elif mode == "asymptotic":
-                x_steady, u_steady = calculate_steady_state_stp_variables(
+                x_steady, u_steady = steady_state_stp(
                     rate=rates_hz[source_name],
-                    u=U,
+                    U=U,
                     tau_rec=getattr(conn.syn_params, "tau_rec", 0.0),
                     tau_fac=getattr(conn.syn_params, "tau_fac", 0.0),
+                    spike_statistics=self.model.stp_spike_statistics,
                 )
                 stp_means[f"{projection}_x"] = x_steady
                 stp_means[f"{projection}_u"] = u_steady

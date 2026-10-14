@@ -62,7 +62,9 @@ class MFResults(BaseMFResults):
         self.network_params = network_params
         self.stim_params = stim_params
 
-        self.ignore_stp = mf_sim_params.transfer_function.tf_model.static_synapses
+        tf_model = mf_sim_params.transfer_function.tf_model
+        self.ignore_stp = tf_model.static_synapses
+        self.stp_spike_statistics = tf_model.stp_spike_statistics
 
         input_units = input_units or {}
 
@@ -88,12 +90,14 @@ class MFResults(BaseMFResults):
             neuron_name = network_params.exc_neuron_name,
             network_params = network_params,
             ignore_stp = self.ignore_stp,
+            spike_statistics = self.stp_spike_statistics,
         )
 
         self._inh_neuron_mpf = MembranePotentialFluctuations(
             neuron_name = network_params.inh_neuron_name,
             network_params = network_params,
             ignore_stp = self.ignore_stp,
+            spike_statistics = self.stp_spike_statistics,
         )
 
         # Freeze the object to prevent accidental attribute creation or modification
@@ -206,8 +210,7 @@ class MFResults(BaseMFResults):
             if x is not None and u is not None:
                 return x * u * self.network_params.network.connectivity[target_name][source_name].syn_params.weight
 
-        mpf = self._mpf(target_name)
-        return mpf._weight_effective(rate, **mpf.synapse_params[source_name])
+        return self._mpf(target_name).stp_weights(source_name, rate)[0]
 
     def _voltage_mean(self, target_name: str, adaptation: np.ndarray) -> np.ndarray:
         rates = self._source_rates(target_name)

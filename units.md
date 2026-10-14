@@ -35,3 +35,5 @@ Additional notes
 - result units
     - data are returned as method call, which allow optional argument `unit` to specify
     the units in which I want the data
+- unitless quantities are stored with unit "" in the `.npz` `units` entry: the STP variables x, u (SNN and MF
+  `{projection}_{x|u}`) and the neuron grid's STP state at the input spikes (`{projection}_{x|u|ux}_{mean|std}`)

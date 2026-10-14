@@ -23,6 +23,24 @@ class ModelType(str, Enum):
 
     CUSTOMNEUROPSI = "custom.neuropsi"
 
+
+# How each model treats short-term plasticity, i.e. what it gives the TF (used for config validation and to
+# report STP variables consistently with the model):
+# - "static_weight": legacy models, static weights weight*U, using the projections onto E for both targets;
+#                    their TF must use static synapses
+# - "asymptotic":    weights scaled by the steady-state efficacy at the current source rate (TF's stp_spike_statistics)
+# - "dynamic":       X, U_dyn per projection integrated as state variables
+MODEL_STP_MODES = {
+    ModelType.ZERLAUT2018_FO.value: "static_weight",
+    ModelType.ZERLAUT2018_SO.value: "static_weight",
+    ModelType.DIVOLO2019_FO.value: "static_weight",
+    ModelType.DIVOLO2019_SO.value: "static_weight",
+    ModelType.STP_ASYPTOTIC_FO.value: "asymptotic",
+    ModelType.STP_ASYPTOTIC_SO.value: "asymptotic",
+    ModelType.STP_DYNAMIC_FO.value: "dynamic",
+    ModelType.STP_DYNAMIC_SO.value: "dynamic",
+}
+
 class BaseInitValues(BaseModel):
     """Base state variables common to all second-order MF models."""
     
@@ -172,9 +190,29 @@ class RunSimulationConfig(BaseModel):
 
     transfer_function: TransferFunctionConfig 
 
-    # @model_validator(mode='after')
-    # def validate_init_values(self):
-    #     pass
+    stp_kappa: bool = Field(
+        True,
+        description=(
+            "Dynamic STP models only: the fluctuation (RMS) weight of an STP projection is the mean efficacy X*u times "
+            "kappa(rate), the steady-state RMS/mean ratio of the efficacy for the TF's stp_spike_statistics "
+            "(see utils.stp_helpers). False: RMS weight = mean weight (no efficacy variability in sigma_V, tau_V). "
+            "Setting it False for a model without STP dynamics is an error."
+        ),
+    )
+
+    @model_validator(mode='after')
+    def validate_stp_consistency(self):
+        """A model without STP ("static_weight", see MODEL_STP_MODES) needs a TF fitted with static synapses."""
+        tf_model = self.transfer_function.tf_model
+        static_tf = getattr(tf_model, "static_synapses", True)  # TFs without STP options are static
+        if MODEL_STP_MODES.get(self.model.value) == "static_weight" and not static_tf:
+            raise ValueError(
+                f"MF model '{self.model.value}' has no STP (static weights), but its TF '{tf_model.model_name}' is fitted "
+                "with STP (static_synapses: false); set static_synapses: true."
+            )
+        if not self.stp_kappa and MODEL_STP_MODES.get(self.model.value) != "dynamic":
+            raise ValueError(f"stp_kappa: false applies only to dynamic STP models, not '{self.model.value}'.")
+        return self
 
 
     @model_validator(mode='before')

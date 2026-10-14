@@ -96,6 +96,29 @@ class NeuropsiModelParams(BaseModel):
     log_term: bool = Field(False, description="Whether to include a logarithmic term of conductance_mean")
     adaptation: bool = Field(True, description="Whether to include adaptation terms.")
     static_synapses: bool = Field(False, description="Whether to enforce static synapses (no STP) in the transfer function fitting. If True, the TF will be fitted assuming no STP dynamics, even if the network has STP.")
+    stp_spike_statistics: Literal["regular", "poisson"] = Field(
+        "poisson",
+        description=(
+            "Spike-train statistics of the STP steady state (asymptote) that gives the effective weights when "
+            "static_synapses is False (see utils.stp_helpers): 'poisson' (exponential intervals, x = 1/(1 + u*rate*tau_rec)) "
+            "or 'regular' (periodic trains). Runs before 2026-10-14 (e.g. projects/05) were fitted with 'regular', "
+            "which their saved configs do not state."
+        ),
+    )
+    fit_stp: Literal["asymptote", "measured"] = Field(
+        "asymptote",
+        description=(
+            "STP efficacy used when fitting: 'asymptote' (the stp_spike_statistics steady state at the grid rates) or "
+            "'measured' (the efficacy recorded at the input spikes of the neuron grid, SingleNeuronResults.stp_at_spikes). "
+            "Evaluating the fitted TF always uses the asymptote."
+        ),
+    )
+
+    @model_validator(mode="after")
+    def _check_stp(self):
+        if self.static_synapses and self.fit_stp == "measured":
+            raise ValueError("fit_stp 'measured' needs static_synapses False (static synapses have no STP efficacy).")
+        return self
 
 TFModelParams = Annotated[
     Zerlaut2018ModelParams | DiVolo2019ModelParams | NeuropsiModelParams,

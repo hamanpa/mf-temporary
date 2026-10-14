@@ -39,7 +39,7 @@ from .base import BaseTransferFunction
 from .config import TransferFunctionConfig
 from ..network_params.models import BiologicalParameters
 from ..data_structures.neuron_simulation import SingleNeuronResults
-from ..utils.stp_helpers import calculate_effective_synapse_weight
+from ..utils.stp_helpers import effective_synapse_weights
 
 
 class NeuroPSICustomTF(BaseTransferFunction):
@@ -48,7 +48,11 @@ class NeuroPSICustomTF(BaseTransferFunction):
         super().__init__(neuron_name, network_params, tf_params)
         
         # Instantiate the standalone physics calculator
-        self.mpf = MembranePotentialFluctuations(neuron_name, network_params, ignore_stp=tf_params.tf_model.static_synapses)
+        self.mpf = MembranePotentialFluctuations(
+            neuron_name, network_params,
+            ignore_stp=tf_params.tf_model.static_synapses,
+            spike_statistics=tf_params.tf_model.stp_spike_statistics,
+        )
         self.g_L = network_params.neurons[neuron_name].neuron_params.g_L
 
     def required_inputs(self) -> list[str]:
@@ -83,15 +87,20 @@ class NeuroPSICustomTF(BaseTransferFunction):
         """
         The core mapping function: F(v_e, v_i, [w], [v_drive]) -> v_out.
         Optional `drive_rate` [Hz]: rate of each drive source (scalar or array like `exc_rate`).
+        Optional `stp_weights`: ({source: mean weight}, {source: RMS weight}) [nS] replacing the STP asymptote
+        (used when fitting with the measured efficacy, see `fit`).
         """
         exc_rate = kwargs["exc_rate"]
         inh_rate = kwargs["inh_rate"]
         adaptation = kwargs.get("adaptation", None)
         drive_rate = kwargs.get("drive_rate", None)
+        effective_weights, fluctuation_weights = kwargs.get("stp_weights") or (None, None)
 
         # 1. Compute theoretical subthreshold fluctuations
         mu_V, sigma_V, tau_V, tau_VN, mu_G = self.mpf.evaluate(
             rates=self._input_rates(exc_rate, inh_rate, drive_rate),
+            effective_weights=effective_weights,
+            fluctuation_weights=fluctuation_weights,
             adaptation=adaptation
         )
 
@@ -167,6 +176,30 @@ class NeuroPSICustomTF(BaseTransferFunction):
         out_rate_safe = np.clip(out_rate, 1e-9, None)
         return np.sqrt(2) * voltage_std * erfcinv(2 * voltage_tau * out_rate_safe * 1e-3) + voltage_mean
 
+    def _measured_stp_weights(self, single_neuron_results: SingleNeuronResults, rates: dict) -> tuple[dict, dict]:
+        """
+        Mean and RMS effective weights [nS] per input source from the efficacy recorded at the grid's input spikes:
+        weight·⟨u⁺x⁻⟩ and weight·√(⟨u⁺x⁻⟩² + std²), flattened like the grid (`rates` gives the sources).
+        """
+        # NOTE: the drive population is still identified by name (see todo.md, hard-coded population names)
+        codes = {self.network_params.exc_neuron_name: "e", self.network_params.inh_neuron_name: "i", "drive_neuron": "d"}
+        target = codes[self.neuron_name]
+        effective_weights, fluctuation_weights = {}, {}
+        for source in rates:
+            projection = target + codes[source]
+            mean = single_neuron_results.stp_at_spikes(projection, "ux", "mean")
+            std = single_neuron_results.stp_at_spikes(projection, "ux", "std")
+            if mean is None or std is None:
+                raise ValueError(
+                    f"fit_stp 'measured' needs the STP state recorded at the input spikes of the {self.neuron_name} grid "
+                    f"('{projection}_ux_mean/std', see SingleNeuronResults.stp_at_spikes); recorded: "
+                    f"{single_neuron_results.stp_keys() or 'none'}. Rerun the neuron simulation."
+                )
+            weight = self.mpf.synapse_params[source]["syn_weight"]
+            effective_weights[source] = weight * mean.flatten()
+            fluctuation_weights[source] = weight * np.sqrt(mean ** 2 + std ** 2).flatten()
+        return effective_weights, fluctuation_weights
+
     def fit(self, single_neuron_results: SingleNeuronResults, **kwargs) -> dict:
         """
         Calibrates the transfer function using a two-step optimization process.
@@ -187,7 +220,15 @@ class NeuroPSICustomTF(BaseTransferFunction):
         else:
             adaptation = None
 
-        voltage_mean, voltage_std, voltage_tau, voltage_tau_n, conductance_mean = self.mpf.evaluate(rates, adaptation=adaptation)
+        # STP efficacy: the asymptote (None: computed by the mpf) or the one recorded at the grid's input spikes
+        if tf_model_params.fit_stp == "measured":
+            stp_weights = self._measured_stp_weights(single_neuron_results, rates)
+        else:
+            stp_weights = (None, None)
+
+        voltage_mean, voltage_std, voltage_tau, voltage_tau_n, conductance_mean = self.mpf.evaluate(
+            rates, effective_weights=stp_weights[0], fluctuation_weights=stp_weights[1], adaptation=adaptation
+        )
 
         keys = ["P_0", "P_mean", "P_std", "P_tau"]
         if tf_model_params.log_term:
@@ -241,6 +282,9 @@ class NeuroPSICustomTF(BaseTransferFunction):
         # ==========================================
 
         mask2 = out_rates < out_rate_max
+        stp_weights2 = None
+        if stp_weights[0] is not None:
+            stp_weights2 = tuple({source: values[mask2] for source, values in weights.items()} for weights in stp_weights)
 
         def obj_tf(x):
             self.fitted_params = array_to_dict(x)
@@ -249,7 +293,8 @@ class NeuroPSICustomTF(BaseTransferFunction):
                 exc_rate=exc_rates[mask2],
                 inh_rate=inh_rates[mask2],
                 drive_rate=drive_rates[mask2],
-                adaptation=adaptation[mask2] if adaptation is not None else None
+                adaptation=adaptation[mask2] if adaptation is not None else None,
+                stp_weights=stp_weights2,
             )
             return np.mean((out_rates[mask2] - out_rate_pred) ** 2)
 
@@ -283,10 +328,16 @@ class MembranePotentialFluctuations:
         self, 
         neuron_name: str,
         network_params: BiologicalParameters,
-        ignore_stp: bool = False
+        ignore_stp: bool = False,
+        spike_statistics: str = "poisson",
     ):
+        """
+        `ignore_stp`: Tsodyks synapses as static with weight·U. `spike_statistics`: the STP steady state of the
+        effective weights ("regular" | "poisson", see `utils.stp_helpers`).
+        """
         self.neuron_name = neuron_name
         self.ignore_stp = ignore_stp
+        self.spike_statistics = spike_statistics
 
         self.tau_m = network_params.neurons[neuron_name].neuron_params.tau_m
         self.cm = network_params.neurons[neuron_name].neuron_params.cm
@@ -338,9 +389,15 @@ class MembranePotentialFluctuations:
                 'syn_num': syn_num
             }
 
-    def _weight_effective(self, rate, syn_weight, u, tau_rec, tau_fac, **kwargs):
-        """Calculates the effective synaptic weight considering STP."""
-        return calculate_effective_synapse_weight(rate, syn_weight, u, tau_rec, tau_fac)
+    def stp_weights(self, source_name: str, rate) -> tuple[np.ndarray, np.ndarray]:
+        """
+        Steady-state effective weights [nS] of the synapses from `source_name` at `rate` [Hz]: the mean
+        weight·⟨u⁺x⁻⟩ (mean conductance and voltage) and the RMS weight·√⟨(u⁺x⁻)²⟩ (fluctuations).
+        Static synapses (and `ignore_stp`) give the weight (times U) for both.
+        """
+        params = self.synapse_params[source_name]
+        return effective_synapse_weights(rate, params["syn_weight"], params["u"], params["tau_rec"], params["tau_fac"],
+                                         spike_statistics=self.spike_statistics)
 
     def _conductance_mean(self, rate, effective_weight, syn_num, syn_tau, **kwargs):
         return rate * syn_num * (syn_tau * 1e-3) * effective_weight
@@ -410,15 +467,19 @@ class MembranePotentialFluctuations:
         denominator = self.conductance_mean(rates, effective_weights)+ self.a
         return numerator / denominator
 
-    def voltage_std(self, rates, effective_weights, out_rate=None, adaptation=None):
-        """Calculates the standard deviation of the voltage of the neuron in [mV]."""
+    def voltage_std(self, rates, effective_weights, out_rate=None, adaptation=None, fluctuation_weights=None):
+        """
+        Calculates the standard deviation of the voltage of the neuron in [mV].
+        The shot-noise terms use `fluctuation_weights` (RMS weights; default: `effective_weights`).
+        """
         voltage_mean = self.voltage_mean(rates, effective_weights, out_rate=out_rate, adaptation=adaptation)
         conductance_mean = self.conductance_mean(rates, effective_weights)
         tau_eff = self.tau_eff(rates, effective_weights)
+        fluctuation_weights = fluctuation_weights or effective_weights
 
         terms = []
         for neuron_name in rates:
-            syn_u = effective_weights[neuron_name] * (self.synapse_params[neuron_name]['E_rev'] - voltage_mean) / conductance_mean
+            syn_u = fluctuation_weights[neuron_name] * (self.synapse_params[neuron_name]['E_rev'] - voltage_mean) / conductance_mean
             syn_tau = self.synapse_params[neuron_name]['syn_tau']
             syn_num = self.synapse_params[neuron_name]['syn_num']
 
@@ -426,17 +487,20 @@ class MembranePotentialFluctuations:
 
         return np.sqrt(sum(terms))
 
-    def voltage_tau(self, rates, effective_weights, out_rate=None, adaptation=None):
-        """Calculates the effective time constant of the voltage fluctuations of the neuron in [ms].
+    def voltage_tau(self, rates, effective_weights, out_rate=None, adaptation=None, fluctuation_weights=None):
+        """
+        Calculates the effective time constant of the voltage fluctuations of the neuron in [ms].
+        The shot-noise terms use `fluctuation_weights` (RMS weights; default: `effective_weights`).
         """
         voltage_mean = self.voltage_mean(rates, effective_weights, out_rate=out_rate, adaptation=adaptation)
         conductance_mean = self.conductance_mean(rates, effective_weights)
         tau_eff = self.tau_eff(rates, effective_weights)
+        fluctuation_weights = fluctuation_weights or effective_weights
 
         numerator_terms = []
         denominator_terms = []
         for neuron_name in rates:
-            syn_u = effective_weights[neuron_name] * (self.synapse_params[neuron_name]['E_rev'] - voltage_mean) / conductance_mean
+            syn_u = fluctuation_weights[neuron_name] * (self.synapse_params[neuron_name]['E_rev'] - voltage_mean) / conductance_mean
             syn_tau = self.synapse_params[neuron_name]['syn_tau']
             syn_num = self.synapse_params[neuron_name]['syn_num']
 
@@ -456,17 +520,26 @@ class MembranePotentialFluctuations:
             effective_weights: Dict[str, np.ndarray|float]=None,
             out_rate: np.ndarray|float=None, 
             adaptation: np.ndarray|float=None,
+            fluctuation_weights: Dict[str, np.ndarray|float]=None,
             ) -> tuple:
-
-        # 1. update effective weights
-        effective_weights = effective_weights or {}
+        """
+        (voltage_mean, voltage_std, voltage_tau, voltage_tau_n, conductance_mean) for the input `rates` [Hz].
+        Weights not given per source come from the STP steady state (`stp_weights`): `effective_weights` (mean)
+        for the mean conductance and voltage, `fluctuation_weights` (RMS) for the fluctuations; a source with a
+        given mean weight but no RMS weight uses the mean for both. The given dicts are not modified.
+        """
+        effective_weights = dict(effective_weights or {})
+        fluctuation_weights = dict(fluctuation_weights or {})
         for neuron_name in rates:
             if neuron_name not in effective_weights:
-                effective_weights[neuron_name] = self._weight_effective(rates[neuron_name], **self.synapse_params[neuron_name])
+                mean, rms = self.stp_weights(neuron_name, rates[neuron_name])
+                effective_weights[neuron_name] = mean
+                fluctuation_weights.setdefault(neuron_name, rms)
+            fluctuation_weights.setdefault(neuron_name, effective_weights[neuron_name])
 
         voltage_mean = self.voltage_mean(rates, effective_weights, out_rate=out_rate, adaptation=adaptation)
-        voltage_std = self.voltage_std(rates, effective_weights, out_rate=out_rate, adaptation=adaptation)
-        voltage_tau = self.voltage_tau(rates, effective_weights, out_rate=out_rate, adaptation=adaptation)
+        voltage_std = self.voltage_std(rates, effective_weights, out_rate=out_rate, adaptation=adaptation, fluctuation_weights=fluctuation_weights)
+        voltage_tau = self.voltage_tau(rates, effective_weights, out_rate=out_rate, adaptation=adaptation, fluctuation_weights=fluctuation_weights)
         voltage_tau_n = voltage_tau / self.tau_m
         conductance_mean = self.conductance_mean(rates, effective_weights)
         return voltage_mean, voltage_std+1e-9, voltage_tau, voltage_tau_n, conductance_mean
